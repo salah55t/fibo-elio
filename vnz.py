@@ -61,7 +61,7 @@
    (يُنصح بضبطهما من متغيرات البيئة في Render لرفع الافتراضي)
    DEVIATION_THRESHOLD   نسبة انعكاس الزيجزاج (افتراضي 0.006 = 0.6% لفريم 1h)
    SIGNAL_TIMEFRAME      فريم الكشف (افتراضي 1h)   ENTRY_TIMEFRAME فريم التنفيذ (15m)
-   MAX_OPEN_TRADES       أقصى صفقات متزامنة (3)     RISK_PCT_PER_TRADE مخاطرة الصفقة (1%)
+   MAX_OPEN_TRADES       أقصى صفقات متزامنة (معلقة + مفتوحة) — الافتراضي 3، الإنتاج 5 عبر render.yaml     RISK_PCT_PER_TRADE مخاطرة الصفقة (1%)
    PENDING_MAX_CANDLES   صلاحية الأمر المعلق بشموع الكشف (3)
    PAPER_BALANCE         الرصيد الورقي (10000)
 """
