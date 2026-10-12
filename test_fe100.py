@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_fe100.py — اختبارات Fibo-Elio FE1.0.1
+test_fe100.py — اختبارات Fibo-Elio FE1.0.2
 
 ثلاث جولات:
   1) المحرك الأصلي المنقول حرفيًا: زيجزاج على موجات مصطنعة + القواعد الثلاث + فيبوناتشي
@@ -23,6 +23,7 @@ import pandas as pd
 import pytest
 
 import vnz
+vnz.DASHBOARD_PROTECTED = False  # بيئة الاختبار: بلا مصادقة (الافتراضي في الإنتاج admin/test123)
 from engine.fibonacci import FibonacciLevels, FibonacciChecker, RETRACEMENT_RATIOS, EXTENSION_RATIOS
 from engine.pattern_detector import DetectorConfig, PivotDetector
 from engine.wave_validator import validate_impulse, WavePivots
@@ -315,7 +316,7 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "FE1.0.1"
+        assert body["version"] == "FE1.0.2"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 

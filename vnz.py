@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ═══════════════════════════════════════════════════════════════════════════════
- FIBO-ELIO — بوت موجة إليوت + مستويات فيبوناتشي  (FE1.0.1)
+ FIBO-ELIO — بوت موجة إليوت + مستويات فيبوناتشي  (FE1.0.2)
 ═══════════════════════════════════════════════════════════════════════════════
  مشروع منفصل طلب المستخدم: «امسح جميع الاستراتيجيات واترك فقط استراتيجية اليوت
  ومستويات فيبوناتشي، وضع المشروع في مستودع منفصل، ولتكن الاستراتيجية مثل
@@ -37,11 +37,16 @@
  استهلاك الخدمات الأخرى على نفس العنوان، فالبدائل العامة بحدود سخية تضمن استمرار
  الرؤية للسوق دون أي تغيير على المنطق الأصلي أو الوضع الورقي.
 
+ FE1.0.2: فريم الكشف 15m (طلب المستخدم + جدول معايرة المؤلف: نطاق 15m
+ 0.004–0.008 «Primary entry TF» والانعكاس 0.006 في منتصفه) + حماية افتراضية
+ للوحة (admin/test123) حتى بلا متغيرات بيئة — النشر اليدوي كان يتركها مكشوفة.
+
  متغيرات البيئة (نفس عقد المشروع السابق + إعدادات الاستراتيجية):
    BINANCE_API_KEY / BINANCE_API_SECRET  (اختياريان — الشموع العامة تكفي للورقي)
    DATABASE_URL          اختياري (PostgreSQL) — وإلا SQLite محلي
    TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID اختياريان
-   DASHBOARD_USERNAME / DASHBOARD_PASSWORD اختياريان (حماية اللوحة)
+   DASHBOARD_USERNAME / DASHBOARD_PASSWORD حماية اللوحة — الافتراضي admin/test123
+   (يُنصح بضبطهما من متغيرات البيئة في Render لرفع الافتراضي)
    DEVIATION_THRESHOLD   نسبة انعكاس الزيجزاج (افتراضي 0.006 = 0.6% لفريم 1h)
    SIGNAL_TIMEFRAME      فريم الكشف (افتراضي 1h)   ENTRY_TIMEFRAME فريم التنفيذ (15m)
    MAX_OPEN_TRADES       أقصى صفقات متزامنة (3)     RISK_PCT_PER_TRADE مخاطرة الصفقة (1%)
@@ -81,7 +86,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.0.1"  # FE1.0.1: تعاقب مزودي البيانات ضد حظر باينانس المشترك بين خدمات Render
+BOT_VERSION = "FE1.0.2"  # FE1.0.2: كشف 15m + حماية لوحة افتراضية
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -90,10 +95,13 @@ API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-DASHBOARD_USERNAME = os.getenv("DASHBOARD_USERNAME", "")
-DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
+DASHBOARD_USERNAME = os.getenv("DASHBOARD_USERNAME", "admin")     # [FE1.0.2] افتراضي عهد المشروع — يُرفع من متغيرات البيئة
+DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "test123")   # [FE1.0.2] اللوحة تبقى محمية حتى بلا متغيرات بيئة (نشر يدوي)
 
-SIGNAL_TIMEFRAME = os.getenv("SIGNAL_TIMEFRAME", "1h")
+# [FE1.0.2] فريم الكشف 15m — بطلب المستخدم («اريد تغيير الفريم الفحص الى 15 دقيقة بدل الساعة»)
+# وبجدول معايرة المؤلف (engine/pattern_detector.py): نطاق 15m = 0.004–0.008 «Primary entry TF»
+# والانعكاس 0.006 يقع في منتصف نطاق 15م — القيمة القديمة 1h تبقى متاحة عبر متغير البيئة SIGNAL_TIMEFRAME
+SIGNAL_TIMEFRAME = os.getenv("SIGNAL_TIMEFRAME", "15m")
 ENTRY_TIMEFRAME = os.getenv("ENTRY_TIMEFRAME", "15m")
 OHLCV_LIMIT = int(os.getenv("OHLCV_LIMIT", "500"))
 DEVIATION_THRESHOLD = float(os.getenv("DEVIATION_THRESHOLD", "0.006"))
