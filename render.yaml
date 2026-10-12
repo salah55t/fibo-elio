@@ -29,11 +29,14 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
-      # إعدادات الاستراتيجية (افتراضيات المؤلف الأصلي لفريم 1h)
+      # إعدادات الاستراتيجية — فريم الكشف 15m بأصلين:
+      # 1) طلب المستخدم («اريد تغيير الفريم الفحص الى 15 دقيقة بدل الساعة»)
+      # 2) جدول معايرة المؤلف (engine/pattern_detector.py): 15m = 0.004–0.008 و«Primary entry TF»
+      #    الانعكاس 0.006 يقع في منتصف نطاق 15م — دون تغيير
       - key: DEVIATION_THRESHOLD
         value: "0.006"
       - key: SIGNAL_TIMEFRAME
-        value: "1h"
+        value: "15m"
       - key: ENTRY_TIMEFRAME
         value: "15m"
       - key: MAX_OPEN_TRADES
