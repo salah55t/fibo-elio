@@ -53,3 +53,12 @@ services:
         value: "binance,bybit,okx,gate"
       - key: PROVIDER_COOLDOWN_SEC
         value: "900"
+      # [FE1.2.0] الأسعار الحية من ويب سوكت (ccxt.pro) — REST احتياطًا فقط عند تقادم التيار
+      - key: WS_ENABLED
+        value: "1"
+      - key: WS_STALE_SEC
+        value: "90"
+      - key: WS_SYNC_INTERVAL
+        value: "10"
+      - key: WS_RECV_TIMEOUT_SEC
+        value: "60"

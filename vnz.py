@@ -53,6 +53,17 @@
  فقط limit=2 فكانت تُهدر النتيجة وتتجاهل الصفقات: لا ملء ولا إغلاق آلي أبدًا.
  الحل: معامل min_candles — المسح 60+ كما هو، والمراقبة/السعر الحي 2.
 
+ FE1.2.0: الأسعار الحية من ويب سوكت لا REST (طلب المستخدم «اريد جلب الاسعار
+ الحية من ويب سوكت وليس كطلبات api»):
+ • خيط مستقل بحلقة asyncio دائمة يشترك عبر ccxt.pro في تيارين لكل رمز نشط:
+    watch_ohlcv (شموع 15m حية — للملء/الوقف/الهدف والسعر الاحتياطي)
+    watch_ticker (آخر سعر — الأحدث زمنيًا يفوز في العرض)
+ • الاشتراك فقط للرموز ذات صفقات نشطة (معلق/مفتوح) — مزامنة كل 10 ثوانٍ
+ • تعاقب مزودين للويب سوكت أيضًا: باينانس ← Bybit ← OKX ← Gate عند الفشل
+ • لا REST للأسعار الحية ما دام تيار ويب سوكت حيًا (حداثة ≤ WS_STALE_SEC)؛
+   REST يبقى احتياطًا تلقائيًا عند تعطل/غياب التيار — بلا أي تغيير على المنطق
+ • /api/ws/status تشخيص كامل + شارة مصدر السعر (WS/REST) في اللوحة
+
  متغيرات البيئة (نفس عقد المشروع السابق + إعدادات الاستراتيجية):
    BINANCE_API_KEY / BINANCE_API_SECRET  (اختياريان — الشموع العامة تكفي للورقي)
    DATABASE_URL          اختياري (PostgreSQL) — وإلا SQLite محلي
@@ -66,6 +77,7 @@
    PAPER_BALANCE         الرصيد الورقي (10000)
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -88,6 +100,11 @@ except Exception:
 from flask import Flask, Response, jsonify, request
 
 import ccxt
+try:  # [FE1.2.0] تفعيل مساحة ccxt.pro (ويب سوكت) — متوفرة ضمن حزمة ccxt الحديثة
+    import ccxt.pro  # noqa: F401
+    _HAS_CCXT_PRO = True
+except Exception:
+    _HAS_CCXT_PRO = False
 
 from engine.pattern_detector import DetectorConfig, DetectedSetup, PivotDetector
 from engine.wave_validator import validate_impulse
@@ -98,7 +115,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.1.1"  # FE1.1.1: إصلاح حرج — حلقة المراقبة كانت مهدرة بشرط 60 شمعة على الاستعلامات القصيرة
+BOT_VERSION = "FE1.2.0"  # FE1.2.0: الأسعار الحية من ويب سوكت (ccxt.pro) — REST احتياطًا فقط
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -134,6 +151,12 @@ DATA_PROVIDERS: List[str] = [
     p.strip().lower() for p in os.getenv("DATA_PROVIDERS", "binance,bybit,okx,gate").split(",") if p.strip()
 ]
 PROVIDER_COOLDOWN_SEC = float(os.getenv("PROVIDER_COOLDOWN_SEC", "900"))  # تبريد المزود الفاشل 15 دقيقة
+
+# [FE1.2.0] تغذية الأسعار الحية عبر ويب سوكت (ccxt.pro) — REST احتياطًا فقط
+WS_ENABLED = os.getenv("WS_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+WS_STALE_SEC = float(os.getenv("WS_STALE_SEC", "90"))     # أقدم عمر مقبول لبيانات الويب سوكت قبل الرجوع لـ REST
+WS_SYNC_INTERVAL = float(os.getenv("WS_SYNC_INTERVAL", "10"))  # إيقاع مزامنة الاشتراكات مع الصفقات النشطة
+WS_RECV_TIMEOUT_SEC = float(os.getenv("WS_RECV_TIMEOUT_SEC", "60"))  # مهلة انتظار رسالة قبل اعتبار المزود ميتًا
 
 DASHBOARD_PROTECTED = bool(DASHBOARD_USERNAME and DASHBOARD_PASSWORD)
 USE_POSTGRES = DATABASE_URL.startswith("postgres")
@@ -597,6 +620,123 @@ def symbol_has_active(symbol: str) -> bool:
     return bool(rows and int(rows[0]["n"]) > 0)
 
 
+# ── FE1.2.0: تغذية أسعار حية عبر ويب سوكت (ccxt.pro) — REST احتياطًا فقط ──────
+# المبدأ: تياران لكل رمز نشط (شموع 15m + ticker) يغذيان الذاكرة أدناه، وكل
+# مستخدمي السعر (اللوحة/المراقبة/الإحصاء) يقرؤون من الذاكرة أولًا — REST لا
+# يُستدعى إلا عند غياب التيار أو تقادمه (فشل شبكة مثلاً) فلا انقطاع للخدمة.
+
+_ws_lock = threading.Lock()
+_ws_price: Dict[str, Dict[str, Any]] = {}    # symbol -> {price, ts(epoch), source}
+_ws_candles: Dict[str, Dict[str, Any]] = {}  # symbol -> {candles: [[ts,o,h,l,c,v]...], ts, source}
+_ws_subs: Dict[str, Dict[str, Any]] = {}     # symbol -> {provider, state, last_error, updates, last_msg_at, started_at}
+_ws_tasks: Dict[str, Dict[str, Any]] = {}    # symbol -> {"ohlcv": Task, "ticker": Task}
+_ws_exchanges: Dict[str, Any] = {}           # اسم المزود -> نسخة ccxt.pro (اتصالات عامة بلا مفاتيح)
+_ws_loop: Any = None
+_ws_thread_started = False
+WS_CANDLE_KEEP = 5                 # نحتفظ بآخر 5 شموع (الأخيرة قيد التكوين كما في REST)
+WS_PRICE_FROM_CANDLE_TTL = 30.0    # املا السعر من إغلاق الشمعة إن غاب الـ ticker أطول من ذلك
+
+
+def _ws_mark(symbol: str, provider: str, state: str, error: str = "") -> None:
+    """تحديث حالة اشتراك رمز للتشخيص (/api/ws/status واللوحة)."""
+    with _ws_lock:
+        sub = _ws_subs.setdefault(symbol, {
+            "provider": provider, "state": state, "last_error": "",
+            "updates": 0, "last_msg_at": None, "started_at": utc_now_iso(),
+        })
+        sub["provider"] = provider
+        sub["state"] = state
+        sub["last_error"] = error[:200]
+
+
+def ws_apply_price(symbol: str, price: Any, source: str) -> bool:
+    """تحديث السعر الحي من تيار ticker — دالة متزامنة قابلة للاختبار مباشرة."""
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return False
+    if not (p > 0) or math.isnan(p) or math.isinf(p):
+        return False
+    now = time.time()
+    with _ws_lock:
+        _ws_price[symbol] = {"price": p, "ts": now, "source": source}
+        sub = _ws_subs.get(symbol)
+        if sub is not None:
+            sub["updates"] += 1
+            sub["last_msg_at"] = utc_now_iso()
+            sub["state"] = "live"
+            sub["last_error"] = ""
+    return True
+
+
+def ws_apply_ohlcv(symbol: str, candles: Any, source: str) -> bool:
+    """تحديث شموع فريم التنفيذ من تيار watch_ohlcv — الأخيرة قيد التكوين كما في REST.
+    الدمج حسب الطابع الزمني: بعض المزودين يرسلون الشمعة الجارية وحدها فلا يجوز
+    أن يمحو التيار تاريخ البذرة المغلق، والنافذة تُقص لآخر WS_CANDLE_KEEP شموع.
+    تُنظّف الصفوف الناقصة، ويُملأ السعر من إغلاق الشمعة الجارية إن غاب الـ ticker."""
+    if not isinstance(candles, (list, tuple)) or not candles:
+        return False
+    clean: List[List[float]] = []
+    for c in candles:
+        try:
+            if len(c) < 6:
+                continue
+            ts, o, h, lo, cl = c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4])
+            if not (ts and o > 0 and h > 0 and lo > 0 and cl > 0):
+                continue
+            clean.append([int(ts), o, h, lo, cl, float(c[5])])
+        except (TypeError, ValueError, IndexError):
+            continue
+    if not clean:
+        return False
+    with _ws_lock:
+        existing = _ws_candles.get(symbol)
+    if existing and existing["candles"]:
+        by_ts = {int(row[0]): row for row in existing["candles"]}
+        for row in clean:
+            by_ts[int(row[0])] = row  # الشمعة الجارية تُحدّث، المغلقة تبقى
+        clean = [by_ts[k] for k in sorted(by_ts)][-WS_CANDLE_KEEP:]
+    else:
+        clean = clean[-WS_CANDLE_KEEP:]
+    now = time.time()
+    with _ws_lock:
+        _ws_candles[symbol] = {"candles": clean, "ts": now, "source": source}
+        sub = _ws_subs.get(symbol)
+        if sub is not None:
+            sub["updates"] += 1
+            sub["last_msg_at"] = utc_now_iso()
+            sub["state"] = "live"
+            sub["last_error"] = ""
+    with _ws_lock:
+        cur = _ws_price.get(symbol)
+    if not cur or now - cur["ts"] >= WS_PRICE_FROM_CANDLE_TTL:
+        ws_apply_price(symbol, clean[-1][4], source)  # إغلاق الشمعة الجارية = آخر سعر
+    return True
+
+
+def ws_feed_snapshot() -> Dict[str, Any]:
+    """لقطة حالة تغذية الويب سوكت للوحة والتشخيص — بلا استثناءات أبدًا."""
+    now = time.time()
+    with _ws_lock:
+        subs = {s: dict(v) for s, v in _ws_subs.items()}
+        prices = {s: {"price": v["price"], "age_sec": round(now - v["ts"], 1), "source": v["source"]}
+                  for s, v in _ws_price.items()}
+        candles = {s: {"n": len(v["candles"]), "age_sec": round(now - v["ts"], 1), "source": v["source"]}
+                   for s, v in _ws_candles.items()}
+        symbols = sorted(_ws_tasks.keys())
+    live_n = sum(1 for v in subs.values() if v.get("state") == "live")
+    return {
+        "enabled": WS_ENABLED,
+        "thread_started": _ws_thread_started,
+        "loop_alive": bool(_ws_loop is not None and _ws_loop.is_running()),
+        "live_streams": live_n,
+        "symbols": symbols,
+        "subscriptions": subs,
+        "prices": prices,
+        "candles": candles,
+    }
+
+
 # ── FE1.1.0: تتبع حي — سعر لكل صفقة مع ذاكرة مؤقتة قصيرة ─────────────────────
 
 _price_cache: Dict[str, Tuple[float, float]] = {}  # symbol -> (price, ts)
@@ -605,13 +745,24 @@ PRICE_CACHE_TTL = float(os.getenv("PRICE_CACHE_TTL", "20"))
 
 
 def get_live_price(symbol: str) -> Optional[float]:
-    """آخر سعر إغلاق من فريم التنفيذ (15m) — ذاكرة 20 ثانية تمنع ضرب المزودين
-    عند كل تحديث للوحة (كل صفقة استعلام واحد بدل عدة عملاء متزامنين)."""
+    """السعر الحي — [FE1.2.0] ويب سوكت أولًا ثم ذاكرة 20 ث، ويُختار الأحدث زمنيًا
+    بينهما، وREST (فريم التنفيذ 15m) أخيرًا عند غياب/تقادم الكل.
+    الذاكرة القصيرة تمنع ضرب المزودين عند كل تحديث للوحة ما دام لا تيارًا حيًا."""
     now = time.time()
+    ws_hit: Optional[Dict[str, Any]] = None
+    if WS_ENABLED:
+        with _ws_lock:
+            h = _ws_price.get(symbol)
+        if h and now - h["ts"] < WS_STALE_SEC:
+            ws_hit = h
     with _price_cache_lock:
-        hit = _price_cache.get(symbol)
-        if hit and now - hit[1] < PRICE_CACHE_TTL:
-            return hit[0]
+        rest_hit = _price_cache.get(symbol)
+        if rest_hit and now - rest_hit[1] >= PRICE_CACHE_TTL:
+            rest_hit = None
+    if ws_hit or rest_hit:
+        if ws_hit and (not rest_hit or ws_hit["ts"] >= rest_hit[1]):
+            return float(ws_hit["price"])
+        return float(rest_hit[0])
     try:
         df = fetch_ohlcv_df(symbol, ENTRY_TIMEFRAME, limit=2, min_candles=2)
         price = float(df["close"].iloc[-1]) if df is not None and not df.empty else None
@@ -621,6 +772,175 @@ def get_live_price(symbol: str) -> Optional[float]:
         with _price_cache_lock:
             _price_cache[symbol] = (price, now)
     return price
+
+
+def get_recent_candles(symbol: str, timeframe: str, limit: int,
+                       min_candles: int = 2) -> Optional[pd.DataFrame]:
+    """[FE1.2.0] شموع فريم التنفيذ — أولوية لتيار ويب سوكت والاحتياط REST كما في FE1.1.1.
+    نفس بُنية fetch_ohlcv_df بالضبط (ts/open/high/low/close/volume + timestamp/symbol/timeframe)
+    فتنتقل حلقة المراقبة إلى التيار الحي بلا أي تغيير في منطق الملء/الوقف/الهدف."""
+    if timeframe == ENTRY_TIMEFRAME and WS_ENABLED:
+        with _ws_lock:
+            entry = _ws_candles.get(symbol)
+        if entry and time.time() - entry["ts"] < WS_STALE_SEC:
+            rows = entry["candles"][-limit:] if (limit and limit > 0) else list(entry["candles"])
+            if len(rows) >= min_candles:
+                df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+                df["timestamp"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
+                df["symbol"] = symbol
+                df["timeframe"] = timeframe
+                df = df[REQUIRED_COLS + ["symbol", "timeframe"]]
+                df = df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
+                return df
+    return fetch_ohlcv_df(symbol, timeframe, limit=limit, min_candles=min_candles)
+
+
+def _ws_exchange(name: str):
+    """نسخة ccxt.pro للمزود — اتصالات عامة بلا مفاتيح (الشموع العامة تكفي للورقي)."""
+    ex = _ws_exchanges.get(name)
+    if ex is None:
+        cls = getattr(ccxt.pro, name, None)
+        if cls is None:
+            raise ValueError(f"المزود {name} غير مدعوم في ccxt.pro")
+        ex = cls({"enableRateLimit": False, "options": {"defaultType": "spot"}})
+        _ws_exchanges[name] = ex
+    return ex
+
+
+async def _ws_watch_stream(symbol: str, stream: str) -> None:
+    """حلقة اشتراك دائمة لرمز واحد: stream='ohlcv' شموع التنفيذ أو 'ticker' آخر سعر.
+    تعاقب المزودين عند الفشل — نفس فلسفة طبقة REST (باينانس ← Bybit ← OKX ← Gate).
+    ccxt.pro يعيد الاتصال تلقائيًا؛ أي استثناء يديرنا للمزود التالي بعد 3 ثوانٍ."""
+    order = [p for p in DATA_PROVIDERS if p] or ["binance"]
+    idx = 0
+    while True:
+        name = order[idx % len(order)]
+        idx += 1
+        try:
+            ex = _ws_exchange(name)
+            if not ex.markets:
+                await ex.load_markets()
+            _ws_mark(symbol, name, "connecting")
+            if stream == "ohlcv":
+                # بذرة REST واحدة عند بدء الاشتراك: التيار قد يبدأ بالشمعة الجارية
+                # وحدها، والبذرة تضمن شمعة مغلقة + جارية فورًا (نفس نافذة REST limit=2)
+                try:
+                    seed = await asyncio.to_thread(
+                        fetch_ohlcv_df, symbol, ENTRY_TIMEFRAME, WS_CANDLE_KEEP, 2)
+                    if seed is not None and not seed.empty:
+                        # fetch_ohlcv_df يُسقط عمود ts ويحتفظ بـ timestamp — نرجع للمللي ثانية
+                        rows = [[int(r.timestamp.timestamp() * 1000), float(r.open), float(r.high),
+                                 float(r.low), float(r.close), float(r.volume)]
+                                for r in seed.itertuples(index=False)]
+                        ws_apply_ohlcv(symbol, rows, name)
+                except Exception as exc:
+                    logger.debug("بذرة شموع %s من %s فشلت (سيكملها التيار): %s", symbol, name, exc)
+            while True:
+                if stream == "ohlcv":
+                    data = await asyncio.wait_for(
+                        ex.watch_ohlcv(symbol, ENTRY_TIMEFRAME), timeout=WS_RECV_TIMEOUT_SEC)
+                    if not ws_apply_ohlcv(symbol, data, name):
+                        await asyncio.sleep(1.0)
+                else:
+                    t = await asyncio.wait_for(ex.watch_ticker(symbol), timeout=WS_RECV_TIMEOUT_SEC)
+                    t = t or {}
+                    if not ws_apply_price(symbol, t.get("last") or t.get("close"), name):
+                        await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _ws_mark(symbol, name, "error", f"{type(exc).__name__}: {exc}")
+            await asyncio.sleep(3.0)
+
+
+async def _ws_cancel_task(task: Any) -> None:
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+def _ws_spawn(symbol: str) -> None:
+    """إنشاء مهمتي الاشتراك (شموع + سعر) داخل حلقة asyncio — بأمان من خيط آخر."""
+    def _create() -> None:
+        if _ws_loop is None or not _ws_loop.is_running():
+            return
+        t1 = _ws_loop.create_task(_ws_watch_stream(symbol, "ohlcv"))
+        t2 = _ws_loop.create_task(_ws_watch_stream(symbol, "ticker"))
+        with _ws_lock:
+            _ws_tasks[symbol] = {"ohlcv": t1, "ticker": t2}
+    _ws_loop.call_soon_threadsafe(_create)
+
+
+def ws_sync_subscriptions() -> Dict[str, int]:
+    """مزامنة اشتراكات ويب سوكت مع الرموز ذات الصفقات النشطة (معلق/مفتوح) —
+    تُستدعى دوريًا من مشرف حلقة الويب سوكت ومن حلقة المراقبة احتياطًا.
+    الرمز دون نشاط يُلغى اشتراكه فورًا فلا اتصالات زائدة على المزودين."""
+    if not WS_ENABLED or _ws_loop is None or not _ws_loop.is_running():
+        return {"added": 0, "removed": 0}
+    try:
+        rows = db.query("SELECT DISTINCT symbol FROM signals WHERE status IN ('pending','open')")
+    except Exception:
+        return {"added": 0, "removed": 0}
+    wanted = {r["symbol"] for r in rows} if rows else set()
+    with _ws_lock:
+        current = set(_ws_tasks.keys())
+    added = removed = 0
+    for sym in wanted - current:
+        _ws_spawn(sym)
+        added += 1
+    for sym in current - wanted:
+        with _ws_lock:
+            tasks = _ws_tasks.pop(sym, None)
+        if tasks:
+            for t in tasks.values():
+                asyncio.run_coroutine_threadsafe(_ws_cancel_task(t), _ws_loop)
+            _ws_subs.pop(sym, None)
+            removed += 1
+    # تنظيف مهام ماتت كليًا (خطأ غير متوقع) — المزامنة القادمة تعيد إقلاعها إن لزم
+    with _ws_lock:
+        dead = [s for s, tt in _ws_tasks.items() if all(t.done() for t in tt.values())]
+        for s in dead:
+            _ws_tasks.pop(s, None)
+    if added or removed:
+        logger.info("ويب سوكت: اشتراكات الرموز النشطة — أضيف %d وأُلغي %d (الحالي: %s)",
+                    added, removed, ",".join(sorted(wanted)) or "لا شيء")
+    return {"added": added, "removed": removed}
+
+
+def start_ws_price_feed() -> None:
+    """[FE1.2.0] إقلاع خيط ويب سوكت مستقل: حلقة asyncio دائمة + مشرف مزامنة.
+    بلا تعطيل أبدًا: أي فشل (ccxt.pro غائب مثلًا) يُسجل ويبقى النظام على REST."""
+    global _ws_loop, _ws_thread_started
+    if _ws_thread_started or not WS_ENABLED:
+        return
+    if not _HAS_CCXT_PRO:
+        logger.warning("ccxt.pro غير متوفر في هذه النسخة — الأسعار الحية تبقى REST كما في FE1.1.1")
+        return
+    _ws_thread_started = True
+
+    async def _supervisor() -> None:
+        while True:
+            try:
+                ws_sync_subscriptions()
+            except Exception as exc:
+                logger.debug("مشرف ويب سوكت: %s", exc)
+            await asyncio.sleep(WS_SYNC_INTERVAL)
+
+    def _run() -> None:
+        global _ws_loop
+        _ws_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_ws_loop)
+        _ws_loop.call_soon_threadsafe(lambda: _ws_loop.create_task(_supervisor()))
+        try:
+            _ws_loop.run_forever()
+        finally:
+            _ws_loop.close()
+
+    threading.Thread(target=_run, daemon=True, name="ws-price-feed").start()
+    logger.info("خيط ويب سوكت للأسعار الحية أُقلع (ccxt.pro) — المزودون: %s | REST احتياطًا عند التقادم",
+                ",".join(DATA_PROVIDERS))
 
 
 def enrich_live_signal(sig: Dict[str, Any]) -> Dict[str, Any]:
@@ -767,7 +1087,7 @@ def monitor_step() -> None:
     for sig in pend:
         symbol = sig["symbol"]
         try:
-            df = fetch_ohlcv_df(symbol, ENTRY_TIMEFRAME, limit=2, min_candles=2)  # [FE1.1.1]
+            df = get_recent_candles(symbol, ENTRY_TIMEFRAME, limit=2, min_candles=2)  # [FE1.2.0] ويب سوكت أولًا
         except Exception as exc:
             logger.warning("[مراقبة] فشل جلب %s: %s", symbol, exc)
             continue
@@ -808,7 +1128,7 @@ def monitor_step() -> None:
     for sig in opened:
         symbol = sig["symbol"]
         try:
-            df = fetch_ohlcv_df(symbol, ENTRY_TIMEFRAME, limit=2, min_candles=2)  # [FE1.1.1]
+            df = get_recent_candles(symbol, ENTRY_TIMEFRAME, limit=2, min_candles=2)  # [FE1.2.0] ويب سوكت أولًا
         except Exception as exc:
             logger.warning("[مراقبة] فشل جلب %s: %s", symbol, exc)
             continue
@@ -952,6 +1272,7 @@ def monitor_loop() -> None:
         try:
             db.ensure()
             monitor_step()
+            ws_sync_subscriptions()  # [FE1.2.0] احتياط موازٍ للمشرف — مزامنة الاشتراكات كل دقيقة
         except Exception as exc:
             logger.exception("استثناء في حلقة المراقبة: %s", exc)
         time.sleep(60)
@@ -1012,7 +1333,7 @@ def compute_stats() -> Dict[str, Any]:
     unrealized = 0.0
     for r in open_rows:
         try:
-            df = fetch_ohlcv_df(r["symbol"], ENTRY_TIMEFRAME, limit=2, min_candles=2)  # [FE1.1.1]
+            df = get_recent_candles(r["symbol"], ENTRY_TIMEFRAME, limit=2, min_candles=2)  # [FE1.2.0]
             price = float(df["close"].iloc[-1]) if df is not None and not df.empty else float(r["fill_price"])
             unrealized += float(r["quantity"]) * (price - float(r["fill_price"]))
         except Exception:
@@ -1052,6 +1373,7 @@ def health():
         "db": "postgres" if USE_POSTGRES else "sqlite",
         "trading_enabled": is_trading_enabled,
         "data_source": (active_source.get("name") or "boot"),
+        "live_feed": ("websocket" if (WS_ENABLED and _ws_thread_started) else "rest"),
         "pairs": len(watchlist),
         "time": utc_now_iso(),
     })
@@ -1138,6 +1460,18 @@ def api_trades_cancel():
     return jsonify({"ok": True, "message": f"أُلغي الأمر المعلق لـ {sig['symbol']}"})
 
 
+@app.route("/api/ws/status")
+def api_ws_status():
+    """[FE1.2.0] تشخيص تغذية الأسعار الحية: الاشتراكات، المصادر، أعمار آخر تحديث."""
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
+    snap = ws_feed_snapshot()
+    snap["version"] = BOT_VERSION
+    snap["entry_timeframe"] = ENTRY_TIMEFRAME
+    return jsonify(snap)
+
+
 @app.route("/api/signals")
 def api_signals():
     rows = db.query("SELECT * FROM signals ORDER BY id DESC LIMIT 100")
@@ -1214,6 +1548,7 @@ def initialize_bot_services() -> None:
     init_db()
     restore_trading_flag()
     load_markets_async()
+    start_ws_price_feed()  # [FE1.2.0] الأسعار الحية من ويب سوكت — REST احتياطًا فقط
     threading.Thread(target=scan_loop, daemon=True, name="scan-loop").start()
     threading.Thread(target=monitor_loop, daemon=True, name="monitor-loop").start()
     threading.Thread(target=keep_alive_loop, daemon=True, name="keep-alive").start()
@@ -1221,6 +1556,7 @@ def initialize_bot_services() -> None:
         "info",
         f"🚀 Fibo-Elio {BOT_VERSION} أقلع — استراتيجية واحدة: Elliott_Fibonacci (المنطق الأصلي)\n"
         f"وضع ورقي دائم | أزواج: {len(watchlist)} | فريم الكشف {SIGNAL_TIMEFRAME} | التنفيذ {ENTRY_TIMEFRAME}\n"
+        f"الأسعار الحية: {'ويب سوكت (ccxt.pro) — REST احتياطًا' if WS_ENABLED else 'REST'} | "
         f"انعكاس الزيجزاج {DEVIATION_THRESHOLD*100:.2f}% | أقصى صفقات {MAX_OPEN_TRADES} | مخاطرة {RISK_PCT_PER_TRADE}%",
         "BOOT",
     )

@@ -5,9 +5,10 @@ panel.py — لوحة تحكم Fibo-Elio (عربية RTL، داكنة، تحدي
 تعرض: الحالة الورقية، الرصيد، الصفقات المفتوحة/المعلقة بتتبع حي (السعر الآن،
 غير المحقق، التقدم نحو الهدف)، إغلاق/إلغاء يدوي، المغلقة، أداء
 استراتيجية Elliott_Fibonacci، آخر التقاطات الموجات (صاعدة/هابطة)، والإشعارات.
+[FE1.2.0] شارة مصدر كل سعر حي (⚡WS ويب سوكت / REST احتياط) + شريحة حالة التغذية.
 """
 
-BOT_VERSION = "FE1.1.1"
+BOT_VERSION = "FE1.2.0"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -73,6 +74,11 @@ PANEL_HTML = r"""<!DOCTYPE html>
   button.mini:hover { border-color:var(--gold); color:var(--gold); }
   button.mini.cxl:hover { border-color:var(--red); color:var(--red); }
   .liveprice { font-weight:700; color:var(--blue); }
+  .src { font-size:.6rem; padding:1px 6px; border-radius:6px; margin-left:6px; border:1px solid; font-weight:700; vertical-align:middle; }
+  .src-ws { background:rgba(45,212,191,.12); color:var(--teal); border-color:var(--teal); }
+  .src-rest { background:rgba(139,160,191,.12); color:var(--mut); border-color:var(--mut); }
+  .b-ws { background:rgba(45,212,191,.1); color:var(--teal); border-color:var(--teal); }
+  .b-ws-off { background:rgba(139,160,191,.12); color:var(--mut); border-color:var(--mut); }
   footer { text-align:center; color:var(--mut); font-size:.72rem; padding:8px 0 20px; line-height:1.8; }
   footer a { color:var(--blue); text-decoration:none; }
   #toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--card);
@@ -86,6 +92,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
     <span class="badge b-orig">المنطق الأصلي: Elliott_Waves_Algo_TradingBot (MIT)</span>
     <span class="badge b-paper">وضع ورقي — لا أوامر حقيقية</span>
     <span class="badge" id="trade-badge"></span>
+    <span class="badge" id="feed-badge" title="مصدر الأسعار الحية للصفقات النشطة">التغذية الحية: —</span>
     <div class="spacer"></div>
     <button class="act" onclick="toggleTrading()">تشغيل/إيقاف التوليد</button>
     <button class="act danger" onclick="resetStats()">تصفير الإحصائيات</button>
@@ -94,7 +101,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   <div class="grid" id="cards"></div>
 
   <section>
-    <h2>📈 الصفقات المفتوحة والأوامر المعلقة <span class="mut small">— تتبع حي: السعر الآن وغير المحقق يتحدثان مع كل تحديث</span></h2>
+    <h2>📈 الصفقات المفتوحة والأوامر المعلقة <span class="mut small">— تتبع حي: الأسعار من ويب سوكت ⚡ (REST احتياطًا) · السعر الآن وغير المحقق يتحدثان مع كل تحديث</span></h2>
     <div id="open-box"></div>
   </section>
 
@@ -116,7 +123,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   <footer>
     استراتيجية واحدة فقط: <b>موجة إليوت (دافع 5 موجات، قواعد صارمة ثلاث)</b> + <b>مستويات فيبوناتشي</b>
     (دخول 0.382 لتراجع الموجة 3 · وقف بنيوي خلف P0 · هدف امتداد 1.618 للموجة 1) —
-    تتبع حي + إغلاق/إلغاء يدوي [FE1.1.0] + إغلاق آلي عند الوقف/الهدف كل 60 ثانية<br>
+    تتبع حي + إغلاق/إلغاء يدوي [FE1.1.0] + أسعار حية من ويب سوكت [FE1.2.0] + إغلاق آلي عند الوقف/الهدف كل 60 ثانية<br>
     المحرك منقول حرفيًا من <a href="https://github.com/dtwijesekara/Elliott_Waves_Algo_TradingBot" target="_blank">Elliott_Waves_Algo_TradingBot</a>
     (MIT) — مستودع المشروع: <a href="https://github.com/salah55t/fibo-elio" target="_blank">salah55t/fibo-elio</a>
   </footer>
@@ -131,9 +138,26 @@ const usd = v => (v>=0?'+':'') + v.toFixed(2) + '$';
 const cls = v => v>=0 ? 'pos' : 'neg';
 const dt = s => s ? s.replace('T',' ').replace('Z','') : '—';
 
+let WSSTATE = null; // حالة تغذية الويب سوكت [FE1.2.0] — من /api/ws/status
+
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2500); }
 
 async function api(path, opts){ const r = await fetch(path, opts); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+
+function renderFeed(ws){
+  const b = $('feed-badge');
+  if(!ws || !ws.enabled){ b.textContent='التغذية الحية: REST'; b.className='badge b-ws-off'; return; }
+  if(!ws.loop_alive){ b.textContent='التغذية الحية: ويب سوكت متوقف — REST مؤقتًا'; b.className='badge b-ws-off'; return; }
+  b.textContent = `التغذية الحية: ويب سوكت ⚡ (${ws.live_streams||0} تيار حي)`;
+  b.className = 'badge b-ws';
+}
+
+function srcBadge(sym){
+  const p = (WSSTATE && WSSTATE.enabled && WSSTATE.prices) ? WSSTATE.prices[sym] : null;
+  if(p && p.age_sec !== undefined && p.age_sec < 90)
+    return `<span class="src src-ws" title="ويب سوكت عبر ${p.source} — عمر آخر تحديث ${p.age_sec} ث">⚡WS</span>`;
+  return '<span class="src src-rest" title="طلبات REST (احتياط عند غياب التيار)">REST</span>';
+}
 
 function renderCards(d){
   const s = d.stats;
@@ -166,8 +190,8 @@ function renderOpen(list){
     const isPend = s.status==='pending';
     const st = isPend ? '<span class="pill p-pending">معلق</span>' : '<span class="pill p-open">مفتوح</span>';
     const fib = s.fib || {};
-    // تتبع حي [FE1.1.0]
-    const cp = s.current_price ? `<span class="liveprice">${fmt(s.current_price)}</span>` : '<span class="mut">—</span>';
+    // تتبع حي [FE1.1.0] + شارة المصدر [FE1.2.0]
+    const cp = s.current_price ? `${srcBadge(s.symbol)}<span class="liveprice">${fmt(s.current_price)}</span>` : '<span class="mut">—</span>';
     let live;
     if(!isPend){
       const u = s.unrealized_usdt;
@@ -247,6 +271,8 @@ function renderNotifs(list){
 async function refresh(){
   try {
     const d = await api('/api/all');
+    try { WSSTATE = await api('/api/ws/status'); } catch(e){ WSSTATE = null; }
+    renderFeed(WSSTATE);
     renderCards(d); renderOpen(d.open_signals); renderClosed(d.closed_signals);
     renderDetections(d.detections); renderNotifs(d.notifications);
   } catch(e){ console.error(e); }

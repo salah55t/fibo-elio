@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_fe100.py — اختبارات Fibo-Elio FE1.1.0
+test_fe100.py — اختبارات Fibo-Elio FE1.2.0
 
-خمس جولات:
+ست جولات:
   1) المحرك الأصلي المنقول حرفيًا: زيجزاج على موجات مصطنعة + القواعد الثلاث + فيبوناتشي
   2) التدفق الورقي: إنشاء معلق → ملء → إبطال بنيوي/صلاحية → وقف/هدف → محاسبة رسوم
   3) اللوحة وAPI: /health و/api/all والتبديل والتصفير (Flask test_client)
   4) تعاقب مزودي البيانات FE1.0.1: باينانس أولًا ثم البدائل عند الحظر
   5) التتبع الحي والتحكم اليدوي FE1.1.0: سعر حي + غير محقق + إغلاق/إلغاء يدوي
+  6) تغذية الأسعار من ويب سوكت FE1.2.0: الذاكرة الحية أولًا، REST احتياطًا،
+     شموع المراقبة من التيار، التشخيص /api/ws/status
 
 تشغيل: pytest test_fe100.py -v   (من داخل مجلد المشروع)
 اختبار سوق حي اختياري: RUN_LIVE_SMOKE=1 pytest test_fe100.py -v -k live
@@ -318,7 +320,7 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "FE1.1.1"
+        assert body["version"] == "FE1.2.0"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 
@@ -634,6 +636,244 @@ class TestShortFetchRegressionFE111:
                                       [1700000900000, 130.5, 132.0, 130.0, 131.7, 10.0]])
         _reset_providers(monkeypatch, OrderedDict([("binance", ok)]))
         assert math.isclose(vnz.get_live_price("BTC/USDT"), 131.7)
+
+
+@pytest.fixture(autouse=True)
+def _ws_state_isolation():
+    """[FE1.2.0] عزل حالة ويب سوكت بين الاختبارات — الذاكرة الحية تُمسح قبل وبعد كل اختبار
+    فلا يتسرب سعر تيار اختبار إلى اختبار آخر يعتمد مسار REST."""
+    def _wipe():
+        with vnz._ws_lock:
+            vnz._ws_price.clear()
+            vnz._ws_candles.clear()
+            vnz._ws_subs.clear()
+            vnz._ws_tasks.clear()
+        vnz._price_cache.clear()
+    _wipe()
+    yield
+    _wipe()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# الجولة 6 — تغذية الأسعار الحية من ويب سوكت FE1.2.0
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestWebSocketPriceFeedFE120:
+    """FE1.2.0 — الأسعار الحية من ويب سوكت (ccxt.pro) لا REST:
+    ذاكرة التيار الحي تُقرأ أولًا، REST احتياط عند الغياب/التقادم فقط،
+    وشموع المراقبة تقرأ من التيار بنفس بُنية fetch_ohlcv_df تمامًا."""
+
+    def _inject_price(self, symbol="BTC/USDT", price=123.45, age=0.0, source="binance"):
+        with vnz._ws_lock:
+            vnz._ws_price[symbol] = {"price": price, "ts": time.time() - age, "source": source}
+
+    def _inject_candles(self, symbol="BTC/USDT", n=3, base=100.0, age=0.0, source="binance"):
+        t0 = 1_700_000_000_000
+        rows = [[t0 + i * 900_000, base + i, base + i + 1, base + i - 1, base + i + 0.5, 10.0]
+                for i in range(n)]
+        with vnz._ws_lock:
+            vnz._ws_candles[symbol] = {"candles": rows, "ts": time.time() - age, "source": source}
+        return rows
+
+    # — تطبيق رسائل التيار —
+
+    def test_apply_price_accepts_and_stores(self):
+        assert vnz.ws_apply_price("BTC/USDT", "123.45", "binance") is True
+        with vnz._ws_lock:
+            hit = vnz._ws_price["BTC/USDT"]
+        assert hit["price"] == 123.45 and hit["source"] == "binance"
+
+    def test_apply_price_rejects_garbage(self):
+        for bad in (None, "abc", -5, 0, float("nan"), float("inf")):
+            assert vnz.ws_apply_price("BTC/USDT", bad, "binance") is False, bad
+
+    def test_apply_ohlcv_filters_bad_rows(self):
+        good1 = [1, 100.0, 101.0, 99.0, 100.5, 10.0]
+        good2 = [2, 100.5, 102.0, 100.0, 101.5, 10.0]
+        bad_zero_high = [3, 101.5, 0, 100.0, 102.0, 10.0]
+        bad_short = [4, 101.5]
+        good3 = [5, 101.5, 103.0, 101.0, 102.5, 10.0]
+        assert vnz.ws_apply_ohlcv("BTC/USDT", [good1, good2, bad_zero_high, bad_short, good3], "binance") is True
+        with vnz._ws_lock:
+            rows = vnz._ws_candles["BTC/USDT"]["candles"]
+        assert rows == [good1, good2, good3]  # التالف حُذف والترتيب محفوظ
+
+    def test_apply_ohlcv_caps_to_keep_window(self):
+        rows = [[i, 100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i, 10.0] for i in range(9)]
+        assert vnz.ws_apply_ohlcv("BTC/USDT", rows, "binance") is True
+        with vnz._ws_lock:
+            kept = vnz._ws_candles["BTC/USDT"]["candles"]
+        assert len(kept) == vnz.WS_CANDLE_KEEP and kept[-1][0] == 8  # الأحدث محفوظ
+
+    def test_apply_ohlcv_fills_price_from_close_when_ticker_missing(self):
+        assert vnz.ws_apply_ohlcv("BTC/USDT", [[1, 100.0, 101.0, 99.0, 100.5, 10.0]], "binance") is True
+        assert vnz.get_live_price("BTC/USDT") == 100.5
+
+    def test_apply_ohlcv_does_not_overwrite_fresh_ticker_price(self):
+        self._inject_price(price=200.0)
+        vnz.ws_apply_ohlcv("BTC/USDT", [[1, 100.0, 101.0, 99.0, 100.5, 10.0]], "binance")
+        assert vnz.get_live_price("BTC/USDT") == 200.0  # ticker الأحدث يفوز
+
+    def test_apply_ohlcv_merges_with_seeded_history(self):
+        """بذرة REST (شموع مغلقة) + تيار يرسل الشمعة الجارية وحدها = دمج لا محو."""
+        seed = [[1, 100.0, 101.0, 99.0, 100.5, 10.0],
+                [2, 100.5, 102.0, 100.0, 101.5, 10.0]]
+        assert vnz.ws_apply_ohlcv("BTC/USDT", seed, "binance") is True
+        # التيار يرسل تحديث الشمعة الجارية فقط (نمط بعض المزودين)
+        assert vnz.ws_apply_ohlcv("BTC/USDT", [[2, 100.5, 102.5, 100.2, 101.8, 10.0]], "binance") is True
+        with vnz._ws_lock:
+            rows = vnz._ws_candles["BTC/USDT"]["candles"]
+        assert len(rows) == 2  # المغلقة بقيت والجارية حُدّثت
+        assert rows[0] == [1, 100.0, 101.0, 99.0, 100.5, 10.0]
+        assert rows[-1] == [2, 100.5, 102.5, 100.2, 101.8, 10.0]
+
+    # — أولويات get_live_price —
+
+    def test_live_price_prefers_websocket_without_rest(self, monkeypatch):
+        self._inject_price(price=123.45)
+
+        def _boom(*a, **k):
+            raise AssertionError("لا يجوز استدعاء REST مع تيار ويب سوكت حي")
+
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", _boom)
+        assert vnz.get_live_price("BTC/USDT") == 123.45
+
+    def test_live_price_falls_back_to_rest_when_ws_stale(self, monkeypatch):
+        self._inject_price(price=123.45, age=vnz.WS_STALE_SEC + 10)
+        df = pd.DataFrame([[1700000000000, 130.0, 131.0, 129.0, 42.0, 10.0]],
+                          columns=["ts", "open", "high", "low", "close", "volume"])
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", lambda *a, **k: df)
+        assert vnz.get_live_price("BTC/USDT") == 42.0
+
+    def test_live_price_ws_disabled_uses_rest(self, monkeypatch):
+        self._inject_price(price=123.45)
+        monkeypatch.setattr(vnz, "WS_ENABLED", False)
+        df = pd.DataFrame([[1700000000000, 130.0, 131.0, 129.0, 55.0, 10.0]],
+                          columns=["ts", "open", "high", "low", "close", "volume"])
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", lambda *a, **k: df)
+        assert vnz.get_live_price("BTC/USDT") == 55.0
+
+    def test_live_price_fresher_rest_cache_wins_over_older_ws(self):
+        self._inject_price(price=100.0, age=60.0)  # تيار قدم نسبيًا (< حد التقادم)
+        with vnz._price_cache_lock:
+            vnz._price_cache["BTC/USDT"] = (111.0, time.time() - 5.0)  # ذاكرة REST أحدث
+        assert vnz.get_live_price("BTC/USDT") == 111.0
+
+    # — شموع المراقبة من التيار —
+
+    def test_recent_candles_from_ws_stream(self, monkeypatch):
+        rows = self._inject_candles(n=3, base=100.0)
+
+        def _boom(*a, **k):
+            raise AssertionError("لا يجوز REST مع تيار شموع حي")
+
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", _boom)
+        df = vnz.get_recent_candles("BTC/USDT", vnz.ENTRY_TIMEFRAME, limit=2, min_candles=2)
+        assert df is not None and len(df) == 2  # آخر شمعتين كما تطلب المراقبة
+        assert list(df.columns) == ["timestamp", "open", "high", "low", "close", "volume", "symbol", "timeframe"]
+        assert float(df["close"].iloc[-1]) == rows[-1][4]
+        assert df["symbol"].iloc[-1] == "BTC/USDT" and df["timeframe"].iloc[-1] == vnz.ENTRY_TIMEFRAME
+
+    def test_recent_candles_insufficient_ws_falls_back_rest(self, monkeypatch):
+        self._inject_candles(n=1)  # شمعة واحدة < min_candles=2 — كما يحمي FE1.1.1
+        sentinel = pd.DataFrame([[1700000000000, 130.0, 131.0, 129.0, 42.0, 10.0]],
+                                columns=["ts", "open", "high", "low", "close", "volume"])
+        seen = {}
+
+        def _rest(symbol, timeframe, limit=500, min_candles=60):
+            seen["args"] = (symbol, timeframe, limit, min_candles)
+            return sentinel
+
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", _rest)
+        assert vnz.get_recent_candles("BTC/USDT", vnz.ENTRY_TIMEFRAME, limit=2, min_candles=2) is sentinel
+        assert seen["args"] == ("BTC/USDT", vnz.ENTRY_TIMEFRAME, 2, 2)
+
+    def test_recent_candles_stale_ws_falls_back_rest(self, monkeypatch):
+        self._inject_candles(n=3, age=vnz.WS_STALE_SEC + 5)
+        sentinel = pd.DataFrame([[1700000000000, 130.0, 131.0, 129.0, 42.0, 10.0]],
+                                columns=["ts", "open", "high", "low", "close", "volume"])
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", lambda *a, **k: sentinel)
+        assert vnz.get_recent_candles("BTC/USDT", vnz.ENTRY_TIMEFRAME, limit=2, min_candles=2) is sentinel
+
+    def test_recent_candles_non_entry_timeframe_goes_rest(self, monkeypatch):
+        self._inject_candles(n=3)
+        sentinel = object()
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", lambda *a, **k: sentinel)
+        # فريم الكشف (المسح) يبقى REST دائمًا — التيار لفريم التنفيذ فقط
+        assert vnz.get_recent_candles("BTC/USDT", vnz.SIGNAL_TIMEFRAME, limit=500, min_candles=60) is sentinel
+
+    def test_recent_candles_respects_ws_disabled(self, monkeypatch):
+        self._inject_candles(n=3)
+        monkeypatch.setattr(vnz, "WS_ENABLED", False)
+        sentinel = object()
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", lambda *a, **k: sentinel)
+        assert vnz.get_recent_candles("BTC/USDT", vnz.ENTRY_TIMEFRAME, limit=2, min_candles=2) is sentinel
+
+    def test_monitor_fills_pending_from_ws_candles(self, clean_db, monkeypatch):
+        """الاختبار الجوهري: الملء يحدث من شموع التيار الحي دون أي طلب REST."""
+        s = [x for x in DET.scan(impulse_df()) if x.direction == "BULLISH"][-1]
+        assert vnz.create_pending_signal("TEST/USDT", s)
+        sig = clean_db.query("SELECT * FROM signals", one=True)
+        entry = float(sig["entry_price"])
+        t0 = 1_700_000_000_000
+        rows = [[t0, entry + 2, entry + 3, entry + 2, entry + 2, 10.0],
+                [t0 + 900_000, entry + 2, entry + 2.5, entry - 0.5, entry - 0.2, 10.0]]
+        with vnz._ws_lock:
+            vnz._ws_candles["TEST/USDT"] = {"candles": rows, "ts": time.time(), "source": "binance"}
+
+        def _boom(*a, **k):
+            raise AssertionError("المراقبة يجب أن تقرأ من ويب سوكت لا REST")
+
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", _boom)
+        vnz.monitor_step()
+        after = clean_db.query("SELECT * FROM signals", one=True)
+        assert after["status"] == "open"
+        assert float(after["fill_price"]) == pytest.approx(entry - 0.2)  # ملء بسعر أفضل تحت الدخول
+
+    # — التشخيص —
+
+    def test_feed_snapshot_shape(self):
+        self._inject_price()
+        self._inject_candles()
+        with vnz._ws_lock:
+            vnz._ws_subs["BTC/USDT"] = {"provider": "binance", "state": "live", "last_error": "",
+                                        "updates": 3, "last_msg_at": None, "started_at": None}
+        snap = vnz.ws_feed_snapshot()
+        assert snap["enabled"] is True
+        assert snap["prices"]["BTC/USDT"]["price"] == 123.45
+        assert snap["candles"]["BTC/USDT"]["n"] == 3
+        assert snap["subscriptions"]["BTC/USDT"]["state"] == "live"
+        assert snap["live_streams"] == 1
+
+    def test_ws_status_endpoint(self, clean_db):
+        self._inject_price()
+        client = vnz.app.test_client()
+        r = client.get("/api/ws/status")
+        assert r.status_code == 200
+        data = r.get_json()
+        assert data["version"] == "FE1.2.0"
+        assert data["enabled"] is True
+        assert "prices" in data and "subscriptions" in data and "candles" in data
+
+    def test_ws_status_requires_auth(self, monkeypatch):
+        monkeypatch.setattr(vnz, "DASHBOARD_PROTECTED", True)
+        monkeypatch.setattr(vnz, "DASHBOARD_USERNAME", "admin")
+        monkeypatch.setattr(vnz, "DASHBOARD_PASSWORD", "test123")
+        client = vnz.app.test_client()
+        assert client.get("/api/ws/status").status_code == 401
+
+    def test_sync_without_loop_is_noop(self, clean_db):
+        assert vnz.ws_sync_subscriptions() == {"added": 0, "removed": 0}
+
+    def test_health_reports_live_feed(self, clean_db):
+        client = vnz.app.test_client()
+        data = client.get("/health").get_json()
+        assert data["live_feed"] in ("websocket", "rest")
+        assert data["version"] == "FE1.2.0"
+
+    def test_ws_exchange_unknown_provider_raises(self):
+        with pytest.raises(ValueError):
+            vnz._ws_exchange("no_such_exchange_xyz")
 
 
 if __name__ == "__main__":
