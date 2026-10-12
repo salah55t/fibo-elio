@@ -50,7 +50,6 @@ import os
 import threading
 import time
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_DOWN
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -661,6 +660,7 @@ def select_best_setup(setups: List[DetectedSetup]) -> Optional[DetectedSetup]:
 
 def scan_cycle() -> None:
     """دورة كشف كاملة على القائمة — الكشف الصاعد يُنفذ ورقيًا والهابط يُعرض فقط."""
+    db.ensure()
     with scan_stats_lock:
         scan_stats["cycles"] += 1
     trading_on = is_trading_enabled
