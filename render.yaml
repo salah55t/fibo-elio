@@ -1,0 +1,45 @@
+services:
+  - type: web
+    name: fibo-elio
+    runtime: python
+    plan: free
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python vnz.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # وضع ورقي دائم — لا مفاتيح تداول مطلوبة (الشموع العامة تكفي)
+      - key: BINANCE_API_KEY
+        sync: false
+      - key: BINANCE_API_SECRET
+        sync: false
+      # حماية اللوحة (admin/test123 مثل المشروع السابق)
+      - key: DASHBOARD_USERNAME
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      # اختياري: قاعدة بيانات دائمة — بدونها يعمل SQLite محليًا (يفقد البيانات عند إعادة النشر)
+      - key: DATABASE_URL
+        sync: false
+      # اختياري: إشعارات تلجرام
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      # إعدادات الاستراتيجية (افتراضيات المؤلف الأصلي لفريم 1h)
+      - key: DEVIATION_THRESHOLD
+        value: "0.006"
+      - key: SIGNAL_TIMEFRAME
+        value: "1h"
+      - key: ENTRY_TIMEFRAME
+        value: "15m"
+      - key: MAX_OPEN_TRADES
+        value: "3"
+      - key: RISK_PCT_PER_TRADE
+        value: "1.0"
+      - key: PENDING_MAX_CANDLES
+        value: "3"
+      - key: PAPER_BALANCE
+        value: "10000"
