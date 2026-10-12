@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ═══════════════════════════════════════════════════════════════════════════════
- FIBO-ELIO — بوت موجة إليوت + مستويات فيبوناتشي  (FE1.0.0)
+ FIBO-ELIO — بوت موجة إليوت + مستويات فيبوناتشي  (FE1.0.1)
 ═══════════════════════════════════════════════════════════════════════════════
  مشروع منفصل طلب المستخدم: «امسح جميع الاستراتيجيات واترك فقط استراتيجية اليوت
  ومستويات فيبوناتشي، وضع المشروع في مستودع منفصل، ولتكن الاستراتيجية مثل
@@ -31,6 +31,12 @@
  كل الصفقات محاكاة ورقية برصيد وهمي (PAPER_BALANCE) ورسوم واقعية 0.1% للاتجاهين.
  مفتاح التداول يتحكم في توليد إشارات ورقية جديدة فقط.
 
+ FE1.0.1: طبقة مزودي بيانات متعددة — باينانس أولًا كما في الأصل، ثم Bybit → OKX
+ → Gate.io تلقائيًا عند الحظر/الفشل. الدرس المستفاد من المشروع السابق: عنوان
+ الخروج المشترك لخدمات Render يتعرض لحظر وزن باينانس (-1003) المتجدد بسبب
+ استهلاك الخدمات الأخرى على نفس العنوان، فالبدائل العامة بحدود سخية تضمن استمرار
+ الرؤية للسوق دون أي تغيير على المنطق الأصلي أو الوضع الورقي.
+
  متغيرات البيئة (نفس عقد المشروع السابق + إعدادات الاستراتيجية):
    BINANCE_API_KEY / BINANCE_API_SECRET  (اختياريان — الشموع العامة تكفي للورقي)
    DATABASE_URL          اختياري (PostgreSQL) — وإلا SQLite محلي
@@ -49,6 +55,7 @@ import math
 import os
 import threading
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -74,7 +81,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.0.0"
+BOT_VERSION = "FE1.0.1"  # FE1.0.1: تعاقب مزودي البيانات ضد حظر باينانس المشترك بين خدمات Render
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -102,6 +109,11 @@ MIN_NOTIONAL_USDT = float(os.getenv("MIN_NOTIONAL_USDT", "10.0"))
 CANDLE_CLOSE_BUFFER_SECS = 5
 PORT = int(os.getenv("PORT", "10000"))
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
+# [FE1.0.1] سلسلة مزودي البيانات: باينانس أولًا كما في الأصل، ثم بدائل عامة بحدود سخية
+DATA_PROVIDERS: List[str] = [
+    p.strip().lower() for p in os.getenv("DATA_PROVIDERS", "binance,bybit,okx,gate").split(",") if p.strip()
+]
+PROVIDER_COOLDOWN_SEC = float(os.getenv("PROVIDER_COOLDOWN_SEC", "900"))  # تبريد المزود الفاشل 15 دقيقة
 
 DASHBOARD_PROTECTED = bool(DASHBOARD_USERNAME and DASHBOARD_PASSWORD)
 USE_POSTGRES = DATABASE_URL.startswith("postgres")
@@ -118,9 +130,10 @@ is_trading_enabled: bool = False
 trading_status_lock = threading.Lock()
 
 scan_stats_lock = threading.Lock()
-scan_stats: Dict[str, Dict[str, int]] = {
+scan_stats: Dict[str, Any] = {
     "cycles": 0, "scanned": 0, "setups_valid": 0, "setups_bull_traded": 0,
     "setups_bear_seen": 0, "rejected_active_limit": 0, "rejected_symbol_busy": 0,
+    "last_scan_at": "", "last_scan_fetched": 0,  # [FE1.0.1] تشخيص دورة المسح
 }
 
 # آخر الالتقاطات (صاعدة/هابطة) للوحة — حلقة ذاكرة خفيفة
@@ -336,12 +349,74 @@ def send_telegram_message(message: str) -> None:
 # طبقة بيانات السوق — ccxt (كما في المشروع الأصلي)
 # ══════════════════════════════════════════════════════════════════════════════
 
-exchange = ccxt.binance({
-    "apiKey": API_KEY or None,
-    "secret": API_SECRET or None,
-    "enableRateLimit": True,
-    "options": {"defaultType": "spot"},
-})
+def _build_exchange(name: str):
+    """تهيئة مزود ccxt — مفاتيح باينانس تُمرر لباينانس فقط (البدائل عامة بلا مفاتيح)."""
+    cls = getattr(ccxt, name, None)
+    if cls is None and name == "gate":
+        cls = getattr(ccxt, "gateio", None)  # الاسم القديم في إصدارات ccxt الأقدم
+    if cls is None:
+        raise ValueError(f"مزود غير معروف في ccxt: {name}")
+    opts: Dict[str, Any] = {
+        "enableRateLimit": True,
+        "options": {"defaultType": "spot"},
+    }
+    if name == "binance":
+        opts["apiKey"] = API_KEY or None
+        opts["secret"] = API_SECRET or None
+    return cls(opts)
+
+
+provider_lock = threading.Lock()
+EXCHANGES: "OrderedDict[str, Any]" = OrderedDict()
+for _pname in DATA_PROVIDERS:
+    try:
+        EXCHANGES[_pname] = _build_exchange(_pname)
+    except Exception as _exc:
+        logger.warning("تعذر تهيئة مزود البيانات %s: %s", _pname, _exc)
+
+# حالة كل مزود: عدادات + آخر خطأ + تبريد زمني بعد الفشل (حظر -1003 المشترك مثالًا)
+provider_state: Dict[str, Dict[str, Any]] = {
+    name: {"ok": 0, "fail": 0, "last_error": "", "last_ok_at": None, "cooldown_until": 0.0}
+    for name in EXCHANGES
+}
+active_source: Dict[str, Any] = {"name": None, "since": None}
+
+
+def current_exchange():
+    """المزود الفعّال الحالي (لأدوات دقة الكميات) — باينانس احتياطًا."""
+    with provider_lock:
+        name = active_source["name"]
+    if name and name in EXCHANGES:
+        return EXCHANGES[name]
+    return EXCHANGES.get("binance") or (next(iter(EXCHANGES.values())) if EXCHANGES else None)
+
+
+def amount_prec(symbol: str, qty: float) -> float:
+    """تقريب الكمية حسب قواعد المزود الفعّال — بأمان تام بلا استثناءات."""
+    ex = current_exchange()
+    if ex is None:
+        return qty
+    try:
+        return float(ex.amount_to_precision(symbol, qty))
+    except Exception:
+        return qty
+
+
+def data_status() -> Dict[str, Any]:
+    """تشخيص مزودي البيانات للوحة وواجهات API — بلا كتمان لأي فشل."""
+    now = time.time()
+    with provider_lock:
+        provs: Dict[str, Any] = {}
+        for name, st in provider_state.items():
+            provs[name] = {
+                "ok": st["ok"],
+                "fail": st["fail"],
+                "last_error": st["last_error"] or None,
+                "last_ok_at": st["last_ok_at"],
+                "cooling_sec": max(0, int(st["cooldown_until"] - now)),
+            }
+        active = dict(active_source)
+    return {"active": active.get("name"), "active_since": active.get("since"), "providers": provs}
 
 REQUIRED_COLS = ["timestamp", "open", "high", "low", "close", "volume"]
 
@@ -379,12 +454,46 @@ def load_watchlist() -> List[str]:
 watchlist: List[str] = load_watchlist()
 
 
-def fetch_ohlcv_df(symbol: str, timeframe: str, limit: int = OHLCV_LIMIT) -> Optional[pd.DataFrame]:
-    """شموع OHLCV كإطار pandas بعقد الطبقة الأولى (timestamp/open/high/low/close/volume)."""
-    for attempt in range(3):
+def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[list], Optional[str]]:
+    """تجربة المزودين بالترتيب: باينانس أولًا (الأصل) ثم البدائل عند الحظر/الفشل.
+    المزود الفاشل يدخل تبريدًا مؤقتًا حتى لا تُهدر زمن كل دورة عليه."""
+    now = time.time()
+    with provider_lock:
+        order = [n for n in EXCHANGES if provider_state[n]["cooldown_until"] <= now]
+    errors: List[str] = []
+    for name in order:
         try:
-            raw = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-            if not raw or len(raw) < 60:
+            raw = EXCHANGES[name].fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+            if not raw:
+                raise ValueError("قائمة شموع فارغة")
+            with provider_lock:
+                st = provider_state[name]
+                st["ok"] += 1
+                st["last_ok_at"] = utc_now_iso()
+                if active_source["name"] != name:
+                    active_source["name"] = name
+                    active_source["since"] = utc_now_iso()
+                    logger.info("مزود البيانات الفعّال الآن: %s", name)
+            return raw, name
+        except Exception as exc:
+            with provider_lock:
+                st = provider_state[name]
+                st["fail"] += 1
+                st["last_error"] = str(exc)[:280]
+                st["cooldown_until"] = time.time() + PROVIDER_COOLDOWN_SEC
+            errors.append(f"{name}: {str(exc)[:120]}")
+    if errors:
+        logger.warning("فشل جلب %s %s من المزودين المتاحين — %s", symbol, timeframe, " | ".join(errors))
+    return None, None
+
+
+def fetch_ohlcv_df(symbol: str, timeframe: str, limit: int = OHLCV_LIMIT) -> Optional[pd.DataFrame]:
+    """شموع OHLCV كإطار pandas بعقد الطبقة الأولى (timestamp/open/high/low/close/volume).
+    [FE1.0.1] عبر تعاقب المزودين — باينانس أولًا كما في الأصل ثم البدائل آليًا."""
+    for attempt in range(3):
+        raw, _src = fetch_ohlcv_raw(symbol, timeframe, limit)
+        if raw:
+            if len(raw) < 60:
                 return None
             df = pd.DataFrame(raw, columns=["ts", "open", "high", "low", "close", "volume"])
             df["timestamp"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
@@ -393,9 +502,7 @@ def fetch_ohlcv_df(symbol: str, timeframe: str, limit: int = OHLCV_LIMIT) -> Opt
             df = df[REQUIRED_COLS + ["symbol", "timeframe"]]
             df = df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
             return df
-        except Exception as exc:
-            logger.warning("[%s] فشل جلب الشموع %s (محاولة %d): %s", symbol, timeframe, attempt + 1, exc)
-            time.sleep(2.0 * (attempt + 1))
+        time.sleep(2.0 * (attempt + 1))
     return None
 
 
@@ -430,10 +537,10 @@ def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
     risk_per_coin = abs(entry - sl)
     if risk_per_coin <= 0 or risk_amount <= 0:
         return None
-    qty = risk_amount / risk_per_coin
-    try:
-        qty = float(exchange.amount_to_precision(symbol, qty))
-    except Exception:
+    qty_raw = risk_amount / risk_per_coin
+    qty = amount_prec(symbol, qty_raw)
+    if qty == qty_raw:
+        # لا طبقة دقة متاحة (بلا مزود أو فشل التقريب) — تقريب بسيط كما في الأصل
         qty = math.floor(qty * 1e6) / 1e6
     if qty <= 0:
         return None
@@ -442,9 +549,8 @@ def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
         # ورقي: اسمح بأدنى حجم تداول لكن ارفض إن تجاوزت المخاطرة 3× الميزانية المخططة
         qty_min = MIN_NOTIONAL_USDT / entry
         if qty_min * risk_per_coin <= risk_amount * 3.0:
-            try:
-                qty = float(exchange.amount_to_precision(symbol, qty_min))
-            except Exception:
+            qty = amount_prec(symbol, qty_min)
+            if qty <= 0:
                 qty = math.floor(qty_min * 1e6) / 1e6
         else:
             logger.info("[%s] رفض الحجم: مسافة الوقف واسعة جدًا لأدنى حجم (%.2f USDT مخاطرة)", symbol, qty_min * risk_per_coin)
@@ -658,11 +764,29 @@ def select_best_setup(setups: List[DetectedSetup]) -> Optional[DetectedSetup]:
     return max(setups, key=score)
 
 
+_last_outage_notify = {"at": 0.0}
+
+
+def maybe_notify_outage() -> None:
+    """إشعار لوحة واحد كل 6 ساعات كحد أقصى عند فشل كل مزودي البيانات — بلا ضجيج."""
+    now = time.time()
+    if now - _last_outage_notify["at"] < 6 * 3600:
+        return
+    _last_outage_notify["at"] = now
+    log_and_notify(
+        "warn",
+        "تعذّر جلب الشموع من كل مزودي البيانات (باينانس والبدائل) — البوت يراقب وسيحاول مع الدورة القادمة تلقائيًا",
+        "DATA_OUTAGE",
+    )
+
+
 def scan_cycle() -> None:
     """دورة كشف كاملة على القائمة — الكشف الصاعد يُنفذ ورقيًا والهابط يُعرض فقط."""
     db.ensure()
     with scan_stats_lock:
         scan_stats["cycles"] += 1
+        scan_stats["last_scan_at"] = utc_now_iso()
+    scanned_before = scan_stats["scanned"]
     trading_on = is_trading_enabled
     for symbol in watchlist:
         try:
@@ -705,6 +829,10 @@ def scan_cycle() -> None:
             logger.exception("[%s] استثناء في دورة المسح: %s", symbol, exc)
         finally:
             time.sleep(INTER_SYMBOL_SLEEP)
+    with scan_stats_lock:
+        scan_stats["last_scan_fetched"] = scan_stats["scanned"] - scanned_before
+    if scan_stats["last_scan_fetched"] == 0:
+        maybe_notify_outage()
 
 
 def seconds_until_next_candle(timeframe: str) -> float:
@@ -834,6 +962,7 @@ def health():
         "mode": "paper",
         "db": "postgres" if USE_POSTGRES else "sqlite",
         "trading_enabled": is_trading_enabled,
+        "data_source": (active_source.get("name") or "boot"),
         "pairs": len(watchlist),
         "time": utc_now_iso(),
     })
@@ -864,6 +993,7 @@ def api_all():
         "closed_signals": [_parse_sig_row(r) for r in closed_rows],
         "detections": dets,
         "notifications": notif_rows,
+        "data": data_status(),  # [FE1.0.1] تشخيص مزودي البيانات للوحة
     })
 
 
@@ -929,11 +1059,12 @@ def restore_trading_flag() -> None:
 
 def load_markets_async() -> None:
     def _load():
-        try:
-            exchange.load_markets()
-            logger.info("تحميل أسواق المنصة اكتمل (دقة الكميات جاهزة)")
-        except Exception as exc:
-            logger.warning("تعذر تحميل الأسواق — سيُعاد لاحقًا تلقائيًا: %s", exc)
+        for name, ex in EXCHANGES.items():
+            try:
+                ex.load_markets()
+                logger.info("تحميل أسواق المزود %s اكتمل (دقة الكميات جاهزة)", name)
+            except Exception as exc:
+                logger.warning("تعذر تحميل أسواق المزود %s — يُعاد تلقائيًا عند أول جلب: %s", name, exc)
     t = threading.Thread(target=_load, daemon=True)
     t.start()
 

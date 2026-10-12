@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_fe100.py — اختبارات Fibo-Elio FE1.0.0
+test_fe100.py — اختبارات Fibo-Elio FE1.0.1
 
 ثلاث جولات:
   1) المحرك الأصلي المنقول حرفيًا: زيجزاج على موجات مصطنعة + القواعد الثلاث + فيبوناتشي
@@ -16,6 +16,7 @@ import json
 import math
 import os
 import time
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -314,7 +315,7 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "FE1.0.0"
+        assert body["version"] == "FE1.0.1"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 
@@ -363,6 +364,107 @@ class TestDashboardAPI:
         r = client.get("/api/pnl_history")
         assert r.status_code == 200
         assert "history" in r.get_json()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# الجولة 4 — تعاقب مزودي البيانات (FE1.0.1): باينانس أولًا ثم البدائل عند الحظر
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _klines(n: int = 80, base: float = 100.0) -> list:
+    """شموع خام على عقد ccxt — ثوابت لطيفة تكفي عتبة 60 شمعة."""
+    return [[1700000000000 + i * 3600000, base, base + 1.0, base - 1.0, base, 10.0] for i in range(n)]
+
+
+class FakeExchange:
+    """بديل مزود ccxt — سلوك قابل للبرمجة مع عدّاد استدعاءات."""
+
+    def __init__(self, fn):
+        self._fn = fn
+        self.calls = 0
+
+    def fetch_ohlcv(self, symbol, timeframe=None, limit=None):
+        self.calls += 1
+        return self._fn(symbol, timeframe, limit)
+
+    def amount_to_precision(self, symbol, amount):
+        return f"{float(amount):.6f}"
+
+
+def _ban(*a):
+    raise Exception("APIError(code=-1003): Way too much request weight used; IP banned")
+
+
+def _reset_providers(monkeypatch, mapping):
+    monkeypatch.setattr(vnz, "EXCHANGES", OrderedDict(mapping))
+    monkeypatch.setattr(vnz, "provider_state", {
+        name: {"ok": 0, "fail": 0, "last_error": "", "last_ok_at": None, "cooldown_until": 0.0}
+        for name in mapping
+    })
+    monkeypatch.setattr(vnz, "active_source", {"name": None, "since": None})
+    monkeypatch.setattr(vnz.time, "sleep", lambda *a: None)  # اختبارات سريعة
+
+
+class TestDataProviderRotation:
+    def test_binance_ban_falls_back_to_bybit(self, clean_db, monkeypatch):
+        ban, ok = FakeExchange(_ban), FakeExchange(lambda *a: _klines())
+        _reset_providers(monkeypatch, OrderedDict([("binance", ban), ("bybit", ok)]))
+        df = vnz.fetch_ohlcv_df("BTC/USDT", "1h", limit=80)
+        assert df is not None and len(df) == 80
+        assert ban.calls == 1 and ok.calls == 1
+        assert vnz.active_source["name"] == "bybit"
+        st = vnz.provider_state["binance"]
+        assert st["fail"] == 1 and "-1003" in st["last_error"] and st["cooldown_until"] > 0
+
+    def test_cooldown_skips_banned_provider_next_fetch(self, clean_db, monkeypatch):
+        ban, ok = FakeExchange(_ban), FakeExchange(lambda *a: _klines())
+        _reset_providers(monkeypatch, OrderedDict([("binance", ban), ("bybit", ok)]))
+        assert vnz.fetch_ohlcv_df("BTC/USDT", "1h", limit=80) is not None
+        first_ban_calls = ban.calls
+        assert vnz.fetch_ohlcv_df("ETH/USDT", "1h", limit=80) is not None
+        assert ban.calls == first_ban_calls  # باينانس مبردود — لم يُستدعَ مجددًا
+        assert ok.calls == 2
+
+    def test_full_rotation_recovery_to_primary_after_cooldown(self, clean_db, monkeypatch):
+        ban, ok = FakeExchange(_ban), FakeExchange(lambda *a: _klines())
+        _reset_providers(monkeypatch, OrderedDict([("binance", ban), ("bybit", ok)]))
+        vnz.fetch_ohlcv_df("BTC/USDT", "1h", limit=80)
+        # انتهاء التبريد يدويًا — باينانس يعود أولًا في المحاولة التالية (الأصل أولًا دائمًا)
+        vnz.provider_state["binance"]["cooldown_until"] = 0.0
+        vnz.fetch_ohlcv_df("BTC/USDT", "1h", limit=80)
+        assert ban.calls == 2 and ok.calls == 2
+
+    def test_all_providers_fail_returns_none(self, clean_db, monkeypatch):
+        e1, e2 = FakeExchange(_ban), FakeExchange(lambda *a: [])
+        _reset_providers(monkeypatch, OrderedDict([("binance", e1), ("bybit", e2)]))
+        assert vnz.fetch_ohlcv_df("BTC/USDT", "1h", limit=80) is None
+        assert e1.calls == 1 and e2.calls == 1  # التبريد يمنع التكرار الفوري داخل نفس الجلب
+
+    def test_data_status_exposes_telemetry(self, clean_db, monkeypatch):
+        ban, ok = FakeExchange(_ban), FakeExchange(lambda *a: _klines())
+        _reset_providers(monkeypatch, OrderedDict([("binance", ban), ("bybit", ok)]))
+        vnz.fetch_ohlcv_df("BTC/USDT", "1h", limit=80)
+        d = vnz.data_status()
+        assert d["active"] == "bybit"
+        assert d["providers"]["binance"]["fail"] == 1
+        assert d["providers"]["bybit"]["ok"] == 1
+        assert d["providers"]["binance"]["cooling_sec"] > 0
+
+    def test_amount_prec_safe_without_exchange(self, clean_db, monkeypatch):
+        _reset_providers(monkeypatch, OrderedDict())
+        assert vnz.amount_prec("BTC/USDT", 1.23456789) == 1.23456789  # لا مزود — إرجاع كما هو
+
+    def test_health_includes_data_source(self, clean_db):
+        client = vnz.app.test_client()
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert "data_source" in r.get_json()
+
+    def test_api_all_includes_data_block(self, clean_db):
+        client = vnz.app.test_client()
+        r = client.get("/api/all")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert "data" in body and "providers" in body["data"]
 
 
 if __name__ == "__main__":

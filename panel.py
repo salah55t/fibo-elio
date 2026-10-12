@@ -136,6 +136,8 @@ function renderCards(d){
     ['صافي الربح', usd(s.total_pnl||0), cls(s.total_pnl||0)],
     ['دورات المسح', s.cycles||0, ''],
     ['التقاطات صالحة', s.setups_valid||0, ''],
+    ['مزود البيانات', (d.data&&d.data.active)? d.data.active.toUpperCase() : '—', 'tealc'],
+    ['آخر مسح', s.last_scan_at? s.last_scan_at.slice(11,16)+' UTC' : '—', ''],
   ];
   $('cards').innerHTML = cards.map(c =>
     `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}">${c[1]}</div></div>`).join('');
