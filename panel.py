@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 """
 panel.py — لوحة تحكم Fibo-Elio (عربية RTL، داكنة، تحديث تلقائي 30 ثانية)
-تعرض: الحالة الورقية، الرصيد، الصفقات المفتوحة/المعلقة، المغلقة، أداء
+تعرض: الحالة الورقية، الرصيد، الصفقات المفتوحة/المعلقة بتتبع حي (السعر الآن،
+غير المحقق، التقدم نحو الهدف)، إغلاق/إلغاء يدوي، المغلقة، أداء
 استراتيجية Elliott_Fibonacci، آخر التقاطات الموجات (صاعدة/هابطة)، والإشعارات.
 """
 
-BOT_VERSION = "FE1.0.0"
+BOT_VERSION = "FE1.1.0"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -61,6 +62,17 @@ PANEL_HTML = r"""<!DOCTYPE html>
   .notif { padding:7px 10px; border-right:3px solid var(--line); margin-bottom:6px; background:var(--card2);
     border-radius:8px; font-size:.78rem; }
   .notif.warn { border-color:var(--gold); } .notif.err { border-color:var(--red); }
+  .tbl-wrap { overflow-x:auto; }
+  .prog { background:var(--card2); border:1px solid var(--line); border-radius:999px; height:10px;
+    min-width:90px; position:relative; overflow:hidden; }
+  .prog-fill { height:100%; border-radius:999px; background:var(--teal); transition:width .4s; }
+  .prog-fill.pneg { background:var(--red); }
+  .prog-lbl { font-size:.68rem; color:var(--mut); margin-top:2px; }
+  button.mini { background:var(--card2); border:1px solid var(--line); color:var(--txt); border-radius:8px;
+    padding:4px 10px; cursor:pointer; font-size:.72rem; white-space:nowrap; }
+  button.mini:hover { border-color:var(--gold); color:var(--gold); }
+  button.mini.cxl:hover { border-color:var(--red); color:var(--red); }
+  .liveprice { font-weight:700; color:var(--blue); }
   footer { text-align:center; color:var(--mut); font-size:.72rem; padding:8px 0 20px; line-height:1.8; }
   footer a { color:var(--blue); text-decoration:none; }
   #toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--card);
@@ -82,7 +94,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   <div class="grid" id="cards"></div>
 
   <section>
-    <h2>📈 الصفقات النشطة والمعلقة</h2>
+    <h2>📈 الصفقات المفتوحة والأوامر المعلقة <span class="mut small">— تتبع حي: السعر الآن وغير المحقق يتحدثان مع كل تحديث</span></h2>
     <div id="open-box"></div>
   </section>
 
@@ -103,7 +115,8 @@ PANEL_HTML = r"""<!DOCTYPE html>
 
   <footer>
     استراتيجية واحدة فقط: <b>موجة إليوت (دافع 5 موجات، قواعد صارمة ثلاث)</b> + <b>مستويات فيبوناتشي</b>
-    (دخول 0.382 لتراجع الموجة 3 · وقف بنيوي خلف P0 · هدف امتداد 1.618 للموجة 1)<br>
+    (دخول 0.382 لتراجع الموجة 3 · وقف بنيوي خلف P0 · هدف امتداد 1.618 للموجة 1) —
+    تتبع حي + إغلاق/إلغاء يدوي [FE1.1.0] + إغلاق آلي عند الوقف/الهدف كل 60 ثانية<br>
     المحرك منقول حرفيًا من <a href="https://github.com/dtwijesekara/Elliott_Waves_Algo_TradingBot" target="_blank">Elliott_Waves_Algo_TradingBot</a>
     (MIT) — مستودع المشروع: <a href="https://github.com/salah55t/fibo-elio" target="_blank">salah55t/fibo-elio</a>
   </footer>
@@ -148,28 +161,47 @@ function renderCards(d){
 }
 
 function renderOpen(list){
-  if(!list.length){ $('open-box').innerHTML = '<div class="empty">لا صفقات نشطة حاليا — البوت يراقب السوق بحثا عن دافع صالح ✨</div>'; return; }
+  if(!list.length){ $('open-box').innerHTML = '<div class="empty">لا صفقات مفتوحة ولا أوامر معلقة حاليا — البوت يراقب السوق بحثا عن دافع صالح ✨</div>'; return; }
   let rows = list.map(s => {
-    const st = s.status==='pending'
-      ? '<span class="pill p-pending">معلق</span>' : '<span class="pill p-open">مفتوح</span>';
+    const isPend = s.status==='pending';
+    const st = isPend ? '<span class="pill p-pending">معلق</span>' : '<span class="pill p-open">مفتوح</span>';
     const fib = s.fib || {};
+    // تتبع حي [FE1.1.0]
+    const cp = s.current_price ? `<span class="liveprice">${fmt(s.current_price)}</span>` : '<span class="mut">—</span>';
+    let live;
+    if(!isPend){
+      const u = s.unrealized_usdt;
+      const up = (u===null||u===undefined) ? '<span class="mut small">حسب السعر</span>'
+        : `<span class="${cls(u)}"><b>${usd(u)}</b> <span class="small">(${pct(s.unrealized_pct)})</span></span>`;
+      const pr = (s.progress_pct===null||s.progress_pct===undefined) ? '<span class="mut small">—</span>'
+        : `<div class="prog"><div class="prog-fill ${s.progress_pct<0?'pneg':''}" style="width:${Math.max(2,Math.min(100,Math.abs(s.progress_pct)))}%"></div></div>` +
+          `<div class="prog-lbl">${s.progress_pct>=0?'نحو الهدف':'تحت الدخول'} ${s.progress_pct.toFixed(0)}% · للهدف ${pct(s.dist_tp_pct)} · للوقف ${pct(s.dist_sl_pct)}</div>`;
+      live = [cp, up, pr];
+    } else {
+      const de = (s.dist_entry_pct===null||s.dist_entry_pct===undefined) ? '<span class="mut small">—</span>'
+        : `<span class="small">${s.dist_entry_pct>=0?'السعر تحت الدخول بـ':'فوق الدخول بـ'} <b class="${s.dist_entry_pct>=0?'tealc':'gld'}">${Math.abs(s.dist_entry_pct).toFixed(2)}%</b></span>`;
+      live = [cp, '<span class="mut small">أمر منتظر</span>', de];
+    }
+    const act = isPend
+      ? `<button class="mini cxl" onclick="cancelOrder(${s.id},'${s.symbol}')">✖ إلغاء</button>`
+      : `<button class="mini" onclick="closeTrade(${s.id},'${s.symbol}')">🔒 إغلاق</button>`;
     return `<tr>
       <td><b>${s.symbol}</b></td><td>${st}</td>
-      <td>${fmt(s.entry_price)}</td><td>${s.fill_price?fmt(s.fill_price):'—'}</td>
+      <td>${live[0]}</td><td>${live[1]}</td><td>${live[2]}</td>
+      <td>${fmt(isPend?s.entry_price:s.fill_price)}</td>
       <td class="neg">${fmt(s.stop_loss)}</td><td class="pos">${fmt(s.take_profit)}</td>
       <td>${s.rr_ratio?Number(s.rr_ratio).toFixed(2):'—'}</td>
       <td>${fmt(s.quantity,6)}</td>
-      <td>${fib.w2_retrace!==null&&fib.w2_retrace!==undefined?(fib.w2_retrace*100).toFixed(1)+'%':'—'} <span class="${fib.w2_in_zone?'zone-ok':'zone-no'} small">${fib.w2_in_zone?'✔ منطقة':'خارج'}</span></td>
-      <td>${fib.w4_retrace!==null&&fib.w4_retrace!==undefined?(fib.w4_retrace*100).toFixed(1)+'%':'—'} <span class="${fib.w4_in_zone?'zone-ok':'zone-no'} small">${fib.w4_in_zone?'✔ منطقة':'خارج'}</span></td>
       <td class="mut small">${dt(s.created_at)}</td>
-      <td class="mut small">${s.status==='pending'?('تنتهي: '+dt(s.expires_at)):'—'}</td>
-      <td class="mut small">${s.close_reason||''}</td>
+      <td class="mut small">${isPend?('تنتهي: '+dt(s.expires_at)):'—'}</td>
+      <td>${act}</td>
     </tr>`;
   }).join('');
-  $('open-box').innerHTML = `<table><thead><tr>
-    <th>الزوج</th><th>الحالة</th><th>دخول معلّق</th><th>سعر الملء</th><th>وقف</th><th>هدف 1.618</th>
-    <th>R:R</th><th>الكمية</th><th>تراجع W2</th><th>تراجع W4</th><th>أُنشئ</th><th>الصلاحية</th><th></th>
-  </tr></thead><tbody>${rows}</tbody></table>`;
+  $('open-box').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
+    <th>الزوج</th><th>الحالة</th><th>السعر الآن</th><th>غير المحقق</th><th>التقدم نحو الهدف</th>
+    <th>${'دخول/ملء'}</th><th>وقف</th><th>هدف 1.618</th>
+    <th>R:R</th><th>الكمية</th><th>أُنشئ</th><th>الصلاحية</th><th>إجراء</th>
+  </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderClosed(list){
@@ -225,6 +257,22 @@ async function toggleTrading(){
     const d = await api('/api/trading/toggle', {method:'POST'});
     toast(d.message); refresh();
   } catch(e){ toast('فشل التبديل: '+e.message); }
+}
+
+async function closeTrade(id, symbol){
+  if(!confirm('إغلاق صفقة '+symbol+' بسعر السوق الحالي (ورقي)؟')) return;
+  try {
+    const d = await api('/api/trades/close', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
+    toast(d.message || 'أُغلقت الصفقة'); refresh();
+  } catch(e){ toast('فشل الإغلاق: '+e.message); }
+}
+
+async function cancelOrder(id, symbol){
+  if(!confirm('إلغاء الأمر المعلق على '+symbol+'؟')) return;
+  try {
+    const d = await api('/api/trades/cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
+    toast(d.message || 'أُلغي الأمر'); refresh();
+  } catch(e){ toast('فشل الإلغاء: '+e.message); }
 }
 
 async function resetStats(){

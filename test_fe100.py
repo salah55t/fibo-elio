@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_fe100.py — اختبارات Fibo-Elio FE1.0.2
+test_fe100.py — اختبارات Fibo-Elio FE1.1.0
 
-ثلاث جولات:
+خمس جولات:
   1) المحرك الأصلي المنقول حرفيًا: زيجزاج على موجات مصطنعة + القواعد الثلاث + فيبوناتشي
   2) التدفق الورقي: إنشاء معلق → ملء → إبطال بنيوي/صلاحية → وقف/هدف → محاسبة رسوم
   3) اللوحة وAPI: /health و/api/all والتبديل والتصفير (Flask test_client)
+  4) تعاقب مزودي البيانات FE1.0.1: باينانس أولًا ثم البدائل عند الحظر
+  5) التتبع الحي والتحكم اليدوي FE1.1.0: سعر حي + غير محقق + إغلاق/إلغاء يدوي
 
 تشغيل: pytest test_fe100.py -v   (من داخل مجلد المشروع)
 اختبار سوق حي اختياري: RUN_LIVE_SMOKE=1 pytest test_fe100.py -v -k live
@@ -316,11 +318,12 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "FE1.0.2"
+        assert body["version"] == "FE1.1.0"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 
-    def test_api_all_structure(self, clean_db):
+    def test_api_all_structure(self, clean_db, monkeypatch):
+        monkeypatch.setattr(vnz, "get_live_price", lambda sym: 130.0)  # بلا شبكة في الاختبار
         s = [x for x in DET.scan(impulse_df()) if x.direction == "BULLISH"][-1]
         vnz.create_pending_signal("TEST/USDT", s)
         vnz.register_detection("TEST/USDT", s, traded=True)
@@ -333,6 +336,7 @@ class TestDashboardAPI:
             assert key in body
         assert len(body["open_signals"]) == 1
         assert math.isclose(body["open_signals"][0]["pivots"]["P0"], 99.95, rel_tol=1e-6)
+        assert body["open_signals"][0]["current_price"] == 130.0  # [FE1.1.0] تتبع حي
         assert body["detections"][0]["traded"] is True
 
     def test_toggle_trading(self, clean_db):
@@ -466,6 +470,141 @@ class TestDataProviderRotation:
         assert r.status_code == 200
         body = r.get_json()
         assert "data" in body and "providers" in body["data"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# الجولة 5 — التتبع الحي والإغلاق/الإلغاء اليدوي (FE1.1.0)
+# ─────────────────────────────────────────────────────────────────────────────────
+
+class TestLiveTrackingAndManualActions:
+    def _fill_trade(self, clean_db, monkeypatch):
+        """إنشاء أمر معلق وملؤه → صفقة مفتوحة جاهزة للتتبع/الإغلاق."""
+        s = [x for x in DET.scan(impulse_df()) if x.direction == "BULLISH"][-1]
+        vnz.create_pending_signal("TEST/USDT", s)
+        row = clean_db.query("SELECT * FROM signals", one=True)
+        entry = float(row["entry_price"])
+        fill = pd.DataFrame([{"ts": 0, "open": entry + 1, "high": entry + 2,
+                              "low": entry - 1, "close": entry, "volume": 1}])
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", lambda *a, **k: fill)
+        vnz.monitor_step()
+        return clean_db.query("SELECT * FROM signals", one=True)
+
+    def test_get_live_price_uses_cache(self, clean_db, monkeypatch):
+        vnz._price_cache.clear()
+        calls = {"n": 0}
+        def fake_fetch(*a, **k):
+            calls["n"] += 1
+            return pd.DataFrame([{"ts": 0, "open": 130, "high": 131,
+                                  "low": 129, "close": 130.5, "volume": 1}])
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", fake_fetch)
+        p1 = vnz.get_live_price("TEST/USDT")
+        p2 = vnz.get_live_price("TEST/USDT")
+        assert math.isclose(p1, 130.5) and math.isclose(p2, 130.5)
+        assert calls["n"] == 1  # الاستدعاء الثاني من الذاكرة المؤقتة (20 ثانية)
+
+    def test_get_live_price_none_on_failure(self, clean_db, monkeypatch):
+        vnz._price_cache.clear()
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df", lambda *a, **k: None)
+        assert vnz.get_live_price("TEST/USDT") is None
+
+    def test_enrich_open_signal_unrealized_and_progress(self, clean_db, monkeypatch):
+        row = self._fill_trade(clean_db, monkeypatch)
+        price = float(row["fill_price"]) * 1.02  # ربح 2% افتراضي
+        monkeypatch.setattr(vnz, "get_live_price", lambda sym: price)
+        out = vnz.enrich_live_signal(dict(row))
+        qty, fill = float(row["quantity"]), float(row["fill_price"])
+        gross = qty * (price - fill)
+        fees = (qty * fill + qty * price) * 0.001
+        assert math.isclose(out["current_price"], price)
+        assert math.isclose(out["unrealized_usdt"], gross - fees, rel_tol=1e-4)
+        assert out["unrealized_pct"] > 0
+        assert out["progress_pct"] > 0          # السعر فوق الدخول — تقدم نحو الهدف
+        assert out["dist_tp_pct"] > 0            # الهدف أعلى من السعر الحالي
+        assert out["dist_sl_pct"] < 0            # الوقف أسفل من السعر الحالي
+
+    def test_enrich_pending_signal_dist_entry(self, clean_db, monkeypatch):
+        s = [x for x in DET.scan(impulse_df()) if x.direction == "BULLISH"][-1]
+        vnz.create_pending_signal("TEST/USDT", s)
+        row = clean_db.query("SELECT * FROM signals", one=True)
+        monkeypatch.setattr(vnz, "get_live_price", lambda sym: 135.0)
+        out = vnz.enrich_live_signal(dict(row))
+        entry = float(row["entry_price"])
+        assert out["current_price"] == 135.0
+        assert math.isclose(out["dist_entry_pct"], (entry - 135.0) / 135.0 * 100.0, rel_tol=1e-3)  # مقرّب 3 منازل
+        assert "unrealized_usdt" not in out      # المعلق بلا ربح غير محقق
+
+    def test_api_all_enriches_open_rows(self, clean_db, monkeypatch):
+        self._fill_trade(clean_db, monkeypatch)
+        monkeypatch.setattr(vnz, "get_live_price", lambda sym: 130.0)
+        client = vnz.app.test_client()
+        body = client.get("/api/all").get_json()
+        sig = body["open_signals"][0]
+        assert sig["current_price"] == 130.0
+        assert "unrealized_usdt" in sig and "progress_pct" in sig and "dist_tp_pct" in sig
+
+    def test_manual_close_endpoint_market_price(self, clean_db, monkeypatch):
+        row = self._fill_trade(clean_db, monkeypatch)
+        price = float(row["fill_price"]) * 1.01
+        monkeypatch.setattr(vnz, "get_live_price", lambda sym: price)
+        client = vnz.app.test_client()
+        r = client.post("/api/trades/close", json={"id": int(row["id"])})
+        assert r.status_code == 200 and r.get_json()["ok"] is True
+        after = clean_db.query("SELECT * FROM signals", one=True)
+        assert after["status"] == "closed"
+        assert "يدوي" in after["close_reason"]
+        assert math.isclose(float(after["close_price"]), price, rel_tol=1e-9)
+        assert float(after["pnl_usdt"]) > 0
+        assert vnz.get_paper_balance() > vnz.PAPER_BALANCE_START  # الرصيد حُدّث
+
+    def test_manual_close_falls_back_to_fill_price(self, clean_db, monkeypatch):
+        row = self._fill_trade(clean_db, monkeypatch)
+        monkeypatch.setattr(vnz, "get_live_price", lambda sym: None)  # مزودات فشلت
+        client = vnz.app.test_client()
+        r = client.post("/api/trades/close", json={"id": int(row["id"])})
+        assert r.status_code == 200
+        after = clean_db.query("SELECT * FROM signals", one=True)
+        assert math.isclose(float(after["close_price"]), float(row["fill_price"]), rel_tol=1e-9)
+
+    def test_manual_close_rejects_pending_and_unknown(self, clean_db, monkeypatch):
+        s = [x for x in DET.scan(impulse_df()) if x.direction == "BULLISH"][-1]
+        vnz.create_pending_signal("TEST/USDT", s)
+        row = clean_db.query("SELECT * FROM signals", one=True)
+        client = vnz.app.test_client()
+        assert client.post("/api/trades/close", json={"id": int(row["id"])}).status_code == 404  # معلق وليس مفتوحًا
+        assert client.post("/api/trades/close", json={"id": 9999}).status_code == 404
+        assert client.post("/api/trades/close", json={"id": "abc"}).status_code == 400
+
+    def test_manual_cancel_endpoint(self, clean_db, monkeypatch):
+        s = [x for x in DET.scan(impulse_df()) if x.direction == "BULLISH"][-1]
+        vnz.create_pending_signal("TEST/USDT", s)
+        row = clean_db.query("SELECT * FROM signals", one=True)
+        client = vnz.app.test_client()
+        r = client.post("/api/trades/cancel", json={"id": int(row["id"])})
+        assert r.status_code == 200 and r.get_json()["ok"] is True
+        after = clean_db.query("SELECT * FROM signals", one=True)
+        assert after["status"] == "cancelled"
+        assert "يدوي" in after["close_reason"]
+        assert vnz.active_trade_count() == 0  # خرج من الصفقات النشطة
+
+    def test_manual_cancel_rejects_open(self, clean_db, monkeypatch):
+        row = self._fill_trade(clean_db, monkeypatch)
+        client = vnz.app.test_client()
+        r = client.post("/api/trades/cancel", json={"id": int(row["id"])})
+        assert r.status_code == 404  # المفتوح يُغلق بـ /api/trades/close لا إلغاء
+
+    def test_manual_endpoints_require_auth(self, monkeypatch):
+        monkeypatch.setattr(vnz, "DASHBOARD_PROTECTED", True)
+        monkeypatch.setattr(vnz, "DASHBOARD_USERNAME", "admin")
+        monkeypatch.setattr(vnz, "DASHBOARD_PASSWORD", "test123")
+        client = vnz.app.test_client()
+        for path in ("/api/trades/close", "/api/trades/cancel"):
+            r = client.post(path, json={"id": 1})
+            assert r.status_code == 401  # بلا مصادقة → رفض
+        import base64
+        cred = base64.b64encode(b"admin:test123").decode()
+        r = client.post("/api/trades/cancel", json={"id": 1},
+                        headers={"Authorization": "Basic " + cred})
+        assert r.status_code == 404  # مصادقة تمر — لكن لا صفقة بهذا المعرف
 
 
 if __name__ == "__main__":

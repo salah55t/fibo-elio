@@ -41,6 +41,13 @@
  0.004–0.008 «Primary entry TF» والانعكاس 0.006 في منتصفه) + حماية افتراضية
  للوحة (admin/test123) حتى بلا متغيرات بيئة — النشر اليدوي كان يتركها مكشوفة.
 
+ FE1.1.0: تتبع حي لكل صفقة + تحكم يدوي من اللوحة:
+ • السعر الحي لكل صفقة مفتوحة/معلقة (ذاكرة مؤقتة 20 ثانية لتخفيف ضغط المزودين)
+ • الربح/الخسارة غير المحقق لكل صفقة (صافي بعد رسوم الاتجاهين) ونسبة التقدم نحو الهدف
+ • إغلاق يدوي بسعر السوق للصفقات المفتوحة (POST /api/trades/close)
+ • إلغاء يدوي للأوامر المعلقة (POST /api/trades/cancel)
+ الحلقة الآلية للوقف/الهدف لم تتغير — اليدوي بديل متاح في أي لحظة.
+
  متغيرات البيئة (نفس عقد المشروع السابق + إعدادات الاستراتيجية):
    BINANCE_API_KEY / BINANCE_API_SECRET  (اختياريان — الشموع العامة تكفي للورقي)
    DATABASE_URL          اختياري (PostgreSQL) — وإلا SQLite محلي
@@ -86,7 +93,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.0.2"  # FE1.0.2: كشف 15m + حماية لوحة افتراضية
+BOT_VERSION = "FE1.1.0"  # FE1.1.0: تتبع حي للصفقات + إغلاق/إلغاء يدوي من اللوحة
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -581,6 +588,70 @@ def symbol_has_active(symbol: str) -> bool:
     return bool(rows and int(rows[0]["n"]) > 0)
 
 
+# ── FE1.1.0: تتبع حي — سعر لكل صفقة مع ذاكرة مؤقتة قصيرة ─────────────────────
+
+_price_cache: Dict[str, Tuple[float, float]] = {}  # symbol -> (price, ts)
+_price_cache_lock = threading.Lock()
+PRICE_CACHE_TTL = float(os.getenv("PRICE_CACHE_TTL", "20"))
+
+
+def get_live_price(symbol: str) -> Optional[float]:
+    """آخر سعر إغلاق من فريم التنفيذ (15m) — ذاكرة 20 ثانية تمنع ضرب المزودين
+    عند كل تحديث للوحة (كل صفقة استعلام واحد بدل عدة عملاء متزامنين)."""
+    now = time.time()
+    with _price_cache_lock:
+        hit = _price_cache.get(symbol)
+        if hit and now - hit[1] < PRICE_CACHE_TTL:
+            return hit[0]
+    try:
+        df = fetch_ohlcv_df(symbol, ENTRY_TIMEFRAME, limit=2)
+        price = float(df["close"].iloc[-1]) if df is not None and not df.empty else None
+    except Exception:
+        price = None
+    if price:
+        with _price_cache_lock:
+            _price_cache[symbol] = (price, now)
+    return price
+
+
+def enrich_live_signal(sig: Dict[str, Any]) -> Dict[str, Any]:
+    """تتبع حي لكل صفقة: السعر الآن، غير المحقق (صافي بعد الرسوم)،
+    نسبة التقدم نحو الهدف، وبُعد الوقف — للمعلق: بُعد السعر عن منطقة الدخول."""
+    out = dict(sig)
+    price = get_live_price(sig["symbol"])
+    out["current_price"] = price
+    status = sig.get("status")
+    try:
+        if status == "open":
+            fill = float(sig.get("fill_price") or 0)
+            qty = float(sig.get("quantity") or 0)
+            tp = float(sig.get("take_profit") or 0)
+            sl = float(sig.get("stop_loss") or 0)
+            peak = float(sig.get("peak_price") or 0)
+            if price and fill > 0 and qty > 0:
+                gross = qty * (price - fill)
+                fees = (qty * fill + qty * price) * FEE_RATE
+                net = gross - fees
+                out["unrealized_usdt"] = round(net, 6)
+                out["unrealized_pct"] = round(net / (qty * fill) * 100.0, 4) if qty * fill > 0 else 0.0
+            if price and fill > 0 and tp != fill:
+                out["progress_pct"] = round((price - fill) / (tp - fill) * 100.0, 1)
+            if price and tp > 0:
+                out["dist_tp_pct"] = round((tp - price) / price * 100.0, 3)
+            if price and sl > 0:
+                out["dist_sl_pct"] = round((sl - price) / price * 100.0, 3)
+            if peak > 0:
+                out["peak_price"] = peak  # القمة المتتبعة من حلقة المراقبة
+        elif status == "pending":
+            entry = float(sig.get("entry_price") or 0)
+            if price and entry > 0:
+                # موجب = السعر تحت الدخول (اللمس أقرب) — سلبي = السعر فوق الدخول
+                out["dist_entry_pct"] = round((entry - price) / price * 100.0, 3)
+    except (TypeError, ValueError):
+        pass
+    return out
+
+
 def register_detection(symbol: str, setup: DetectedSetup, traded: bool) -> None:
     """حلقة الالتقاطات للوحة: صاعدة (قابلة للتنفيذ) وهابطة (للمتابعة فقط — سبوت)."""
     fib = setup.validation_result.fib
@@ -865,7 +936,8 @@ def scan_loop() -> None:
 
 
 def monitor_loop() -> None:
-    """مراقبة تنفيذية على فريم الدخول (15m): ملء المعلق + وقف/هدف المفتوح."""
+    """مراقبة تنفيذية على فريم الدخول (15m): ملء المعلق + وقف/هدف المفتوح.
+    [FE1.1.0] الإغلاق اليدوي من اللوحة يخدم نفس مسار close_signal_row فتظل المحاسبة موحدة."""
     time.sleep(20)
     while True:
         try:
@@ -990,6 +1062,7 @@ def api_all():
     notif_rows = db.query("SELECT * FROM notifications ORDER BY id DESC LIMIT 15")
     with detections_lock:
         dets = list(recent_detections)
+    live_rows = [enrich_live_signal(_parse_sig_row(r)) for r in open_rows]  # [FE1.1.0] تتبع حي
     return jsonify({
         "version": BOT_VERSION,
         "strategy": STRATEGY_NAME,
@@ -997,12 +1070,63 @@ def api_all():
         "trading_enabled": is_trading_enabled,
         "paper_balance": get_paper_balance(),
         "stats": compute_stats(),
-        "open_signals": [_parse_sig_row(r) for r in open_rows],
+        "open_signals": live_rows,
         "closed_signals": [_parse_sig_row(r) for r in closed_rows],
         "detections": dets,
         "notifications": notif_rows,
         "data": data_status(),  # [FE1.0.1] تشخيص مزودي البيانات للوحة
     })
+
+
+@app.route("/api/trades/close", methods=["POST"])
+def api_trades_close():
+    """[FE1.1.0] إغلاق يدوي لصفقة مفتوحة بسعر السوق الحالي (ورقي) — الوضع الآلي يبقى يعمل."""
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
+    body = request.get_json(silent=True) or {}
+    try:
+        sig_id = int(body.get("id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "معرف صفقة غير صالح"}), 400
+    rows = db.query("SELECT * FROM signals WHERE id = %s AND status = 'open'", (sig_id,))
+    if not rows:
+        return jsonify({"ok": False, "error": "لا توجد صفقة مفتوحة بهذا المعرف"}), 404
+    sig = _parse_sig_row(rows[0])
+    price = get_live_price(sig["symbol"]) or float(sig["fill_price"])
+    close_signal_row(sig, price, "إغلاق يدوي من اللوحة (بسعر السوق)")
+    return jsonify({
+        "ok": True,
+        "message": f"أُغلقت صفقة {sig['symbol']} عند {fmt_price(price)} — الرصيد حُدّث",
+        "close_price": price,
+    })
+
+
+@app.route("/api/trades/cancel", methods=["POST"])
+def api_trades_cancel():
+    """[FE1.1.0] إلغاء يدوي لأمر معلق لم يُملأ بعد."""
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
+    body = request.get_json(silent=True) or {}
+    try:
+        sig_id = int(body.get("id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "معرف أمر غير صالح"}), 400
+    rows = db.query("SELECT * FROM signals WHERE id = %s AND status = 'pending'", (sig_id,))
+    if not rows:
+        return jsonify({"ok": False, "error": "لا يوجد أمر معلق بهذا المعرف"}), 404
+    sig = rows[0]
+    db.execute(
+        "UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s WHERE id=%s",
+        ("إلغاء يدوي من اللوحة", utc_now_iso(), sig_id),
+    )
+    log_and_notify(
+        "info",
+        f"🚫 أُلغي الأمر المعلق (ورقي): {sig['symbol']} — دخول {fmt_price(float(sig['entry_price']))} (إلغاء يدوي)",
+        "ORDER_CANCELLED",
+    )
+    return jsonify({"ok": True, "message": f"أُلغي الأمر المعلق لـ {sig['symbol']}"})
 
 
 @app.route("/api/signals")
