@@ -3,6 +3,7 @@ services:
     name: fibo-elio
     runtime: python
     plan: free
+    region: frankfurt   # [FE1.0.1] أوروبا — باينانس يعمل من فرانكفورت (حظر 451 الجغرافي يخص عناوين أمريكا فقط)
     branch: main
     buildCommand: pip install -r requirements.txt
     startCommand: python vnz.py
