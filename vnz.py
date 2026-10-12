@@ -88,6 +88,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import gc
 import pandas as pd
 import requests
 
@@ -115,7 +116,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.3.0"  # FE1.3.0: البقاء الحي المحصّن — نبضة /health كل 10 دقائق + إعادة محاولة عند الفشل + تشخيص حي
+BOT_VERSION = "FE1.3.1"  # FE1.3.1: حمية الذاكرة ضد OOM — أسواق كسولة + تقليم + gc تلقائي (المسبب الحقيقي لـ«الخمول» كان نفاد 512MB)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -166,6 +167,13 @@ KEEP_ALIVE_INTERVAL_SEC = float(os.getenv("KEEP_ALIVE_INTERVAL_SEC", "600"))  # 
 KEEP_ALIVE_URL = os.getenv("KEEP_ALIVE_URL", "")  # تجاوز يدوي اختياري (مثال: https://fibo-elio.onrender.com)
 PANEL_URL = os.getenv("PANEL_URL", "")            # بديل اشتقاق ثانٍ إن لم يُحقن RENDER_EXTERNAL_URL (نشر خارج Render)
 
+# [FE1.3.1] حمية الذاكرة — الخطة المجانية 512MB وأعطال OOM («Instance failed: ran out of memory»)
+# كانت تعيد إقلاع الخدمة كل دقائق = «الخمول» الظاهري. السبب: تحميل أسواق 4 منصات كاملة (~40-80MB لكل واحدة)
+MEM_LAZY_MARKETS = os.getenv("MEM_LAZY_MARKETS", "1").strip().lower() not in ("0", "false", "no", "off")
+MEM_PRUNE_MARKETS = int(os.getenv("MEM_PRUNE_MARKETS", "400"))    # لا يُقلَّم مزود أسواقه أقل من هذا العدد
+MEM_GC_THRESHOLD_MB = float(os.getenv("MEM_GC_THRESHOLD_MB", "380"))  # تجميع قسري فوق هذا
+MEM_CRITICAL_MB = float(os.getenv("MEM_CRITICAL_MB", "450"))          # سجل حرج فوق هذا
+
 DASHBOARD_PROTECTED = bool(DASHBOARD_USERNAME and DASHBOARD_PASSWORD)
 USE_POSTGRES = DATABASE_URL.startswith("postgres")
 
@@ -175,6 +183,68 @@ TF_SECONDS = {
 }
 
 logger = get_logger("fibo-elio")
+
+
+# [FE1.3.1] أدوات قياس وتنظيف الذاكرة — بلا تبعيات خارجية (قراءة /proc مباشرة)
+def rss_mb() -> float:
+    """الذاكرة المقيمة الحالية بالميجابايت — 0.0 إن لم تتوفر /proc (بيئات غير لينكس)."""
+    try:
+        with open("/proc/self/status", "r") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return float(int(line.split()[1])) / 1024.0
+    except Exception:
+        pass
+    return 0.0
+
+
+def mem_check(reason: str = "") -> float:
+    """قياس + تنظيف ذكي: gc.collect() فوق عتبة التحذير، وسجل حرج فوق الحد الأخير.
+    تُستدعى دوريًا من حلقات المسح/المراقبة — قراءة /proc رخيصة والتنظيف عند الحاجة فقط.
+    تعيد RSS الحالية بالميجابايت."""
+    m = rss_mb()
+    if m >= MEM_GC_THRESHOLD_MB:
+        gc.collect()
+        m2 = rss_mb()
+        tag = f" ({reason})" if reason else ""
+        if m2 >= MEM_CRITICAL_MB:
+            logger.critical("الذاكرة حرجة %.0fMB بعد التنظيف (كانت %.0fMB)%s — اقتراب من سقف 512MB", m2, m, tag)
+        else:
+            logger.info("تنظيف ذاكرة%s: %.0fMB ← %.0fMB", tag, m, m2)
+        return m2
+    return m
+
+
+def prune_markets(ex: Any, keep: Optional[List[str]] = None) -> int:
+    """[FE1.3.1] تقليم أسواق مزود محمّل: الاحتفاظ بالأزواج المطلوبة فقط (قائمة المراقبة).
+    أسواق ccxt الكاملة (آلاف الأزواج بفلاترها ودقتها) تلتهم عشرات الميجابايت لكل مزود.
+    يعيد عدد الأزواج المتبقية، أو -1 عند أي فشل (يبقى الوضع الكامل — آمن دائمًا)."""
+    try:
+        keep_set = set(keep or watchlist)
+        markets = getattr(ex, "markets", None)
+        if not isinstance(markets, dict):
+            return -1
+        if len(markets) <= MEM_PRUNE_MARKETS:
+            return len(markets)  # صغير أصلًا — لا فائدة من التقليم
+        slim: Dict[str, Any] = {}
+        for k, m in markets.items():
+            if k in keep_set:
+                slim[k] = m
+            elif isinstance(m, dict) and (m.get("symbol") in keep_set or m.get("id") in keep_set):
+                slim[k] = m
+        if len(slim) >= len(markets):
+            return len(markets)
+        ex.markets = slim
+        mbid = getattr(ex, "markets_by_id", None)
+        if isinstance(mbid, dict) and mbid:
+            ex.markets_by_id = {
+                i: m for i, m in mbid.items()
+                if i in keep_set or (isinstance(m, dict) and (m.get("symbol") in keep_set or m.get("id") in keep_set))
+            }
+        return len(slim)
+    except Exception as exc:
+        logger.debug("تقليم الأسواق لم يُكمل: %s", exc)
+        return -1
 
 # حالة التشغيل (ورقي دائمًا — المفتاح يتحكم بتوليد إشارات جديدة فقط)
 is_trading_enabled: bool = False
@@ -525,6 +595,11 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
                     active_source["name"] = name
                     active_source["since"] = utc_now_iso()
                     logger.info("مزود البيانات الفعّال الآن: %s", name)
+            if not st.get("markets_pruned"):  # [FE1.3.1] تقليم لمرة واحدة بعد أول جلب ناجح
+                st["markets_pruned"] = True
+                n = prune_markets(EXCHANGES[name])
+                if n >= 0:
+                    logger.info("تقليم أسواق %s بعد أول جلب — بقي %d زوج فقط (حمية الذاكرة)", name, n)
             return raw, name
         except Exception as exc:
             with provider_lock:
@@ -828,6 +903,10 @@ async def _ws_watch_stream(symbol: str, stream: str) -> None:
             ex = _ws_exchange(name)
             if not ex.markets:
                 await ex.load_markets()
+                # [FE1.3.1] تقليم فوري — نسخ pro تحمّل الأسواق كاملة أيضًا (الرمز نفسه مشمول أمانًا)
+                n = prune_markets(ex, list(dict.fromkeys(list(watchlist) + [symbol])))
+                if n >= 0:
+                    logger.info("تقليم أسواق ويب سوكت %s — بقي %d زوج فقط (حمية الذاكرة)", name, n)
             _ws_mark(symbol, name, "connecting")
             if stream == "ohlcv":
                 # بذرة REST واحدة عند بدء الاشتراك: التيار قد يبدأ بالشمعة الجارية
@@ -1267,6 +1346,7 @@ def scan_loop() -> None:
             scan_cycle()
         except Exception as exc:
             logger.exception("استثناء في حلقة المسح: %s", exc)
+        mem_check("بعد دورة مسح")  # [FE1.3.1] حمية الذاكرة
         nap = seconds_until_next_candle(SIGNAL_TIMEFRAME)
         logger.info("الدورة اكتملت — النوم %.0f ثانية حتى إغلاق شمعة %s القادمة", nap, SIGNAL_TIMEFRAME)
         time.sleep(nap)
@@ -1281,6 +1361,7 @@ def monitor_loop() -> None:
             db.ensure()
             monitor_step()
             ws_sync_subscriptions()  # [FE1.2.0] احتياط موازٍ للمشرف — مزامنة الاشتراكات كل دقيقة
+            mem_check("دورة مراقبة")  # [FE1.3.1] حمية الذاكرة كل دقيقة
         except Exception as exc:
             logger.exception("استثناء في حلقة المراقبة: %s", exc)
         time.sleep(60)
@@ -1439,6 +1520,11 @@ def health():
         "data_source": (active_source.get("name") or "boot"),
         "live_feed": ("websocket" if (WS_ENABLED and _ws_thread_started) else "rest"),
         "pairs": len(watchlist),
+        "memory": {  # [FE1.3.1] تشخيص الذاكرة — سبب أعطال OOM الحقيقية
+            "rss_mb": round(rss_mb(), 1),
+            "gc_threshold_mb": MEM_GC_THRESHOLD_MB,
+            "critical_mb": MEM_CRITICAL_MB,
+        },
         "keep_alive": keep_alive_snapshot(),  # [FE1.3.0] تشخيص النبضة — عام بلا مصادقة لكرون جوب
         "time": utc_now_iso(),
     })
@@ -1471,6 +1557,11 @@ def api_all():
         "detections": dets,
         "notifications": notif_rows,
         "data": data_status(),  # [FE1.0.1] تشخيص مزودي البيانات للوحة
+        "memory": {  # [FE1.3.1] بطاقة الذاكرة في اللوحة
+            "rss_mb": round(rss_mb(), 1),
+            "gc_threshold_mb": MEM_GC_THRESHOLD_MB,
+            "critical_mb": MEM_CRITICAL_MB,
+        },
         "keep_alive": keep_alive_snapshot(),  # [FE1.3.0] بطاقة النبضة في اللوحة
     })
 
@@ -1599,15 +1690,21 @@ def restore_trading_flag() -> None:
 
 
 def load_markets_async() -> None:
-    def _load():
-        for name, ex in EXCHANGES.items():
-            try:
-                ex.load_markets()
-                logger.info("تحميل أسواق المزود %s اكتمل (دقة الكميات جاهزة)", name)
-            except Exception as exc:
-                logger.warning("تعذر تحميل أسواق المزود %s — يُعاد تلقائيًا عند أول جلب: %s", name, exc)
-    t = threading.Thread(target=_load, daemon=True)
-    t.start()
+    """[FE1.3.1] لم يعد يُحمّل أسواق المزودين مسبقًا — التحميل كسول عند أول استخدام:
+    ccxt يستدعي load_markets داخليًا في أول fetch_ohlcv لكل مزود، وprune_markets
+    يقلّم الأسواق فور أول نجاح. كان التحميل المسبق لكل المزودين يستهلك 150-300MB
+    دفعة واحدة عند الإقلاع = السبب الرئيسي لأعطال OOM على خطة 512MB."""
+    if not MEM_LAZY_MARKETS:
+        def _load():
+            for name, ex in EXCHANGES.items():
+                try:
+                    ex.load_markets()
+                    logger.info("تحميل أسواق المزود %s اكتمل (الوضع القديم المسبق)", name)
+                except Exception as exc:
+                    logger.warning("تعذر تحميل أسواق المزود %s — يُعاد تلقائيًا عند أول جلب: %s", name, exc)
+        threading.Thread(target=_load, daemon=True).start()
+        return
+    logger.info("حمية الذاكرة: الأسواق تُحمّل كسولًا عند أول استخدام لكل مزود، وتُقلّم فور نجاح أول جلب")
 
 
 def initialize_bot_services() -> None:
@@ -1621,13 +1718,16 @@ def initialize_bot_services() -> None:
     ka_target = resolve_keep_alive_url()
     ka_txt = (f"نشط — نبضة كل {int(KEEP_ALIVE_INTERVAL_SEC)} ثانية إلى {ka_target}"
               if (KEEP_ALIVE_ENABLED and ka_target) else "معطل ⚠ (خطر نوم الخدمة على الخطة المجانية)")
+    mem_txt = (f"كسول + تقليم + gc عند {int(MEM_GC_THRESHOLD_MB)}MB" if MEM_LAZY_MARKETS
+               else "مسبق (الوضع القديم) — خطر OOM")
     log_and_notify(
         "info",
         f"🚀 Fibo-Elio {BOT_VERSION} أقلع — استراتيجية واحدة: Elliott_Fibonacci (المنطق الأصلي)\n"
         f"وضع ورقي دائم | أزواج: {len(watchlist)} | فريم الكشف {SIGNAL_TIMEFRAME} | التنفيذ {ENTRY_TIMEFRAME}\n"
         f"الأسعار الحية: {'ويب سوكت (ccxt.pro) — REST احتياطًا' if WS_ENABLED else 'REST'} | "
         f"انعكاس الزيجزاج {DEVIATION_THRESHOLD*100:.2f}% | أقصى صفقات {MAX_OPEN_TRADES} | مخاطرة {RISK_PCT_PER_TRADE}%\n"
-        f"البقاء الحي: {ka_txt}",
+        f"البقاء الحي: {ka_txt}\n"
+        f"الذاكرة: {mem_txt} — الحد 512MB",
         "BOOT",
     )
 

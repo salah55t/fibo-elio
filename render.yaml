@@ -69,3 +69,11 @@ services:
         value: "1"
       - key: KEEP_ALIVE_INTERVAL_SEC
         value: "600"
+      # [FE1.3.1] حمية الذاكرة ضد أعطال OOM (السقف 512MB): أسواق كسولة + تقليم + gc تلقائي
+      # MALLOC_ARENA_MAX يقلل تجزئة ذاكرة glibc مع الخيوط المتعددة (يُقرأ عند بدء العملية)
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: MEM_GC_THRESHOLD_MB
+        value: "380"
+      - key: MEM_CRITICAL_MB
+        value: "450"

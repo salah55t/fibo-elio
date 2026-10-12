@@ -8,7 +8,7 @@ panel.py — لوحة تحكم Fibo-Elio (عربية RTL، داكنة، تحدي
 [FE1.2.0] شارة مصدر كل سعر حي (⚡WS ويب سوكت / REST احتياط) + شريحة حالة التغذية.
 """
 
-BOT_VERSION = "FE1.3.0"
+BOT_VERSION = "FE1.3.1"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -185,6 +185,14 @@ function renderCards(d){
     if (ka.last_ping_at) kaTxt += ' · ' + ka.last_ping_at.slice(11,19) + ' UTC';
   }
   cards.push(['البقاء الحي (مضاد النوم)', kaTxt, kaCls]);
+  // [FE1.3.1] بطاقة الذاكرة — مراقبة استهلاك RAM ضد سقف 512MB
+  const mem = d.memory || {};
+  let memTxt = '—', memCls = '';
+  if (mem.rss_mb) {
+    memTxt = Math.round(mem.rss_mb) + ' / 512 MB';
+    memCls = mem.rss_mb >= (mem.critical_mb || 450) ? 'neg' : (mem.rss_mb >= (mem.gc_threshold_mb || 380) ? 'gld' : 'pos');
+  }
+  cards.push(['الذاكرة (RAM)', memTxt, memCls]);
   $('cards').innerHTML = cards.map(c =>
     `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}">${c[1]}</div></div>`).join('');
   const tb = $('trade-badge');
