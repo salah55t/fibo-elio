@@ -48,6 +48,11 @@
  • إلغاء يدوي للأوامر المعلقة (POST /api/trades/cancel)
  الحلقة الآلية للوقف/الهدف لم تتغير — اليدوي بديل متاح في أي لحظة.
 
+ FE1.1.1: إصلاح حرج اكتشفه التتبع الحي — fetch_ohlcv_df كانت ترفض أي استجابة
+ أقل من 60 شمعة، بينما حلقة المراقبة (ملء المعلق + وقف/هدف المفتوح) تجلب شمعتين
+ فقط limit=2 فكانت تُهدر النتيجة وتتجاهل الصفقات: لا ملء ولا إغلاق آلي أبدًا.
+ الحل: معامل min_candles — المسح 60+ كما هو، والمراقبة/السعر الحي 2.
+
  متغيرات البيئة (نفس عقد المشروع السابق + إعدادات الاستراتيجية):
    BINANCE_API_KEY / BINANCE_API_SECRET  (اختياريان — الشموع العامة تكفي للورقي)
    DATABASE_URL          اختياري (PostgreSQL) — وإلا SQLite محلي
@@ -93,7 +98,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.1.0"  # FE1.1.0: تتبع حي للصفقات + إغلاق/إلغاء يدوي من اللوحة
+BOT_VERSION = "FE1.1.1"  # FE1.1.1: إصلاح حرج — حلقة المراقبة كانت مهدرة بشرط 60 شمعة على الاستعلامات القصيرة
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -502,13 +507,17 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
     return None, None
 
 
-def fetch_ohlcv_df(symbol: str, timeframe: str, limit: int = OHLCV_LIMIT) -> Optional[pd.DataFrame]:
+def fetch_ohlcv_df(symbol: str, timeframe: str, limit: int = OHLCV_LIMIT,
+                   min_candles: int = 60) -> Optional[pd.DataFrame]:
     """شموع OHLCV كإطار pandas بعقد الطبقة الأولى (timestamp/open/high/low/close/volume).
-    [FE1.0.1] عبر تعاقب المزودين — باينانس أولًا كما في الأصل ثم البدائل آليًا."""
+    [FE1.0.1] عبر تعاقب المزودين — باينانس أولًا كما في الأصل ثم البدائل آليًا.
+    [FE1.1.1] min_candles: الحد الأدنى المطلوب — المسح يحتاج 60+، والمراقبة/السعر الحي
+    تجلب شمعتين فقط (limit=2) فتمرر min_candles=2 وإلا رُفضت استجاباتها القصيرة
+    وهُدرت (هذا كان يعطل حلقة المراقبة كاملة قبل FE1.1.1)."""
     for attempt in range(3):
         raw, _src = fetch_ohlcv_raw(symbol, timeframe, limit)
         if raw:
-            if len(raw) < 60:
+            if len(raw) < min_candles:
                 return None
             df = pd.DataFrame(raw, columns=["ts", "open", "high", "low", "close", "volume"])
             df["timestamp"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
@@ -604,7 +613,7 @@ def get_live_price(symbol: str) -> Optional[float]:
         if hit and now - hit[1] < PRICE_CACHE_TTL:
             return hit[0]
     try:
-        df = fetch_ohlcv_df(symbol, ENTRY_TIMEFRAME, limit=2)
+        df = fetch_ohlcv_df(symbol, ENTRY_TIMEFRAME, limit=2, min_candles=2)
         price = float(df["close"].iloc[-1]) if df is not None and not df.empty else None
     except Exception:
         price = None
@@ -758,7 +767,7 @@ def monitor_step() -> None:
     for sig in pend:
         symbol = sig["symbol"]
         try:
-            df = fetch_ohlcv_df(symbol, ENTRY_TIMEFRAME, limit=2)
+            df = fetch_ohlcv_df(symbol, ENTRY_TIMEFRAME, limit=2, min_candles=2)  # [FE1.1.1]
         except Exception as exc:
             logger.warning("[مراقبة] فشل جلب %s: %s", symbol, exc)
             continue
@@ -799,7 +808,7 @@ def monitor_step() -> None:
     for sig in opened:
         symbol = sig["symbol"]
         try:
-            df = fetch_ohlcv_df(symbol, ENTRY_TIMEFRAME, limit=2)
+            df = fetch_ohlcv_df(symbol, ENTRY_TIMEFRAME, limit=2, min_candles=2)  # [FE1.1.1]
         except Exception as exc:
             logger.warning("[مراقبة] فشل جلب %s: %s", symbol, exc)
             continue
@@ -1003,7 +1012,7 @@ def compute_stats() -> Dict[str, Any]:
     unrealized = 0.0
     for r in open_rows:
         try:
-            df = fetch_ohlcv_df(r["symbol"], ENTRY_TIMEFRAME, limit=2)
+            df = fetch_ohlcv_df(r["symbol"], ENTRY_TIMEFRAME, limit=2, min_candles=2)  # [FE1.1.1]
             price = float(df["close"].iloc[-1]) if df is not None and not df.empty else float(r["fill_price"])
             unrealized += float(r["quantity"]) * (price - float(r["fill_price"]))
         except Exception:

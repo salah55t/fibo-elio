@@ -7,7 +7,7 @@ panel.py — لوحة تحكم Fibo-Elio (عربية RTL، داكنة، تحدي
 استراتيجية Elliott_Fibonacci، آخر التقاطات الموجات (صاعدة/هابطة)، والإشعارات.
 """
 
-BOT_VERSION = "FE1.1.0"
+BOT_VERSION = "FE1.1.1"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">

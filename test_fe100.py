@@ -318,7 +318,7 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "FE1.1.0"
+        assert body["version"] == "FE1.1.1"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 
@@ -605,6 +605,35 @@ class TestLiveTrackingAndManualActions:
         r = client.post("/api/trades/cancel", json={"id": 1},
                         headers={"Authorization": "Basic " + cred})
         assert r.status_code == 404  # مصادقة تمر — لكن لا صفقة بهذا المعرف
+
+
+class TestShortFetchRegressionFE111:
+    """FE1.1.1 — إصلاح حرج: كان شرط 60 شمعة يرفض استعلامات المراقبة القصيرة (limit=2)
+    فتعطلت حلقة الملء/الوقف/الهدف كليًا منذ البداية."""
+
+    def test_short_query_limit2_returns_rows(self, clean_db, monkeypatch):
+        ok = FakeExchange(lambda *a: _klines(2, base=100.0))  # صفّان فقط كما تطلب المراقبة
+        _reset_providers(monkeypatch, OrderedDict([("binance", ok)]))
+        df = vnz.fetch_ohlcv_df("BTC/USDT", "15m", limit=2, min_candles=2)
+        assert df is not None and len(df) == 2
+        assert ok.calls == 1  # نجحت من أول محاولة — لا تكرار ولا هدر
+
+    def test_short_query_rejected_by_default_min(self, clean_db, monkeypatch):
+        ok = FakeExchange(lambda *a: _klines(2, base=100.0))
+        _reset_providers(monkeypatch, OrderedDict([("binance", ok)]))
+        assert vnz.fetch_ohlcv_df("BTC/USDT", "15m", limit=2) is None  # الافتراضي 60
+
+    def test_scan_query_short_response_still_rejected(self, clean_db, monkeypatch):
+        ok = FakeExchange(lambda *a: _klines(30, base=100.0))
+        _reset_providers(monkeypatch, OrderedDict([("binance", ok)]))
+        assert vnz.fetch_ohlcv_df("BTC/USDT", "15m", limit=500) is None  # 30 < 60 للمسح
+
+    def test_get_live_price_works_with_short_candles(self, clean_db, monkeypatch):
+        vnz._price_cache.clear()
+        ok = FakeExchange(lambda *a: [[1700000000000, 130.0, 131.0, 129.0, 130.5, 10.0],
+                                      [1700000900000, 130.5, 132.0, 130.0, 131.7, 10.0]])
+        _reset_providers(monkeypatch, OrderedDict([("binance", ok)]))
+        assert math.isclose(vnz.get_live_price("BTC/USDT"), 131.7)
 
 
 if __name__ == "__main__":
