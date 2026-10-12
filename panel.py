@@ -8,7 +8,7 @@ panel.py — لوحة تحكم Fibo-Elio (عربية RTL، داكنة، تحدي
 [FE1.2.0] شارة مصدر كل سعر حي (⚡WS ويب سوكت / REST احتياط) + شريحة حالة التغذية.
 """
 
-BOT_VERSION = "FE1.2.0"
+BOT_VERSION = "FE1.3.0"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -176,6 +176,15 @@ function renderCards(d){
     ['مزود البيانات', (d.data&&d.data.active)? d.data.active.toUpperCase() : '—', 'tealc'],
     ['آخر مسح', s.last_scan_at? s.last_scan_at.slice(11,16)+' UTC' : '—', ''],
   ];
+  // [FE1.3.0] بطاقة البقاء الحي — دليل مرئي أن مضاد النوم يعمل
+  const ka = d.keep_alive || {};
+  let kaTxt = 'معطل', kaCls = '';
+  if (ka.enabled) {
+    kaTxt = (ka.last_ok === false ? '⚠ فشل آخر نبضة! كل ' : '💓 كل ') + Math.round((ka.interval_sec||600)/60) + ' د';
+    kaCls = (ka.last_ok === false ? 'neg' : 'pos');
+    if (ka.last_ping_at) kaTxt += ' · ' + ka.last_ping_at.slice(11,19) + ' UTC';
+  }
+  cards.push(['البقاء الحي (مضاد النوم)', kaTxt, kaCls]);
   $('cards').innerHTML = cards.map(c =>
     `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}">${c[1]}</div></div>`).join('');
   const tb = $('trade-badge');

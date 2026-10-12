@@ -62,3 +62,10 @@ services:
         value: "10"
       - key: WS_RECV_TIMEOUT_SEC
         value: "60"
+      # [FE1.3.0] البقاء الحي — نبضة ذاتية إلى /health العام كل 10 دقائق تمنع نوم الخطة المجانية
+      # (القديم: نبضة كل 14 دقيقة بلا إعادة محاولة — أي فشل عابر واحد كان يسمح بالنوم)
+      # الهدف يُشتق تلقائيًا من RENDER_EXTERNAL_URL الذي يحقنه Render — وKEEP_ALIVE_URL/PANEL_URL تجاوزان اختياريان
+      - key: KEEP_ALIVE_ENABLED
+        value: "1"
+      - key: KEEP_ALIVE_INTERVAL_SEC
+        value: "600"

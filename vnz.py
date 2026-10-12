@@ -115,7 +115,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.2.0"  # FE1.2.0: الأسعار الحية من ويب سوكت (ccxt.pro) — REST احتياطًا فقط
+BOT_VERSION = "FE1.3.0"  # FE1.3.0: البقاء الحي المحصّن — نبضة /health كل 10 دقائق + إعادة محاولة عند الفشل + تشخيص حي
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -157,6 +157,14 @@ WS_ENABLED = os.getenv("WS_ENABLED", "1").strip().lower() not in ("0", "false", 
 WS_STALE_SEC = float(os.getenv("WS_STALE_SEC", "90"))     # أقدم عمر مقبول لبيانات الويب سوكت قبل الرجوع لـ REST
 WS_SYNC_INTERVAL = float(os.getenv("WS_SYNC_INTERVAL", "10"))  # إيقاع مزامنة الاشتراكات مع الصفقات النشطة
 WS_RECV_TIMEOUT_SEC = float(os.getenv("WS_RECV_TIMEOUT_SEC", "60"))  # مهلة انتظار رسالة قبل اعتبار المزود ميتًا
+
+# [FE1.3.0] البقاء الحي — نبضة ذاتية إلى /health العام (بلا مصادقة) تمنع نوم Render المجاني
+# (الخطة المجانية تُخمد الخدمة بعد 15 دقيقة بلا طلبات خارجية، والاستيقاظ يأخذ نحو دقيقة)
+# القديم FE1.2.0: نبضة كل 14 دقيقة بلا إعادة محاولة — أي فشل عابر واحد كان يسمح بالنوم
+KEEP_ALIVE_ENABLED = os.getenv("KEEP_ALIVE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+KEEP_ALIVE_INTERVAL_SEC = float(os.getenv("KEEP_ALIVE_INTERVAL_SEC", "600"))  # نبضة كل 10 دقائق — هامش أمان مزدوج تحت سقف 15 دقيقة
+KEEP_ALIVE_URL = os.getenv("KEEP_ALIVE_URL", "")  # تجاوز يدوي اختياري (مثال: https://fibo-elio.onrender.com)
+PANEL_URL = os.getenv("PANEL_URL", "")            # بديل اشتقاق ثانٍ إن لم يُحقن RENDER_EXTERNAL_URL (نشر خارج Render)
 
 DASHBOARD_PROTECTED = bool(DASHBOARD_USERNAME and DASHBOARD_PASSWORD)
 USE_POSTGRES = DATABASE_URL.startswith("postgres")
@@ -1278,18 +1286,74 @@ def monitor_loop() -> None:
         time.sleep(60)
 
 
+# [FE1.3.0] حالة البقاء الحي — تُعرض في /health و/api/all لتشخيص حي من اللوحة أو curl
+keep_alive_lock = threading.Lock()
+keep_alive_stop = threading.Event()
+keep_alive_state: Dict[str, Any] = {
+    "enabled": False, "target": "", "interval_sec": 0.0,
+    "last_ping_at": "", "last_ok": None, "ok_count": 0, "fail_count": 0,
+}
+
+
+def keep_alive_snapshot() -> Dict[str, Any]:
+    with keep_alive_lock:
+        return dict(keep_alive_state)
+
+
+def resolve_keep_alive_url() -> str:
+    """هدف النبضة: KEEP_ALIVE_URL ← RENDER_EXTERNAL_URL (يحقنه Render تلقائيًا) ← PANEL_URL."""
+    base = KEEP_ALIVE_URL or RENDER_EXTERNAL_URL or PANEL_URL
+    return base.rstrip("/") + "/health" if base else ""
+
+
+def keep_alive_ping(url: str) -> bool:
+    """نبضة واحدة إلى /health (عام بلا مصادقة) مع تحديث عدادات التشخيص."""
+    ok = False
+    try:
+        resp = requests.get(url, timeout=15)
+        ok = (resp.status_code == 200)
+        if not ok:
+            logger.warning("نبضة البقاء أعادت HTTP %s من %s", resp.status_code, url)
+    except Exception as exc:
+        logger.warning("فشلت نبضة البقاء إلى %s: %s", url, exc)
+    with keep_alive_lock:
+        keep_alive_state["last_ping_at"] = utc_now_iso()
+        keep_alive_state["last_ok"] = ok
+        if ok:
+            keep_alive_state["ok_count"] += 1
+        else:
+            keep_alive_state["fail_count"] += 1
+    return ok
+
+
 def keep_alive_loop() -> None:
-    """نبضة ذاتية ضد نوم Render المجاني — كما في المشروع السابق."""
-    if not RENDER_EXTERNAL_URL:
+    """[FE1.3.0] نبضة ذاتية ضد نوم Render المجاني — محصّنة ضد الفشل العابر.
+    - الهدف /health العام (بلا مصادقة) — يصلح أيضًا هدفًا لكرون خارجي (cron-job.org)
+    - نجاح ← سكون KEEP_ALIVE_INTERVAL_SEC (افتراضي 600ث) | فشل ← إعادة محاولة كل 60ث حتى النجاح
+      فلا تبقى فجوة صمت تسمح بالنوم (القديم: نبضة واحدة كل 14 دقيقة بلا إعادة محاولة)
+    - أوقفه بـ KEEP_ALIVE_ENABLED=0 إن اعتمدت كليًا على كرون خارجي يضرب /health"""
+    url = resolve_keep_alive_url()
+    with keep_alive_lock:
+        keep_alive_state.update({
+            "enabled": bool(KEEP_ALIVE_ENABLED and url),
+            "target": url,
+            "interval_sec": KEEP_ALIVE_INTERVAL_SEC,
+        })
+    if not KEEP_ALIVE_ENABLED:
+        logger.info("البقاء الحي معطّل (KEEP_ALIVE_ENABLED=0) — اعتمد على كرون خارجي يضرب /health كل 10 دقائق")
         return
-    url = RENDER_EXTERNAL_URL.rstrip("/") + "/health"
+    if not url:
+        logger.warning("البقاء الحي معطّل: لا KEEP_ALIVE_URL ولا RENDER_EXTERNAL_URL ولا PANEL_URL — اضبط KEEP_ALIVE_URL يدويًا")
+        return
+    logger.info("البقاء الحي نشط — نبضة /health كل %.0f ثانية إلى %s (إعادة محاولة كل 60 ثانية عند الفشل)",
+                KEEP_ALIVE_INTERVAL_SEC, url)
+    if keep_alive_stop.wait(60):   # نبضة تأكيد مبكرة بعد دقيقة من الإقلاع
+        return
     while True:
-        time.sleep(14 * 60)
-        try:
-            requests.get(url, timeout=10)
-            logger.info("نبضة البقاء أُرسلت إلى %s", url)
-        except Exception as exc:
-            logger.warning("فشلت نبضة البقاء: %s", exc)
+        keep_alive_ping(url)
+        nap = KEEP_ALIVE_INTERVAL_SEC if keep_alive_state["last_ok"] else 60.0
+        if keep_alive_stop.wait(nap):
+            return
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1375,6 +1439,7 @@ def health():
         "data_source": (active_source.get("name") or "boot"),
         "live_feed": ("websocket" if (WS_ENABLED and _ws_thread_started) else "rest"),
         "pairs": len(watchlist),
+        "keep_alive": keep_alive_snapshot(),  # [FE1.3.0] تشخيص النبضة — عام بلا مصادقة لكرون جوب
         "time": utc_now_iso(),
     })
 
@@ -1406,6 +1471,7 @@ def api_all():
         "detections": dets,
         "notifications": notif_rows,
         "data": data_status(),  # [FE1.0.1] تشخيص مزودي البيانات للوحة
+        "keep_alive": keep_alive_snapshot(),  # [FE1.3.0] بطاقة النبضة في اللوحة
     })
 
 
@@ -1552,12 +1618,16 @@ def initialize_bot_services() -> None:
     threading.Thread(target=scan_loop, daemon=True, name="scan-loop").start()
     threading.Thread(target=monitor_loop, daemon=True, name="monitor-loop").start()
     threading.Thread(target=keep_alive_loop, daemon=True, name="keep-alive").start()
+    ka_target = resolve_keep_alive_url()
+    ka_txt = (f"نشط — نبضة كل {int(KEEP_ALIVE_INTERVAL_SEC)} ثانية إلى {ka_target}"
+              if (KEEP_ALIVE_ENABLED and ka_target) else "معطل ⚠ (خطر نوم الخدمة على الخطة المجانية)")
     log_and_notify(
         "info",
         f"🚀 Fibo-Elio {BOT_VERSION} أقلع — استراتيجية واحدة: Elliott_Fibonacci (المنطق الأصلي)\n"
         f"وضع ورقي دائم | أزواج: {len(watchlist)} | فريم الكشف {SIGNAL_TIMEFRAME} | التنفيذ {ENTRY_TIMEFRAME}\n"
         f"الأسعار الحية: {'ويب سوكت (ccxt.pro) — REST احتياطًا' if WS_ENABLED else 'REST'} | "
-        f"انعكاس الزيجزاج {DEVIATION_THRESHOLD*100:.2f}% | أقصى صفقات {MAX_OPEN_TRADES} | مخاطرة {RISK_PCT_PER_TRADE}%",
+        f"انعكاس الزيجزاج {DEVIATION_THRESHOLD*100:.2f}% | أقصى صفقات {MAX_OPEN_TRADES} | مخاطرة {RISK_PCT_PER_TRADE}%\n"
+        f"البقاء الحي: {ka_txt}",
         "BOOT",
     )
 
