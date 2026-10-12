@@ -116,7 +116,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.3.1"  # FE1.3.1: حمية الذاكرة ضد OOM — أسواق كسولة + تقليم + gc تلقائي (المسبب الحقيقي لـ«الخمول» كان نفاد 512MB)
+BOT_VERSION = "FE1.3.2"  # FE1.3.2: علاج ذروة OOM — أسواق spot فقط (bybit/okx كانا يحمّلان عقود+خيارات = 100-200MB) + تقليم عند الفشل
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -479,7 +479,8 @@ def _build_exchange(name: str):
         raise ValueError(f"مزود غير معروف في ccxt: {name}")
     opts: Dict[str, Any] = {
         "enableRateLimit": True,
-        "options": {"defaultType": "spot"},
+        # [FE1.3.2] spot فقط: bybit/okx يحمّلان افتراضيًا عقودًا مستقبلية وخيارات = ذروة 100-200MB عند التحميل
+        "options": {"defaultType": "spot", "fetchMarkets": ["spot"]},
     }
     if name == "binance":
         opts["apiKey"] = API_KEY or None
@@ -607,6 +608,11 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
                 st["fail"] += 1
                 st["last_error"] = str(exc)[:280]
                 st["cooldown_until"] = time.time() + PROVIDER_COOLDOWN_SEC
+            if not st.get("markets_pruned"):  # [FE1.3.2] تقليم عند الفشل أيضًا — ccxt حمّل الأسواق قبل الطلب (حظر جغرافي مثلاً)
+                st["markets_pruned"] = True
+                n = prune_markets(EXCHANGES[name])
+                if n >= 0:
+                    logger.info("تقليم أسواق %s بعد فشل جلب (حُمّلت ضمن المحاولة) — بقي %d زوج فقط", name, n)
             errors.append(f"{name}: {str(exc)[:120]}")
     if errors:
         logger.warning("فشل جلب %s %s من المزودين المتاحين — %s", symbol, timeframe, " | ".join(errors))
@@ -885,7 +891,7 @@ def _ws_exchange(name: str):
         cls = getattr(ccxt.pro, name, None)
         if cls is None:
             raise ValueError(f"المزود {name} غير مدعوم في ccxt.pro")
-        ex = cls({"enableRateLimit": False, "options": {"defaultType": "spot"}})
+        ex = cls({"enableRateLimit": False, "options": {"defaultType": "spot", "fetchMarkets": ["spot"]}})  # [FE1.3.2]
         _ws_exchanges[name] = ex
     return ex
 
@@ -1283,7 +1289,7 @@ def scan_cycle() -> None:
         scan_stats["last_scan_at"] = utc_now_iso()
     scanned_before = scan_stats["scanned"]
     trading_on = is_trading_enabled
-    for symbol in watchlist:
+    for i_sym, symbol in enumerate(watchlist):
         try:
             df = fetch_ohlcv_df(symbol, SIGNAL_TIMEFRAME, limit=OHLCV_LIMIT)
             if df is None:
@@ -1323,6 +1329,8 @@ def scan_cycle() -> None:
         except Exception as exc:
             logger.exception("[%s] استثناء في دورة المسح: %s", symbol, exc)
         finally:
+            if i_sym % 5 == 4:  # [FE1.3.2] فحص ذاكرة خفيف كل 5 أزواج — gc فوق العتبة فقط
+                mem_check("أثناء دورة المسح")
             time.sleep(INTER_SYMBOL_SLEEP)
     with scan_stats_lock:
         scan_stats["last_scan_fetched"] = scan_stats["scanned"] - scanned_before

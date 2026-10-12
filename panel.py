@@ -8,7 +8,7 @@ panel.py — لوحة تحكم Fibo-Elio (عربية RTL، داكنة، تحدي
 [FE1.2.0] شارة مصدر كل سعر حي (⚡WS ويب سوكت / REST احتياط) + شريحة حالة التغذية.
 """
 
-BOT_VERSION = "FE1.3.1"
+BOT_VERSION = "FE1.3.2"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">

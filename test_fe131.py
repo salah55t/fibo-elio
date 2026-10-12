@@ -15,6 +15,7 @@ test_fe131.py — اختبارات حمية الذاكرة ضد أعطال OOM (
 
 import gc
 import types
+from collections import OrderedDict
 
 import pytest
 
@@ -184,8 +185,35 @@ class TestLazyMarkets:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# الجولة 5 — تشخيص الذاكرة في الواجهات
+# الجولة 6 — FE1.3.2: أسواق spot فقط + تقليم عند الفشل
 # ─────────────────────────────────────────────────────────────────────────────
+
+class TestSpotOnlyMarketsFE132:
+    def test_build_exchange_spot_only_option(self):
+        """bybit/okx بلا هذا الخيار تحمّل عقودًا وخيارات = ذروة 100-200MB = OOM."""
+        for name in ("binance", "bybit", "okx", "gate"):
+            ex = vnz._build_exchange(name)
+            assert ex.options.get("fetchMarkets") == ["spot"], f"المزود {name} بلا قصر الأسواق على spot"
+            assert ex.options.get("defaultType") == "spot"
+
+    def test_prune_after_failed_fetch(self, monkeypatch):
+        """المزود المحجوب جغرافيًا حمّل أسواقه ضمن المحاولة — يجب تقليمها رغم الفشل."""
+        big = {f"COIN{i}/USDT": {"id": f"COIN{i}USDT", "symbol": f"COIN{i}/USDT"} for i in range(900)}
+        big["BTC/USDT"] = {"id": "BTCUSDT", "symbol": "BTC/USDT"}
+        fake = types.SimpleNamespace(fetch_ohlcv=lambda *a, **k: (_ for _ in ()).throw(Exception("451 حظر")), markets=big)
+        # عزل كامل: مزود واحد وهمي فاشل فقط — لا نداءات شبكة حقيقية في الاختبار
+        monkeypatch.setattr(vnz, "EXCHANGES", OrderedDict([("binance", fake)]))
+        with vnz.provider_lock:
+            vnz.provider_state = {"binance": {"ok": 0, "fail": 0, "last_error": "",
+                                              "last_ok_at": None, "cooldown_until": 0.0}}
+            vnz.active_source["name"] = None
+        raw, src = vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 2)
+        assert raw is None and src is None
+        st = vnz.provider_state["binance"]
+        assert st["fail"] == 1
+        assert st.get("markets_pruned") is True, "الفشل يجب أن يقلّم الأسواق المحمّلة"
+        assert len(fake.markets) <= 400 + 1 and "BTC/USDT" in fake.markets
+
 
 class TestMemoryDiagnostics:
     def test_health_reports_memory(self, client):
