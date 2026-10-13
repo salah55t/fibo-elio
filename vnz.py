@@ -27,9 +27,24 @@
    • التقييم الأفضل: +1 إن كان تراجع W2 في منطقته المثالية (0.382–0.886)
      و+1 لتراجع W4 (0.236–0.5)، وللموكلفات المتساوية الأحدث زمنيًا
 
- الوضع الورقي الدائم: هذا البوت لا يرسل أي أمر حقيقي إلى المنصة إطلاقًا —
- كل الصفقات محاكاة ورقية برصيد وهمي (PAPER_BALANCE) ورسوم واقعية 0.1% للاتجاهين.
- مفتاح التداول يتحكم في توليد إشارات ورقية جديدة فقط.
+ الوضع الافتراضي ورقي آمن: محاكاة برصيد وهمي (PAPER_BALANCE) ورسوم واقعية 0.1%
+ للاتجاهين، ومفتاح التوليد يتحكم في إنتاج إشارات جديدة فقط.
+
+ FE1.4.0: التداول الحقيقي بزر مثل نسخة V9 + لوحة سبرانية نيون:
+ • زر «التداول الحقيقي» في اللوحة (مثل V9): تفعيله يحول الإشارات الجديدة إلى
+   أوامر فعلية على باينانس — LIMIT BUY عند فيبو 0.382 (أمر معلق حقيقي على
+   المنصة) → بيع سوق فعلي عند الوقف/الهدف/الإبطال.
+ • شروط التفعيل الصارمة: مفاتيح باينانس مضبوطة + فحص اتصال حي ناجح + رصيد USDT
+   مقروء — وإلا يرفض الزر التفعيل برسالة واضحة. الإيقاف يعيد الوضع الورقي فورًا
+   (الصفقات الحقيقية المفتوحة تستمر بالإدارة حتى إغلاقها).
+ • قواعد باينانس كاملة (بدون نسيان): دقة الكمية/السعر (LOT_SIZE/PRICE_FILTER
+   عبر amount_to_precision/price_to_precision)، أدنى قيمة الأمر (NOTIONAL/
+   MIN_NOTIONAL من قواعد السوق)، أدنى كمية، كفاية رصيد USDT الحر، سقف أمان
+   REAL_MAX_NOTIONAL_USDT لكل أمر، وضع TESTNET اختياري (BINANCE_TESTNET).
+ • بطاقة «اتصال باينانس» حية في اللوحة: الاتصال، زمن الاستجابة، رصيد USDT،
+   صلاحية التداول — مع نقطة /api/binance/status مستقلة وكاش 60 ثانية.
+ • المحاسبة: الصفقة الحقيقية تُسجل مثل الورقية (أرباح/نسب/إشعارات) لكن دون أي
+   مساس بالرصيد الورقي — وعمود «الوضع» في اللوحة يفرز حقيقية/ورقية.
 
  FE1.0.1: طبقة مزودي بيانات متعددة — باينانس أولًا كما في الأصل، ثم Bybit → OKX
  → Gate.io تلقائيًا عند الحظر/الفشل. الدرس المستفاد من المشروع السابق: عنوان
@@ -65,7 +80,10 @@
  • /api/ws/status تشخيص كامل + شارة مصدر السعر (WS/REST) في اللوحة
 
  متغيرات البيئة (نفس عقد المشروع السابق + إعدادات الاستراتيجية):
-   BINANCE_API_KEY / BINANCE_API_SECRET  (اختياريان — الشموع العامة تكفي للورقي)
+   BINANCE_API_KEY / BINANCE_API_SECRET  (اختياريان — الشموع العامة تكفي للورقي،
+                                         والمفتاحان مطلوبان لزر التداول الحقيقي فقط)
+   BINANCE_TESTNET       "1" لتنفيذ الأوامر الحقيقية على تيستنت باينانس (اختباري)
+   REAL_MAX_NOTIONAL_USDT سقف قيمة أمر الشراء الحقيقي الواحد (افتراضي 50$)
    DATABASE_URL          اختياري (PostgreSQL) — وإلا SQLite محلي
    TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID اختياريان
    DASHBOARD_USERNAME / DASHBOARD_PASSWORD حماية اللوحة — الافتراضي admin/test123
@@ -116,7 +134,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.3.2"  # FE1.3.2: علاج ذروة OOM — أسواق spot فقط (bybit/okx كانا يحمّلان عقود+خيارات = 100-200MB) + تقليم عند الفشل
+BOT_VERSION = "FE1.4.0"  # FE1.4.0: زر التداول الحقيقي مثل V9 + قواعد باينانس الكاملة + بطاقة اتصال باينانس + لوحة سبرانية نيون
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -173,6 +191,13 @@ MEM_LAZY_MARKETS = os.getenv("MEM_LAZY_MARKETS", "1").strip().lower() not in ("0
 MEM_PRUNE_MARKETS = int(os.getenv("MEM_PRUNE_MARKETS", "400"))    # لا يُقلَّم مزود أسواقه أقل من هذا العدد
 MEM_GC_THRESHOLD_MB = float(os.getenv("MEM_GC_THRESHOLD_MB", "380"))  # تجميع قسري فوق هذا
 MEM_CRITICAL_MB = float(os.getenv("MEM_CRITICAL_MB", "450"))          # سجل حرج فوق هذا
+
+# [FE1.4.0] التداول الحقيقي — زر مثل V9: تفعيله يحول الإشارات الجديدة إلى أوامر
+# فعلية على باينانس (LIMIT عند فيبو 0.382 ← بيع سوق عند الوقف/الهدف). الورقي يبقى
+# الوضع الافتراضي الآمن، والتفعيل يتطلب مفاتيح + فحص اتصال ناجح من الزر نفسه.
+BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "0").strip().lower() in ("1", "true", "yes", "on")
+REAL_MAX_NOTIONAL_USDT = float(os.getenv("REAL_MAX_NOTIONAL_USDT", "50.0"))  # سقف قيمة أمر الشراء الحقيقي الواحد (حماية)
+BIN_STATUS_TTL_SEC = float(os.getenv("BIN_STATUS_TTL_SEC", "60"))  # كاش بطاقة اتصال باينانس
 
 DASHBOARD_PROTECTED = bool(DASHBOARD_USERNAME and DASHBOARD_PASSWORD)
 USE_POSTGRES = DATABASE_URL.startswith("postgres")
@@ -246,9 +271,11 @@ def prune_markets(ex: Any, keep: Optional[List[str]] = None) -> int:
         logger.debug("تقليم الأسواق لم يُكمل: %s", exc)
         return -1
 
-# حالة التشغيل (ورقي دائمًا — المفتاح يتحكم بتوليد إشارات جديدة فقط)
+# حالة التشغيل — [FE1.4.0] مفتاحان مثل V9: التوليد (ورقي/إيقاف) + التداول الحقيقي
 is_trading_enabled: bool = False
 trading_status_lock = threading.Lock()
+is_real_mode: bool = False            # زر التداول الحقيقي — افتراضيًا متوقف (ورقي آمن)
+real_mode_lock = threading.Lock()
 
 scan_stats_lock = threading.Lock()
 scan_stats: Dict[str, Any] = {
@@ -377,6 +404,9 @@ CREATE TABLE IF NOT EXISTS signals (
   pnl_pct NUMERIC,
   peak_price NUMERIC,
   expires_at TEXT,
+  is_real INTEGER DEFAULT 0,
+  order_id TEXT,
+  exit_order_id TEXT,
   meta_json TEXT
 );
 CREATE TABLE IF NOT EXISTS notifications (
@@ -391,12 +421,22 @@ CREATE TABLE IF NOT EXISTS bot_state (
 _SIGNALS_DDL_SQLITE = _SIGNALS_DDL_PG.replace("BIGSERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("NUMERIC", "REAL")
 
 
+def migrate_db() -> None:
+    """[FE1.4.0] أعمدة التداول الحقيقي لقواعد بيانات قديمة (ALTER بلا أذى إن وُجدت)."""
+    for col, ddl in (("is_real", "INTEGER DEFAULT 0"), ("order_id", "TEXT"), ("exit_order_id", "TEXT")):
+        try:
+            db.execute(f"ALTER TABLE signals ADD COLUMN {col} {ddl}")
+        except Exception:
+            pass
+
+
 def init_db() -> None:
     ddl = _SIGNALS_DDL_PG if USE_POSTGRES else _SIGNALS_DDL_SQLITE
     for attempt in range(5):
         try:
             for stmt in [s.strip() for s in ddl.split(";") if s.strip()]:
                 db.execute(stmt)
+            migrate_db()
             if db_get_state("paper_balance") is None:
                 db_set_state("paper_balance", repr(PAPER_BALANCE_START))
             logger.info("تهيئة قاعدة البيانات اكتملت — الإصدار %s", BOT_VERSION)
@@ -651,6 +691,257 @@ detector = PivotDetector(DetectorConfig(
     require_fib_confluence=False,
     fib_tolerance_pct=FIB_TOLERANCE_PCT,
 ))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# [FE1.4.0] طبقة التداول الحقيقي — باينانس مباشرة بقواعد المنصة الكاملة
+# المبدأ: الورقي يبقى الافتراضي، والزر يفعّل تنفيذ الإشارات الجديدة فعليًا.
+# كل أمر يمر عبر قواعد باينانس: دقة الكمية/السعر، أدنى قيمة/كمية، كفاية الرصيد.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_trade_ex_lock = threading.Lock()
+_trade_ex: Any = None            # نسخة التداول (مفاتيح خاصة) — تُبنى مرة واحدة كسولًا
+_trade_pruned = False            # تقليم أسواق نسخة التداول لمرة واحدة (حمية الذاكرة)
+_bin_probe: Any = None           # نسخة عامة بلا مفاتيح لفحص الاتصال عندما لا توجد مفاتيح
+_bin_status_lock = threading.Lock()
+_bin_status_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
+
+
+def binance_trade_exchange():
+    """نسخة تداول باينانس بالمفاتيح (spot) — بلا مفاتيح ترجع None فلا تداول حقيقي إطلاقًا."""
+    global _trade_ex
+    if not (API_KEY and API_SECRET):
+        return None
+    with _trade_ex_lock:
+        if _trade_ex is None:
+            ex = ccxt.binance({
+                "apiKey": API_KEY, "secret": API_SECRET,
+                "enableRateLimit": True,
+                "options": {"defaultType": "spot", "fetchMarkets": ["spot"],
+                            "adjustForTimeDifference": True},
+            })
+            if BINANCE_TESTNET:
+                ex.set_sandbox_mode(True)
+                logger.info("التداول الحقيقي: وضع TESTNET مفعّل (BINANCE_TESTNET=1)")
+            _trade_ex = ex
+        return _trade_ex
+
+
+def _binance_public_probe():
+    """نسخة عامة رخيصة لفحص الاتصال فقط عندما لا توجد مفاتيح — لا أسواق ولا ذاكرة تُذكر."""
+    global _bin_probe
+    if _bin_probe is None:
+        _bin_probe = ccxt.binance({
+            "enableRateLimit": True,
+            "options": {"defaultType": "spot", "fetchMarkets": ["spot"]},
+        })
+    return _bin_probe
+
+
+def binance_status_snapshot(force: bool = False) -> Dict[str, Any]:
+    """[FE1.4.0] حالة اتصال باينانس للوحة: ping حي + زمن استجابة + (بمفاتيح)
+    رصيد USDT وصلاحية التداول. كاش BIN_STATUS_TTL_SEC — لا ضغط على باينانس
+    مهما تكرر تحديث اللوحة، وبلا استثناءات أبدًا."""
+    now = time.time()
+    with _bin_status_lock:
+        if not force and _bin_status_cache["data"] is not None and now - _bin_status_cache["ts"] < BIN_STATUS_TTL_SEC:
+            return dict(_bin_status_cache["data"])
+    keys_ok = bool(API_KEY and API_SECRET)
+    data: Dict[str, Any] = {
+        "connected": False, "keys_present": keys_ok, "testnet": BINANCE_TESTNET,
+        "latency_ms": None, "usdt_free": None, "usdt_total": None, "can_trade": None,
+        "error": None, "checked_at": utc_now_iso(),
+    }
+    try:
+        ex = binance_trade_exchange() if keys_ok else _binance_public_probe()
+        if ex is None:
+            raise RuntimeError("تعذر إنشاء اتصال باينانس")
+        t0 = time.time()
+        ex.fetch_time()  # نقطة عامة خفيفة — مقياس الاتصال وزمن الاستجابة
+        data["connected"] = True
+        data["latency_ms"] = round((time.time() - t0) * 1000.0)
+        if keys_ok:
+            bal = ex.fetch_balance()
+            usdt = (bal or {}).get("USDT") or {}
+            data["usdt_free"] = float(usdt.get("free") or 0.0)
+            data["usdt_total"] = float(usdt.get("total") or 0.0)
+            info = (bal or {}).get("info") or {}
+            ct = info.get("canTrade")
+            data["can_trade"] = bool(ct) if ct is not None else None
+    except Exception as exc:
+        data["error"] = str(exc)[:220]
+    with _bin_status_lock:
+        _bin_status_cache["ts"] = now
+        _bin_status_cache["data"] = dict(data)
+    return data
+
+
+def real_market(ex, symbol: str) -> Dict[str, Any]:
+    """قواعد السوق من باينانس (فلاتر الدقة/الكمية/القيمة) — بلا استثناءات أبدًا."""
+    try:
+        if not ex.markets:
+            ex.load_markets()
+            global _trade_pruned
+            if not _trade_pruned:
+                _trade_pruned = True
+                n = prune_markets(ex, list(dict.fromkeys(list(watchlist) + [symbol])))
+                if n >= 0:
+                    logger.info("تقليم أسواق نسخة التداول — بقي %d زوج فقط (حمية الذاكرة)", n)
+        return ex.markets.get(symbol) or {}
+    except Exception as exc:
+        logger.warning("تعذر جلب قواعد السوق %s: %s", symbol, exc)
+        return {}
+
+
+def real_min_cost(mkt: Dict[str, Any]) -> float:
+    """أدنى قيمة أمر (NOTIONAL/MIN_NOTIONAL) — من قواعد باينانس، وإلا الافتراضي المحلي."""
+    try:
+        c = ((mkt or {}).get("limits") or {}).get("cost") or {}
+        v = c.get("min")
+        if v:
+            return float(v)
+    except Exception:
+        pass
+    return MIN_NOTIONAL_USDT
+
+
+def real_min_amount(mkt: Dict[str, Any]) -> float:
+    """أدنى كمية (LOT_SIZE.minQty) — 0 إن غابت القاعدة."""
+    try:
+        a = ((mkt or {}).get("limits") or {}).get("amount") or {}
+        v = a.get("min")
+        if v is not None:
+            return float(v)
+    except Exception:
+        pass
+    return 0.0
+
+
+def real_adjust_amount(ex, symbol: str, qty: float) -> float:
+    """أرضية الكمية على خطوة LOT_SIZE (amount_to_precision) — بأمان تام بلا استثناءات."""
+    try:
+        v = float(ex.amount_to_precision(symbol, qty))
+        return v if v > 0 else 0.0
+    except Exception:
+        return math.floor(qty * 1e6) / 1e6
+
+
+def real_adjust_price(ex, symbol: str, price: float) -> float:
+    """دقة السعر على tickSize (price_to_precision) — بأمان تام بلا استثناءات."""
+    try:
+        return float(ex.price_to_precision(symbol, price))
+    except Exception:
+        return price
+
+
+def compute_quantity_real(symbol: str, entry: float, sl: float, free_usdt: float,
+                          ex=None) -> Optional[float]:
+    """حجم المركز الحقيقي: مخاطرة RISK_PCT_PER_TRADE من رصيد USDT الفعلي الحر
+    + سقف أمان REAL_MAX_NOTIONAL_USDT + قواعد باينانس (LOT_SIZE، أدنى كمية،
+    أدنى قيمة NOTIONAL، كفاية الرصيد). يرفض بأمان عند أي قاعدة غير محققة."""
+    if free_usdt is None or free_usdt <= 0:
+        log_and_notify("error", f"❌ رفض أمر حقيقي {symbol}: رصيد USDT الحر صفر أو غير مقروء", "REAL_TRADE_ERROR")
+        return None
+    ex = ex or binance_trade_exchange()
+    risk_amount = free_usdt * (RISK_PCT_PER_TRADE / 100.0)
+    risk_per_coin = abs(entry - sl)
+    if risk_per_coin <= 0 or risk_amount <= 0:
+        return None
+    qty = risk_amount / risk_per_coin
+    if ex is not None:
+        qty = real_adjust_amount(ex, symbol, qty)
+    if qty <= 0:
+        return None
+    notional = qty * entry
+    if notional > REAL_MAX_NOTIONAL_USDT:
+        cap_qty = REAL_MAX_NOTIONAL_USDT / entry
+        qty = real_adjust_amount(ex, symbol, cap_qty) if ex else math.floor(cap_qty * 1e6) / 1e6
+        notional = qty * entry
+    mkt = real_market(ex, symbol)
+    min_amt = real_min_amount(mkt)
+    min_cost = real_min_cost(mkt)
+    if min_amt and qty < min_amt:
+        log_and_notify("error", f"❌ رفض أمر حقيقي {symbol}: الكمية {qty} تحت أدنى كمية باينانس {min_amt}", "REAL_TRADE_ERROR")
+        return None
+    if notional < min_cost:
+        # ارفع لأدنى قيمة تداول فقط إن بقيت المخاطرة ضمن 3× المخططة (نفس مبدأ الورقي)
+        qty_min = min_cost / entry
+        if qty_min * risk_per_coin <= risk_amount * 3.0:
+            qty = real_adjust_amount(ex, symbol, qty_min) if ex else math.floor(qty_min * 1e6) / 1e6
+            notional = qty * entry
+        else:
+            log_and_notify("error",
+                           f"❌ رفض أمر حقيقي {symbol}: مسافة الوقف أوسع من أن تتحمل أدنى قيمة "
+                           f"باينانس ({min_cost:.2f}$) ضمن حد المخاطرة", "REAL_TRADE_ERROR")
+            return None
+    if notional > free_usdt:
+        log_and_notify("error",
+                       f"❌ رفض أمر حقيقي {symbol}: القيمة {notional:.2f}$ تتجاوز رصيد USDT الحر {free_usdt:.2f}$",
+                       "REAL_TRADE_ERROR")
+        return None
+    return qty
+
+
+def place_real_limit_buy(symbol: str, price: float, qty: float) -> Optional[Dict[str, Any]]:
+    """أمر LIMIT BUY حقيقي عند فيبو 0.382 — يبقى معلقًا على المنصة كأمر حقيقي."""
+    ex = binance_trade_exchange()
+    if ex is None:
+        return None
+    try:
+        order = ex.create_order(symbol, "limit", "buy", qty, price, {"newOrderRespType": "FULL"})
+        log_and_notify("info",
+                       f"🟢 أمر حقيقي على باينانس: شراء LIMIT {symbol} — كمية {qty} عند {fmt_price(price)} "
+                       f"(id={order.get('id')})", "REAL_ORDER")
+        return order
+    except Exception as exc:
+        log_and_notify("error", f"❌ فشل أمر الشراء الحقيقي {symbol}: {exc}", "REAL_TRADE_ERROR")
+        return None
+
+
+def place_real_market_sell(symbol: str, qty: float) -> Optional[Dict[str, Any]]:
+    """أمر بيع سوق حقيقي — للإغلاق عند الوقف/الهدف/يدويًا."""
+    ex = binance_trade_exchange()
+    if ex is None:
+        return None
+    try:
+        order = ex.create_order(symbol, "market", "sell", qty, None, {"newOrderRespType": "FULL"})
+        log_and_notify("info",
+                       f"🔴 أمر حقيقي على باينانس: بيع سوق {symbol} — كمية {qty} (id={order.get('id')})",
+                       "REAL_ORDER")
+        return order
+    except Exception as exc:
+        log_and_notify("error", f"❌ فشل أمر البيع الحقيقي {symbol}: {exc}", "REAL_TRADE_ERROR")
+        return None
+
+
+def fetch_real_order(ex, symbol: str, order_id: Any) -> Optional[Dict[str, Any]]:
+    """حالة الأمر الحقيقي من المنصة — None عند فشل عابر (تُعاد المحاولة في الدورة القادمة)."""
+    try:
+        return ex.fetch_order(order_id, symbol)
+    except Exception as exc:
+        logger.warning("تعذر جلب حالة الأمر الحقيقي %s/%s: %s", symbol, order_id, exc)
+        return None
+
+
+def cancel_real_order(ex, symbol: str, order_id: Any) -> bool:
+    """إلغاء أمر معلق حقيقي — False يعني إعادة الفحص/المحاولة في الدورة القادمة."""
+    try:
+        ex.cancel_order(order_id, symbol)
+        return True
+    except Exception as exc:
+        logger.warning("تعذر إلغاء الأمر الحقيقي %s/%s: %s", symbol, order_id, exc)
+        return False
+
+
+def fetch_free_base(ex, base: str) -> float:
+    """الرصيد الحر للعملة الأساسية — للتحقق قبل البيع (نفس منطق V9)."""
+    try:
+        bal = ex.fetch_balance()
+        cur = (bal or {}).get(base) or {}
+        return float(cur.get("free") or 0.0)
+    except Exception as exc:
+        logger.warning("تعذر جلب رصيد %s الحر: %s", base, exc)
+        return 0.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1099,7 +1390,10 @@ def register_detection(symbol: str, setup: DetectedSetup, traded: bool) -> None:
 
 
 def create_pending_signal(symbol: str, setup: DetectedSetup) -> bool:
-    """أمر معلّق عند 0.382 لتراجع الموجة 3 — كما ينفذ الأصل _determine_entry_price."""
+    """أمر معلّق عند 0.382 لتراجع الموجة 3 — كما ينفذ الأصل _determine_entry_price.
+    [FE1.4.0] وضع التداول الحقيقي: أمر LIMIT BUY فعلي على باينانس بنفس السعر
+    وبقواعد المنصة الكاملة (دقة السعر/الكمية، أدنى قيمة، كفاية الرصيد).
+    فشل الأمر الحقيقي = لا إشارة (لا سقوط صامت للورقي)."""
     entry = float(setup.entry_zone_low)
     sl = float(setup.stop_loss_price)
     tp = compute_take_profit(setup)
@@ -1107,9 +1401,38 @@ def create_pending_signal(symbol: str, setup: DetectedSetup) -> bool:
         logger.info("[%s] أسعار الإعداد غير منطقية (entry=%s sl=%s tp=%s) — تجاهل",
                     symbol, fmt_price(entry), fmt_price(sl), fmt_price(tp))
         return False
-    qty = compute_quantity(symbol, entry, sl)
-    if qty is None:
-        return False
+    real = is_real_mode
+    order_id: Optional[str] = None
+    if real:
+        ex = binance_trade_exchange()
+        if ex is None:
+            log_and_notify("error", f"❌ رفض أمر حقيقي {symbol}: مفاتيح باينانس غير مضبوطة", "REAL_TRADE_ERROR")
+            return False
+        st = binance_status_snapshot()
+        if not st.get("connected") or st.get("usdt_free") is None:
+            log_and_notify("error",
+                           f"❌ رفض أمر حقيقي {symbol}: اتصال باينانس غير جاهز ({st.get('error') or 'لا رصيد'})",
+                           "REAL_TRADE_ERROR")
+            return False
+        qty = compute_quantity_real(symbol, entry, sl, float(st["usdt_free"]), ex)
+        if qty is None:
+            return False
+        price_p = real_adjust_price(ex, symbol, entry)
+        qty = real_adjust_amount(ex, symbol, qty)
+        mkt = real_market(ex, symbol)
+        if qty <= 0 or qty * price_p < real_min_cost(mkt):
+            log_and_notify("error",
+                           f"❌ رفض أمر حقيقي {symbol}: الكمية تحت حدود باينانس بعد تطبيق الدقة",
+                           "REAL_TRADE_ERROR")
+            return False
+        order = place_real_limit_buy(symbol, price_p, qty)
+        if order is None:
+            return False
+        order_id = str(order.get("id") or "") or None
+    else:
+        qty = compute_quantity(symbol, entry, sl)
+        if qty is None:
+            return False
     risk_per_coin = entry - sl
     rr = (tp - entry) / risk_per_coin if risk_per_coin > 0 else 0.0
     fib = setup.validation_result.fib
@@ -1132,46 +1455,150 @@ def create_pending_signal(symbol: str, setup: DetectedSetup) -> bool:
     db.execute(
         "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price, stop_loss,"
         " take_profit, quantity, notional_usdt, rr_ratio, pivots_json, fib_json, created_at,"
-        " peak_price, expires_at) VALUES (%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        " peak_price, expires_at, is_real, order_id) VALUES (%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (symbol, "BULLISH", STRATEGY_NAME, entry, sl, tp, qty, qty * entry, round(rr, 2),
-         pivots_json, fib_json, utc_now_iso(), entry, expires_at),
+         pivots_json, fib_json, utc_now_iso(), entry, expires_at, 1 if real else 0, order_id),
     )
     with scan_stats_lock:
         scan_stats["setups_bull_traded"] += 1
+    mode_tag = "حقيقية 🔴" if real else "ورقية"
     if fib:
         signal_msg = (
-            f"🌊 إشارة إليوت+فيبو جديدة (ورقية): {symbol}\n"
+            f"🌊 إشارة إليوت+فيبو جديدة ({mode_tag}): {symbol}\n"
             f"دخول معلّق: {fmt_price(entry)} | وقف بنيوي: {fmt_price(sl)} | هدف 1.618: {fmt_price(tp)}\n"
             f"R:R = {rr:.2f} | W2={fib.wave2_retrace_pct*100:.1f}% W4={fib.wave4_retrace_pct*100:.1f}%"
         )
     else:
-        signal_msg = f"🌊 إشارة إليوت+فيبو جديدة (ورقية): {symbol} — دخول {fmt_price(entry)}"
+        signal_msg = f"🌊 إشارة إليوت+فيبو جديدة ({mode_tag}): {symbol} — دخول {fmt_price(entry)}"
     log_and_notify("info", signal_msg, "NEW_SIGNAL")
     return True
 
 
-def close_signal_row(sig: Dict[str, Any], exit_price: float, reason: str) -> None:
-    """محاسبة الإغلاق: رسوم 0.1% × اتجاهين على الورقي — نفس عقد المشروع السابق."""
+def close_signal_row(sig: Dict[str, Any], exit_price: float, reason: str,
+                     exit_order_id: Optional[str] = None) -> None:
+    """محاسبة الإغلاق: رسوم 0.1% × اتجاهين — نفس عقد المشروع السابق.
+    [FE1.4.0] الصفقة الحقيقية: نفس المحاسبة للعرض والإحصاء لكن دون أي مساس
+    بالرصيد الورقي (الأرباح/الخسائر الحقيقية على الحساب الفعلي في باينانس)."""
     entry = float(sig["fill_price"])
     qty = float(sig["quantity"])
     gross = qty * (exit_price - entry)
     fees = (qty * entry + qty * exit_price) * FEE_RATE
     pnl_usdt = gross - fees
     pnl_pct = (pnl_usdt / (qty * entry)) * 100.0 if qty * entry > 0 else 0.0
+    is_real = bool(sig.get("is_real"))
     db.execute(
         "UPDATE signals SET status='closed', close_price=%s, close_reason=%s, closed_at=%s,"
-        " pnl_usdt=%s, pnl_pct=%s WHERE id=%s",
-        (exit_price, reason, utc_now_iso(), round(pnl_usdt, 6), round(pnl_pct, 4), sig["id"]),
+        " pnl_usdt=%s, pnl_pct=%s, exit_order_id=%s WHERE id=%s",
+        (exit_price, reason, utc_now_iso(), round(pnl_usdt, 6), round(pnl_pct, 4), exit_order_id, sig["id"]),
     )
-    set_paper_balance(get_paper_balance() + pnl_usdt)
+    tag = "حقيقية 🔴" if is_real else "ورقية"
+    if not is_real:
+        set_paper_balance(get_paper_balance() + pnl_usdt)
     emoji = "✅" if pnl_usdt >= 0 else "🛑"
+    balance_line = (f"النتيجة: {pnl_usdt:+.2f}$ ({pnl_pct:+.2f}%)"
+                    + ("" if is_real else f" | الرصيد الورقي: {get_paper_balance():.2f}$"))
     log_and_notify(
         "info" if pnl_usdt >= 0 else "warning",
-        f"{emoji} إغلاق ورقي: {sig['symbol']} — {reason}\n"
-        f"دخول {fmt_price(entry)} → خروج {fmt_price(exit_price)}\n"
-        f"النتيجة: {pnl_usdt:+.2f}$ ({pnl_pct:+.2f}%) | الرصيد الورقي: {get_paper_balance():.2f}$",
+        f"{emoji} إغلاق {tag}: {sig['symbol']} — {reason}\n"
+        f"دخول {fmt_price(entry)} → خروج {fmt_price(exit_price)}\n{balance_line}",
         "TRADE_CLOSED",
     )
+
+
+def close_real_trade(sig: Dict[str, Any], trigger_price: float, reason: str) -> None:
+    """[FE1.4.0] إغلاق صفقة حقيقية: بيع سوق فعلي للكمية المفتوحة (بقواعد باينانس)
+    ثم المحاسبة دون مساس بالرصيد الورقي.
+    • الغبار (أقل من حدود بيع باينانس): يُغلق محاسبيًا دون أمر بيع مع توثيق السبب.
+    • فشل البيع: تبقى الصفقة مفتوحة وتُعاد المحاولة في الدورة القادمة — لا فقدان.
+    • الكمية الفعلية للبيع = الحد الأدنى بين كمية الصفقة والرصيد الحر (كما في V9) —
+      لا نبيع أرصدة نفس العملة المملوكة خارج البوت."""
+    symbol = sig["symbol"]
+    ex = binance_trade_exchange()
+    if ex is None:
+        log_and_notify("error", f"❌ تعذر إغلاق {symbol} حقيقيًا: مفاتيح باينانس غائبة", "REAL_TRADE_ERROR")
+        return
+    try:
+        base = symbol.split("/")[0]
+        free = fetch_free_base(ex, base)
+        sell_qty = min(float(sig["quantity"]), free if free and free > 0 else 0.0)
+        sell_qty = real_adjust_amount(ex, symbol, sell_qty)
+        mkt = real_market(ex, symbol)
+        if sell_qty <= 0 or sell_qty < real_min_amount(mkt) or sell_qty * trigger_price < real_min_cost(mkt):
+            close_signal_row(sig, trigger_price,
+                             reason + " — كمية غبار أقل من حدود بيع باينانس (محاسبة بلا أمر بيع)")
+            return
+        order = place_real_market_sell(symbol, sell_qty)
+        if order is None:
+            return  # تبقى مفتوحة — إعادة محاولة في الدورة القادمة
+        exit_price = float(order.get("average") or order.get("price") or 0) or trigger_price
+        close_signal_row(sig, exit_price, reason, exit_order_id=str(order.get("id") or "") or None)
+    except Exception as exc:
+        log_and_notify("error", f"❌ استثناء إغلاق حقيقي {symbol}: {exc}", "REAL_TRADE_ERROR")
+
+
+def _resync_after_cancel_attempt(sig: Dict[str, Any], ex, reason_terminal: str) -> None:
+    """بعد محاولة إلغاء أمر حقيقي: هل ملئ؟ ملئ جزئيًا؟ أُلغي فعلًا؟ — الحكم من المنصة."""
+    order = fetch_real_order(ex, sig["symbol"], sig["order_id"])
+    status = ((order or {}).get("status") or "").lower()
+    filled = float((order or {}).get("filled") or 0)
+    avg = float((order or {}).get("average") or 0) or float(sig["entry_price"])
+    if filled > 0:
+        db.execute("UPDATE signals SET status='open', fill_price=%s, quantity=%s, filled_at=%s WHERE id=%s",
+                   (avg, filled, utc_now_iso(), sig["id"]))
+        log_and_notify("info",
+                       f"🎯 [حقيقي] مُلئ أمر الشراء (جزئيًا على الأقل): {sig['symbol']} — كمية {filled} عند {fmt_price(avg)}",
+                       "REAL_FILLED")
+    elif status in ("canceled", "expired", "rejected"):
+        db.execute("UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s WHERE id=%s",
+                   (reason_terminal + f" (حالة المنصة: {status})", utc_now_iso(), sig["id"]))
+    else:
+        logger.warning("[%s] أمر حقيقي ما زال حيًا بعد محاولة الإلغاء — إعادة المحاولة في الدورة القادمة", sig["symbol"])
+
+
+def handle_real_pending(sig: Dict[str, Any], close_now: float, p0: float) -> None:
+    """[FE1.4.0] إدارة الأمر المعلق الحقيقي من المنصة مباشرة (حقيقة الملء من باينانس
+    لا من الشموع): FILLED ← فتح بأسعار التنفيذ الفعلية | ملغى/منتهي ← محاسبة،
+    مع أي ملء جزئي يُفتح صفقة مفتوحة بكميته الفعلية.
+    الأوامر الحية: نفس قواعد الورقي (إبطال بنيوي خلف P0 + انتهاء الصلاحية)."""
+    ex = binance_trade_exchange()
+    if ex is None or not sig.get("order_id"):
+        logger.warning("[%s] صفقة حقيقية معلقة بلا منصة/معرف أمر — تجاهل الدورة", sig["symbol"])
+        return
+    order = fetch_real_order(ex, sig["symbol"], sig["order_id"])
+    if order is None:
+        return  # فشل عابر — الدورة القادمة
+    status = (order.get("status") or "").lower()
+    filled = float(order.get("filled") or 0)
+    avg = float(order.get("average") or 0)
+    qty_target = float(sig["quantity"])
+    if status == "closed" or (filled > 0 and filled >= qty_target - 1e-12):
+        fill_price = avg or float(sig["entry_price"])
+        db.execute("UPDATE signals SET status='open', fill_price=%s, quantity=%s, filled_at=%s WHERE id=%s",
+                   (fill_price, filled or qty_target, utc_now_iso(), sig["id"]))
+        log_and_notify("info",
+                       f"🎯 [حقيقي] مُلئ أمر الشراء: {sig['symbol']} — كمية {filled or qty_target} عند {fmt_price(fill_price)}\n"
+                       f"وقف: {fmt_price(sig['stop_loss'])} | هدف 1.618: {fmt_price(sig['take_profit'])}",
+                       "REAL_FILLED")
+        return
+    if status in ("canceled", "expired", "rejected"):
+        if filled > 0:
+            db.execute("UPDATE signals SET status='open', fill_price=%s, quantity=%s, filled_at=%s WHERE id=%s",
+                       (avg or float(sig["entry_price"]), filled, utc_now_iso(), sig["id"]))
+            log_and_notify("info",
+                           f"🎯 [حقيقي] ملء جزئي قبل الإلغاء: {sig['symbol']} — كمية {filled} عند {fmt_price(avg or float(sig['entry_price']))}",
+                           "REAL_FILLED")
+        else:
+            db.execute("UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s WHERE id=%s",
+                       (f"أُلغي الأمر الحقيقي على المنصة (حالة: {status})", utc_now_iso(), sig["id"]))
+        return
+    # ما زال حيًا على المنصة — نفس قواعد الإبطال/الصلاحية كما في الورقي
+    if close_now < p0:
+        cancel_real_order(ex, sig["symbol"], sig["order_id"])
+        _resync_after_cancel_attempt(sig, ex,
+                                     f"إبطال بنيوي: إغلاق {fmt_price(close_now)} خلف أصل الموجة 1 (P0={fmt_price(p0)})")
+    elif sig.get("expires_at") and utc_now_iso() > sig["expires_at"]:
+        cancel_real_order(ex, sig["symbol"], sig["order_id"])
+        _resync_after_cancel_attempt(sig, ex, "انتهت صلاحية الأمر المعلق (3 شموع) دون ملء كامل")
 
 
 def monitor_step() -> None:
@@ -1189,6 +1616,11 @@ def monitor_step() -> None:
         last = df.iloc[-1]
         close_now = float(last["close"])
         p0 = float(json.loads(sig["pivots_json"])["P0"])
+
+        # [FE1.4.0] الأمر الحقيقي يُدار من المنصة مباشرة (حقيقة الملء من باينانس)
+        if sig.get("is_real"):
+            handle_real_pending(sig, close_now, p0)
+            continue
 
         # 1) الإبطال البنيوي (منطق الأصل is_wave_invalidated): إغلاق خلف P0 يبطل العدّ
         if close_now < p0:
@@ -1233,6 +1665,13 @@ def monitor_step() -> None:
         peak = max(float(sig.get("peak_price") or sig["fill_price"]), high_now)
         if abs(peak - float(sig.get("peak_price") or 0)) > 1e-12:
             db.execute("UPDATE signals SET peak_price=%s WHERE id=%s", (peak, sig["id"]))
+        # [FE1.4.0] الصفقة الحقيقية: الإغلاق بأمر بيع سوق فعلي على باينانس
+        if sig.get("is_real"):
+            if low_now <= float(sig["stop_loss"]):
+                close_real_trade(sig, float(sig["stop_loss"]), "وقف خسارة بنيوي (خلف أصل الموجة 1)")
+            elif high_now >= float(sig["take_profit"]):
+                close_real_trade(sig, float(sig["take_profit"]), "هدف فيبوناتشي 1.618 تحقق")
+            continue
         # الوقف أولًا (متحفظ) — الوقف بنيوي خلف P0، الهدف امتداد 1.618
         if low_now <= float(sig["stop_loss"]):
             close_signal_row(sig, float(sig["stop_loss"]), "وقف خسارة بنيوي (خلف أصل الموجة 1)")
@@ -1522,7 +1961,8 @@ def health():
         "status": "ok" if db_ok else "degraded",
         "version": BOT_VERSION,
         "strategy": STRATEGY_NAME,
-        "mode": "paper",
+        "mode": ("real" if is_real_mode else "paper"),  # [FE1.4.0] real = أوامر فعلية على باينانس
+        "real_trading": is_real_mode,
         "db": "postgres" if USE_POSTGRES else "sqlite",
         "trading_enabled": is_trading_enabled,
         "data_source": (active_source.get("name") or "boot"),
@@ -1556,7 +1996,9 @@ def api_all():
     return jsonify({
         "version": BOT_VERSION,
         "strategy": STRATEGY_NAME,
-        "mode": "paper",
+        "mode": ("real" if is_real_mode else "paper"),
+        "real_mode": is_real_mode,               # [FE1.4.0] زر التداول الحقيقي
+        "binance": binance_status_snapshot(),    # [FE1.4.0] بطاقة اتصال باينانس
         "trading_enabled": is_trading_enabled,
         "paper_balance": get_paper_balance(),
         "stats": compute_stats(),
@@ -1590,6 +2032,13 @@ def api_trades_close():
         return jsonify({"ok": False, "error": "لا توجد صفقة مفتوحة بهذا المعرف"}), 404
     sig = _parse_sig_row(rows[0])
     price = get_live_price(sig["symbol"]) or float(sig["fill_price"])
+    if sig.get("is_real"):  # [FE1.4.0] بيع سوق فعلي على باينانس
+        close_real_trade(sig, price, "إغلاق يدوي من اللوحة (بسعر السوق)")
+        return jsonify({
+            "ok": True,
+            "message": f"جارٍ تنفيذ البيع الحقيقي لإغلاق {sig['symbol']} — راقب الإشعارات للتأكيد",
+            "close_price": price,
+        })
     close_signal_row(sig, price, "إغلاق يدوي من اللوحة (بسعر السوق)")
     return jsonify({
         "ok": True,
@@ -1663,6 +2112,60 @@ def toggle_trading_status():
     return jsonify({"trading_enabled": is_trading_enabled, "message": msg})
 
 
+@app.route("/api/binance/status")
+def api_binance_status():
+    """[FE1.4.0] حالة اتصال باينانس للوحة (محمية) — ping حي + رصيد وصلاحيات بمفاتيح."""
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
+    snap = binance_status_snapshot()
+    snap["version"] = BOT_VERSION
+    snap["real_mode"] = is_real_mode
+    return jsonify(snap)
+
+
+@app.route("/api/trading/real", methods=["POST"])
+def api_trading_real():
+    """[FE1.4.0] زر التداول الحقيقي مثل V9: تفعيل/إيقاف تنفيذ الإشارات الجديدة
+    بأوامر فعلية على باينانس. شروط التفعيل الصارمة: مفاتيح باينانس موجودة +
+    فحص اتصال حي ناجح + رصيد USDT مقروء — وإلا رفض برسالة واضحة.
+    الإيقاف يعيد الوضع الورقي فورًا (الصفقات الحقيقية المفتوحة تستمر بالإدارة)."""
+    global is_real_mode
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
+    body = request.get_json(silent=True) or {}
+    enable = body.get("enable")
+    with real_mode_lock:
+        target = (not is_real_mode) if enable is None else bool(enable)
+        if target == is_real_mode:
+            return jsonify({
+                "ok": True, "real_mode": is_real_mode,
+                "message": ("التداول الحقيقي مُفعّل أصلًا" if is_real_mode else "التداول الحقيقي متوقف أصلًا"),
+                "binance": binance_status_snapshot(),
+            })
+        if target:
+            if not (API_KEY and API_SECRET):
+                return jsonify({"ok": False,
+                                "error": "مفاتيح باينانس غير مضبوطة — أضف BINANCE_API_KEY و BINANCE_API_SECRET في متغيرات بيئة Render أولًا"}), 400
+            st = binance_status_snapshot(force=True)
+            if not st.get("connected") or st.get("usdt_free") is None:
+                return jsonify({"ok": False,
+                                "error": f"فحص باينانس قبل التفعيل فشل: {st.get('error') or 'لا استجابة'}"}), 400
+            is_real_mode = True
+            db_set_state("real_mode", "1")
+            msg = ("🔴 التداول الحقيقي مُفعّل — الإشارات الجديدة ستُنفذ بأوامر فعلية على باينانس "
+                   f"(USDT الحر: {float(st['usdt_free']):.2f}$ | سقف الأمر: {REAL_MAX_NOTIONAL_USDT:.0f}$)")
+            bin_snap = st
+        else:
+            is_real_mode = False
+            db_set_state("real_mode", "0")
+            msg = "⚪ التداول الحقيقي أُوقف — العودة للوضع الورقي (الصفقات الحقيقية المفتوحة تُدار حتى إغلاقها)"
+            bin_snap = binance_status_snapshot()
+    log_and_notify("info", msg, "REAL_MODE_CHANGE")
+    return jsonify({"ok": True, "real_mode": is_real_mode, "message": msg, "binance": bin_snap})
+
+
 @app.route("/api/stats/reset", methods=["POST"])
 def api_stats_reset():
     resp = require_dashboard_auth()
@@ -1697,6 +2200,19 @@ def restore_trading_flag() -> None:
     logger.info("حالة توليد الإشارات الورقية المستعادة: %s", "مفعّلة" if is_trading_enabled else "معطلة")
 
 
+def restore_real_mode_flag() -> None:
+    """[FE1.4.0] استعادة زر التداول الحقيقي — مع حارس أمان: بلا مفاتيح يُفرض الإيقاف."""
+    global is_real_mode
+    flag = db_get_state("real_mode", "0")
+    if flag == "1" and not (API_KEY and API_SECRET):
+        is_real_mode = False
+        db_set_state("real_mode", "0")
+        log_and_notify("warning", "⚠ أُوقف التداول الحقيقي عند الإقلاع: مفاتيح باينانس غير مضبوطة", "REAL_MODE_OFF")
+        return
+    is_real_mode = (flag == "1")
+    logger.info("حالة التداول الحقيقي المستعادة: %s", "مفعّلة ⚠ (أوامر فعلية)" if is_real_mode else "متوقفة (ورقي)")
+
+
 def load_markets_async() -> None:
     """[FE1.3.1] لم يعد يُحمّل أسواق المزودين مسبقًا — التحميل كسول عند أول استخدام:
     ccxt يستدعي load_markets داخليًا في أول fetch_ohlcv لكل مزود، وprune_markets
@@ -1718,6 +2234,7 @@ def load_markets_async() -> None:
 def initialize_bot_services() -> None:
     init_db()
     restore_trading_flag()
+    restore_real_mode_flag()
     load_markets_async()
     start_ws_price_feed()  # [FE1.2.0] الأسعار الحية من ويب سوكت — REST احتياطًا فقط
     threading.Thread(target=scan_loop, daemon=True, name="scan-loop").start()
@@ -1728,13 +2245,16 @@ def initialize_bot_services() -> None:
               if (KEEP_ALIVE_ENABLED and ka_target) else "معطل ⚠ (خطر نوم الخدمة على الخطة المجانية)")
     mem_txt = (f"كسول + تقليم + gc عند {int(MEM_GC_THRESHOLD_MB)}MB" if MEM_LAZY_MARKETS
                else "مسبق (الوضع القديم) — خطر OOM")
+    real_txt = ("🔴 نشط — الإشارات الجديدة أوامر فعلية على باينانس ⚠" if is_real_mode
+                else "⚪ متوقف — وضع ورقي آمن (فعّله من زر اللوحة)")
     log_and_notify(
         "info",
         f"🚀 Fibo-Elio {BOT_VERSION} أقلع — استراتيجية واحدة: Elliott_Fibonacci (المنطق الأصلي)\n"
-        f"وضع ورقي دائم | أزواج: {len(watchlist)} | فريم الكشف {SIGNAL_TIMEFRAME} | التنفيذ {ENTRY_TIMEFRAME}\n"
+        f"الوضع: {'حقيقي 🔴' if is_real_mode else 'ورقي'} | أزواج: {len(watchlist)} | فريم الكشف {SIGNAL_TIMEFRAME} | التنفيذ {ENTRY_TIMEFRAME}\n"
         f"الأسعار الحية: {'ويب سوكت (ccxt.pro) — REST احتياطًا' if WS_ENABLED else 'REST'} | "
         f"انعكاس الزيجزاج {DEVIATION_THRESHOLD*100:.2f}% | أقصى صفقات {MAX_OPEN_TRADES} | مخاطرة {RISK_PCT_PER_TRADE}%\n"
         f"البقاء الحي: {ka_txt}\n"
+        f"التداول الحقيقي: {real_txt} | سقف الأمر {REAL_MAX_NOTIONAL_USDT:.0f}$ | تيستنت {'نعم' if BINANCE_TESTNET else 'لا'}\n"
         f"الذاكرة: {mem_txt} — الحد 512MB",
         "BOOT",
     )

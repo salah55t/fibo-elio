@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-panel.py — لوحة تحكم Fibo-Elio (عربية RTL، داكنة، تحديث تلقائي 30 ثانية)
-تعرض: الحالة الورقية، الرصيد، الصفقات المفتوحة/المعلقة بتتبع حي (السعر الآن،
-غير المحقق، التقدم نحو الهدف)، إغلاق/إلغاء يدوي، المغلقة، أداء
-استراتيجية Elliott_Fibonacci، آخر التقاطات الموجات (صاعدة/هابطة)، والإشعارات.
-[FE1.2.0] شارة مصدر كل سعر حي (⚡WS ويب سوكت / REST احتياط) + شريحة حالة التغذية.
+panel.py — لوحة تحكم Fibo-Elio السبرانية (عربية RTL، نيون مشع على أسود متحرك)
+[FE1.4.0] إعادة تصميم كاملة بأسلوب منصات الهكر: خلفية سوداء متحركة (شبكة +
+هالات نيون نابضة + خطوط مسح)، ألوان نيون مشعة بتوهج، خط Orbitron/Share Tech Mono.
+تعرض: بطاقة اتصال باينانس الحية (الاتصال/زمن الاستجابة/رصيد USDT)، زر التداول
+الحقيقي (مثل V9) بشروط تفعيل صارمة، الحالة الورقية، الصفقات المفتوحة/المعلقة
+بتتبع حي وفرز حقيقية/ورقية، إغلاق/إلغاء يدوي، المغلقة، التقاطات الموجات،
+الإشعارات، شارة مصدر كل سعر حي (⚡WS/REST)، البقاء الحي والذاكرة.
 """
 
-BOT_VERSION = "FE1.3.2"
+BOT_VERSION = "FE1.4.0"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -17,91 +19,180 @@ PANEL_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Fibo-Elio — إليوت + فيبوناتشي</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap');
   :root {
-    --bg:#0b1220; --card:#121b2e; --card2:#0e1626; --line:#22304d;
-    --txt:#e6edf7; --mut:#8ba0bf; --gold:#f0b429; --teal:#2dd4bf;
-    --green:#34d399; --red:#f87171; --blue:#60a5fa; --violet:#a78bfa;
+    --bg:#010104; --panel:rgba(2,14,11,.78); --panel2:rgba(0,9,14,.82);
+    --line:rgba(0,255,156,.22); --line2:rgba(0,229,255,.16);
+    --neon:#00ff9c; --cyan:#00e5ff; --mag:#ff2bd6; --yel:#ffe600; --red:#ff3355; --vio:#b026ff;
+    --txt:#c9f7e5; --mut:#5f8a80;
   }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body { background:var(--bg); color:var(--txt); font-family:'Segoe UI',Tahoma,Arial,sans-serif; padding:18px; }
-  .wrap { max-width:1180px; margin:0 auto; }
-  header { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:16px; }
-  h1 { font-size:1.35rem; color:var(--gold); }
-  h1 small { color:var(--mut); font-weight:400; font-size:.8rem; }
-  .badge { padding:4px 12px; border-radius:999px; font-size:.78rem; font-weight:700; border:1px solid; }
-  .b-paper { background:rgba(248,113,113,.12); color:var(--red); border-color:var(--red); }
-  .b-orig { background:rgba(45,212,191,.1); color:var(--teal); border-color:var(--teal); }
-  .b-on { background:rgba(52,211,153,.12); color:var(--green); border-color:var(--green); }
-  .b-off { background:rgba(139,160,191,.12); color:var(--mut); border-color:var(--mut); }
+  body { background:var(--bg); color:var(--txt); font-family:'Segoe UI',Tahoma,Arial,sans-serif;
+         padding:18px; overflow-x:hidden; min-height:100vh; }
+  /* ── الخلفية السوداء المتحركة: شبكة نيون + هالات نابضة + خطوط مسح ── */
+  .bg-grid { position:fixed; inset:0; z-index:-3;
+    background-image:linear-gradient(rgba(0,255,156,.06) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(0,255,156,.06) 1px,transparent 1px);
+    background-size:44px 44px;
+    animation:gridmove 14s linear infinite;
+    -webkit-mask-image:radial-gradient(ellipse at 50% 0%,#000 25%,transparent 78%);
+    mask-image:radial-gradient(ellipse at 50% 0%,#000 25%,transparent 78%); }
+  @keyframes gridmove { from{background-position:0 0} to{background-position:0 44px} }
+  .orb { position:fixed; border-radius:50%; filter:blur(95px); z-index:-2; opacity:.15;
+         animation:orbfloat 12s ease-in-out infinite alternate; }
+  .orb1 { width:430px; height:430px; background:var(--neon); top:-130px; left:-110px; }
+  .orb2 { width:390px; height:390px; background:var(--cyan); bottom:-150px; right:-90px; animation-delay:-4s; }
+  .orb3 { width:310px; height:310px; background:var(--mag); top:38%; right:28%; opacity:.09; animation-delay:-8s; }
+  @keyframes orbfloat { from{transform:translate(0,0) scale(1)} to{transform:translate(60px,44px) scale(1.14)} }
+  .scanlines { position:fixed; inset:0; z-index:70; pointer-events:none; opacity:.30;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,.28) 0 1px,transparent 1px 3px); }
+  .scanbar { position:fixed; left:0; right:0; height:110px; z-index:71; pointer-events:none;
+    background:linear-gradient(180deg,transparent,rgba(0,255,156,.05),transparent);
+    animation:scanmove 7s linear infinite; }
+  @keyframes scanmove { from{top:-120px} to{top:100%} }
+  .wrap { max-width:1200px; margin:0 auto; position:relative; }
+  header { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:12px;
+    padding:12px 14px; border:1px solid var(--line); border-radius:14px;
+    background:var(--panel); backdrop-filter:blur(5px);
+    box-shadow:0 0 24px rgba(0,255,156,.08), inset 0 0 22px rgba(0,255,156,.03); }
+  h1 { font-family:'Orbitron','Share Tech Mono',monospace; font-size:1.45rem; color:var(--neon);
+    text-shadow:0 0 10px rgba(0,255,156,.85), 0 0 28px rgba(0,255,156,.4);
+    letter-spacing:1px; animation:flicker 6s infinite; }
+  h1 small { color:var(--mut); font-weight:400; font-size:.72rem; text-shadow:none; display:block; margin-top:2px; }
+  @keyframes flicker { 0%,100%{opacity:1} 91%{opacity:1} 92%{opacity:.55} 93%{opacity:1} 96%{opacity:.7} 97%{opacity:1} }
+  .badge { padding:4px 12px; border-radius:999px; font-size:.74rem; font-weight:700; border:1px solid;
+    text-shadow:0 0 6px currentColor; white-space:nowrap; }
+  .b-orig { background:rgba(0,229,255,.08); color:var(--cyan); border-color:var(--cyan); }
+  .b-paper { background:rgba(0,229,255,.06); color:var(--cyan); border-color:var(--cyan); border-style:dashed; }
+  .b-real { background:rgba(255,51,85,.12); color:var(--red); border-color:var(--red); animation:realpulse 1.6s infinite; }
+  .b-on { background:rgba(0,255,156,.1); color:var(--neon); border-color:var(--neon); }
+  .b-off { background:rgba(95,138,128,.1); color:var(--mut); border-color:var(--mut); text-shadow:none; }
+  .b-bin-ok { background:rgba(0,255,156,.08); color:var(--neon); border-color:var(--neon); }
+  .b-bin-bad { background:rgba(255,51,85,.1); color:var(--red); border-color:var(--red); }
+  .b-ws { background:rgba(0,229,255,.08); color:var(--cyan); border-color:var(--cyan); }
+  .b-ws-off { background:rgba(95,138,128,.1); color:var(--mut); border-color:var(--mut); text-shadow:none; }
+  @keyframes realpulse { 0%,100%{box-shadow:0 0 6px rgba(255,51,85,.5)} 50%{box-shadow:0 0 18px rgba(255,51,85,.95)} }
   .spacer { flex:1; }
-  button.act { background:var(--card); color:var(--txt); border:1px solid var(--line); border-radius:10px;
-    padding:8px 14px; cursor:pointer; font-size:.85rem; }
-  button.act:hover { border-color:var(--gold); color:var(--gold); }
-  button.act.danger:hover { border-color:var(--red); color:var(--red); }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:16px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; }
-  .card .lbl { color:var(--mut); font-size:.75rem; margin-bottom:6px; }
-  .card .val { font-size:1.25rem; font-weight:800; }
-  .pos { color:var(--green); } .neg { color:var(--red); } .gld { color:var(--gold); } .tealc { color:var(--teal); }
-  section { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-bottom:16px; }
-  section h2 { font-size:.95rem; color:var(--blue); margin-bottom:10px; display:flex; align-items:center; gap:8px; }
-  table { width:100%; border-collapse:collapse; font-size:.8rem; }
-  th { color:var(--mut); text-align:right; padding:6px 8px; border-bottom:1px solid var(--line); font-weight:600; white-space:nowrap; }
-  td { padding:7px 8px; border-bottom:1px solid rgba(34,48,77,.5); white-space:nowrap; }
-  tr:hover td { background:rgba(96,165,250,.05); }
-  .pill { padding:2px 10px; border-radius:999px; font-size:.72rem; font-weight:700; }
-  .p-pending { background:rgba(240,180,41,.15); color:var(--gold); }
-  .p-open { background:rgba(45,212,191,.15); color:var(--teal); }
-  .p-bull { background:rgba(52,211,153,.15); color:var(--green); }
-  .p-bear { background:rgba(248,113,113,.15); color:var(--red); }
-  .p-win { background:rgba(52,211,153,.15); color:var(--green); }
-  .p-loss { background:rgba(248,113,113,.15); color:var(--red); }
-  .zone-ok { color:var(--green); font-weight:700; }
-  .zone-no { color:var(--mut); }
-  .mut { color:var(--mut); } .small { font-size:.72rem; }
-  .empty { color:var(--mut); text-align:center; padding:14px; font-size:.85rem; }
-  .notif { padding:7px 10px; border-right:3px solid var(--line); margin-bottom:6px; background:var(--card2);
-    border-radius:8px; font-size:.78rem; }
-  .notif.warn { border-color:var(--gold); } .notif.err { border-color:var(--red); }
+  button.act { background:rgba(0,255,156,.05); border:1px solid var(--neon); color:var(--neon);
+    border-radius:10px; padding:8px 14px; cursor:pointer; font-size:.82rem;
+    font-family:'Share Tech Mono',monospace; text-shadow:0 0 6px currentColor;
+    box-shadow:0 0 10px rgba(0,255,156,.12); transition:.2s; }
+  button.act:hover { background:rgba(0,255,156,.14); box-shadow:0 0 18px rgba(0,255,156,.45); }
+  button.act.danger { border-color:var(--red); color:var(--red); box-shadow:0 0 10px rgba(255,51,85,.12); }
+  button.act.danger:hover { background:rgba(255,51,85,.14); box-shadow:0 0 18px rgba(255,51,85,.45); }
+  /* ── زر التداول الحقيقي: مفتاح نيون أحمر مثل V9 ── */
+  .real-ctl { display:flex; align-items:center; gap:10px; padding:6px 12px; border-radius:12px;
+    border:1px solid rgba(255,51,85,.4); background:rgba(255,51,85,.05); }
+  .real-ctl .rlbl { font-size:.8rem; font-weight:700; color:var(--red); text-shadow:0 0 6px rgba(255,51,85,.6); white-space:nowrap; }
+  .switch { position:relative; display:inline-block; width:52px; height:27px; flex:none; }
+  .switch input { opacity:0; width:0; height:0; }
+  .slider { position:absolute; inset:0; background:#0a0f14; border:1px solid var(--red); border-radius:999px;
+    transition:.25s; box-shadow:inset 0 0 8px rgba(255,51,85,.35); cursor:pointer; }
+  .slider::before { content:''; position:absolute; width:19px; height:19px; top:3px; right:4px; border-radius:50%;
+    background:#3a4a52; transition:.25s; }
+  .switch input:checked + .slider { background:rgba(255,51,85,.28); border-color:var(--red);
+    box-shadow:0 0 16px rgba(255,51,85,.8), inset 0 0 8px rgba(255,51,85,.4); }
+  .switch input:checked + .slider::before { transform:translateX(-24px); background:var(--red);
+    box-shadow:0 0 10px var(--red); }
+  .banner { width:100%; text-align:center; font-size:.8rem; font-weight:700; padding:9px 12px;
+    border-radius:10px; margin-bottom:14px; }
+  .banner-paper { color:var(--cyan); border:1px dashed var(--cyan); background:rgba(0,229,255,.05);
+    text-shadow:0 0 6px rgba(0,229,255,.5); }
+  .banner-real { color:var(--red); border:1px solid var(--red); background:rgba(255,51,85,.07);
+    text-shadow:0 0 8px rgba(255,51,85,.7); animation:realpulse 1.6s infinite; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:12px; margin-bottom:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:13px 15px;
+    position:relative; overflow:hidden; transition:.25s; backdrop-filter:blur(4px); }
+  .card::before { content:''; position:absolute; top:0; right:0; left:0; height:1px;
+    background:linear-gradient(90deg,transparent,var(--neon),transparent); opacity:.65; }
+  .card:hover { border-color:var(--neon); box-shadow:0 0 18px rgba(0,255,156,.22), inset 0 0 14px rgba(0,255,156,.04);
+    transform:translateY(-2px); }
+  .card .lbl { color:var(--cyan); font-family:'Share Tech Mono',monospace; font-size:.7rem;
+    letter-spacing:.5px; margin-bottom:6px; text-shadow:0 0 6px rgba(0,229,255,.45); }
+  .card .val { font-family:'Share Tech Mono',monospace; font-size:1.2rem; font-weight:700;
+    text-shadow:0 0 8px currentColor; word-break:break-all; }
+  .pos { color:var(--neon); } .neg { color:var(--red); } .gld { color:var(--yel); } .tealc { color:var(--cyan); }
+  .vioc { color:var(--vio); }
+  section { background:var(--panel); border:1px solid var(--line2); border-radius:14px; padding:14px 16px;
+    margin-bottom:16px; backdrop-filter:blur(4px); box-shadow:0 0 16px rgba(0,229,255,.04); }
+  section h2 { font-size:.92rem; color:var(--cyan); margin-bottom:10px; display:flex; align-items:center;
+    gap:8px; text-shadow:0 0 8px rgba(0,229,255,.5); border-bottom:1px dashed rgba(0,229,255,.22);
+    padding-bottom:8px; }
+  table { width:100%; border-collapse:collapse; font-size:.78rem; }
+  th { color:var(--cyan); text-align:right; padding:6px 8px; border-bottom:1px solid rgba(0,229,255,.3);
+    font-weight:600; white-space:nowrap; font-family:'Share Tech Mono',monospace; font-size:.7rem; }
+  td { padding:7px 8px; border-bottom:1px solid rgba(0,255,156,.07); white-space:nowrap; }
+  tr:hover td { background:rgba(0,255,156,.05); }
+  .pill { padding:2px 10px; border-radius:999px; font-size:.7rem; font-weight:700;
+    border:1px solid; text-shadow:0 0 5px currentColor; }
+  .p-pending { background:rgba(255,230,0,.1); color:var(--yel); border-color:var(--yel); }
+  .p-open { background:rgba(0,229,255,.12); color:var(--cyan); border-color:var(--cyan); }
+  .p-bull { background:rgba(0,255,156,.12); color:var(--neon); border-color:var(--neon); }
+  .p-bear { background:rgba(255,51,85,.12); color:var(--red); border-color:var(--red); }
+  .p-win { background:rgba(0,255,156,.12); color:var(--neon); border-color:var(--neon); }
+  .p-loss { background:rgba(255,51,85,.12); color:var(--red); border-color:var(--red); }
+  .p-real { background:rgba(255,51,85,.14); color:var(--red); border-color:rgba(255,51,85,.6); }
+  .p-paper { background:rgba(0,229,255,.08); color:var(--cyan); border-color:rgba(0,229,255,.4); }
+  .zone-ok { color:var(--neon); font-weight:700; } .zone-no { color:var(--mut); }
+  .mut { color:var(--mut); } .small { font-size:.7rem; }
+  .empty { color:var(--mut); text-align:center; padding:14px; font-size:.84rem; }
+  .notif { padding:7px 10px; border-right:3px solid var(--line); margin-bottom:6px; background:var(--panel2);
+    border-radius:8px; font-size:.76rem; }
+  .notif.warn { border-color:var(--yel); } .notif.err { border-color:var(--red); }
   .tbl-wrap { overflow-x:auto; }
-  .prog { background:var(--card2); border:1px solid var(--line); border-radius:999px; height:10px;
+  .prog { background:var(--panel2); border:1px solid var(--line2); border-radius:999px; height:10px;
     min-width:90px; position:relative; overflow:hidden; }
-  .prog-fill { height:100%; border-radius:999px; background:var(--teal); transition:width .4s; }
-  .prog-fill.pneg { background:var(--red); }
-  .prog-lbl { font-size:.68rem; color:var(--mut); margin-top:2px; }
-  button.mini { background:var(--card2); border:1px solid var(--line); color:var(--txt); border-radius:8px;
-    padding:4px 10px; cursor:pointer; font-size:.72rem; white-space:nowrap; }
-  button.mini:hover { border-color:var(--gold); color:var(--gold); }
+  .prog-fill { height:100%; border-radius:999px; transition:width .4s;
+    background:linear-gradient(90deg,var(--cyan),var(--neon)); box-shadow:0 0 8px rgba(0,255,156,.6); }
+  .prog-fill.pneg { background:linear-gradient(90deg,var(--mag),var(--red)); box-shadow:0 0 8px rgba(255,51,85,.6); }
+  .prog-lbl { font-size:.66rem; color:var(--mut); margin-top:2px; }
+  button.mini { background:var(--panel2); border:1px solid var(--line); color:var(--txt); border-radius:8px;
+    padding:4px 10px; cursor:pointer; font-size:.7rem; white-space:nowrap; transition:.2s; }
+  button.mini:hover { border-color:var(--neon); color:var(--neon); text-shadow:0 0 6px currentColor; }
   button.mini.cxl:hover { border-color:var(--red); color:var(--red); }
-  .liveprice { font-weight:700; color:var(--blue); }
-  .src { font-size:.6rem; padding:1px 6px; border-radius:6px; margin-left:6px; border:1px solid; font-weight:700; vertical-align:middle; }
-  .src-ws { background:rgba(45,212,191,.12); color:var(--teal); border-color:var(--teal); }
-  .src-rest { background:rgba(139,160,191,.12); color:var(--mut); border-color:var(--mut); }
-  .b-ws { background:rgba(45,212,191,.1); color:var(--teal); border-color:var(--teal); }
-  .b-ws-off { background:rgba(139,160,191,.12); color:var(--mut); border-color:var(--mut); }
-  footer { text-align:center; color:var(--mut); font-size:.72rem; padding:8px 0 20px; line-height:1.8; }
-  footer a { color:var(--blue); text-decoration:none; }
-  #toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--card);
-    border:1px solid var(--gold); color:var(--gold); padding:10px 20px; border-radius:12px; display:none; z-index:99; }
+  .liveprice { font-weight:700; color:var(--cyan); text-shadow:0 0 6px rgba(0,229,255,.5); }
+  .src { font-size:.58rem; padding:1px 6px; border-radius:6px; margin-left:6px; border:1px solid;
+    font-weight:700; vertical-align:middle; }
+  .src-ws { background:rgba(0,229,255,.1); color:var(--cyan); border-color:var(--cyan); }
+  .src-rest { background:rgba(95,138,128,.1); color:var(--mut); border-color:var(--mut); }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-left:6px;
+    background:currentColor; box-shadow:0 0 9px currentColor; animation:dotpulse 1.8s infinite; }
+  @keyframes dotpulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  footer { text-align:center; color:var(--mut); font-size:.7rem; padding:8px 0 20px; line-height:1.9; }
+  footer a { color:var(--cyan); text-decoration:none; }
+  footer b { color:var(--neon); }
+  #toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--panel2);
+    border:1px solid var(--cyan); color:var(--cyan); padding:10px 20px; border-radius:12px; display:none;
+    z-index:99; max-width:90vw; font-size:.8rem; text-shadow:0 0 6px rgba(0,229,255,.6);
+    box-shadow:0 0 18px rgba(0,229,255,.35); }
 </style>
 </head>
 <body>
+<div class="bg-grid"></div>
+<div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
+<div class="scanlines"></div><div class="scanbar"></div>
 <div class="wrap">
   <header>
     <h1>🌊 Fibo-Elio <small id="ver"></small></h1>
-    <span class="badge b-orig">المنطق الأصلي: Elliott_Waves_Algo_TradingBot (MIT)</span>
-    <span class="badge b-paper">وضع ورقي — لا أوامر حقيقية</span>
+    <span class="badge b-orig">Elliott_Fibonacci (MIT)</span>
+    <span class="badge" id="mode-badge">الوضع: —</span>
+    <span class="badge" id="bin-badge" title="اتصال باينانس الحي">باينانس: —</span>
     <span class="badge" id="trade-badge"></span>
     <span class="badge" id="feed-badge" title="مصدر الأسعار الحية للصفقات النشطة">التغذية الحية: —</span>
     <div class="spacer"></div>
+    <div class="real-ctl" title="تشغيل التداول الحقيقي على باينانس مثل V9">
+      <span class="rlbl" id="real-status-text">التداول الحقيقي: —</span>
+      <label class="switch"><input type="checkbox" id="real-toggle" onchange="toggleReal(this)"><div class="slider"></div></label>
+    </div>
     <button class="act" onclick="toggleTrading()">تشغيل/إيقاف التوليد</button>
     <button class="act danger" onclick="resetStats()">تصفير الإحصائيات</button>
   </header>
 
+  <div id="mode-banner"></div>
   <div class="grid" id="cards"></div>
 
   <section>
-    <h2>📈 الصفقات المفتوحة والأوامر المعلقة <span class="mut small">— تتبع حي: الأسعار من ويب سوكت ⚡ (REST احتياطًا) · السعر الآن وغير المحقق يتحدثان مع كل تحديث</span></h2>
+    <h2>📈 الصفقات المفتوحة والأوامر المعلقة <span class="mut small">— تتبع حي: الأسعار من ويب سوكت ⚡ (REST احتياطًا) · الحقيقية تُدار مباشرة من باينانس</span></h2>
     <div id="open-box"></div>
   </section>
 
@@ -111,7 +202,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   </section>
 
   <section>
-    <h2>🔍 آخر التقاطات الموجات (صاعدة تُنفَّذ ورقيًا — هابطة للاطلاع فقط في السبوت)</h2>
+    <h2>🔍 آخر التقاطات الموجات (صاعدة تُنفَّذ — هابطة للاطلاع فقط في السبوت)</h2>
     <div id="det-box"></div>
   </section>
 
@@ -123,7 +214,9 @@ PANEL_HTML = r"""<!DOCTYPE html>
   <footer>
     استراتيجية واحدة فقط: <b>موجة إليوت (دافع 5 موجات، قواعد صارمة ثلاث)</b> + <b>مستويات فيبوناتشي</b>
     (دخول 0.382 لتراجع الموجة 3 · وقف بنيوي خلف P0 · هدف امتداد 1.618 للموجة 1) —
-    تتبع حي + إغلاق/إلغاء يدوي [FE1.1.0] + أسعار حية من ويب سوكت [FE1.2.0] + إغلاق آلي عند الوقف/الهدف كل 60 ثانية<br>
+    التداول الحقيقي [FE1.4.0]: أمر LIMIT حقيقي عند فيبو 0.382 ← بيع سوق عند الوقف/الهدف، بقواعد باينانس
+    (LOT_SIZE · NOTIONAL · دقة السعر/الكمية · كفاية الرصيد) —
+    تتبع حي + إغلاق/إلغاء يدوي [FE1.1.0] + أسعار حية من ويب سوكت [FE1.2.0] + مضاد نوم محصّن [FE1.3.0]<br>
     المحرك منقول حرفيًا من <a href="https://github.com/dtwijesekara/Elliott_Waves_Algo_TradingBot" target="_blank">Elliott_Waves_Algo_TradingBot</a>
     (MIT) — مستودع المشروع: <a href="https://github.com/salah55t/fibo-elio" target="_blank">salah55t/fibo-elio</a>
   </footer>
@@ -138,7 +231,8 @@ const usd = v => (v>=0?'+':'') + v.toFixed(2) + '$';
 const cls = v => v>=0 ? 'pos' : 'neg';
 const dt = s => s ? s.replace('T',' ').replace('Z','') : '—';
 
-let WSSTATE = null; // حالة تغذية الويب سوكت [FE1.2.0] — من /api/ws/status
+let WSSTATE = null;   // حالة تغذية الويب سوكت [FE1.2.0] — من /api/ws/status
+let REAL_MODE = false; // حالة زر التداول الحقيقي [FE1.4.0]
 
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2500); }
 
@@ -162,17 +256,35 @@ function srcBadge(sym){
 function renderCards(d){
   const s = d.stats;
   const eq = d.paper_balance + (s.unrealized||0);
+  // [FE1.4.0] بطاقة اتصال باينانس + رصيد USDT الحقيقي + وضع التنفيذ
+  const bn = d.binance || {};
+  let bnTxt, bnCls, binBadge;
+  if (bn.connected) {
+    bnTxt = (bn.latency_ms !== null && bn.latency_ms !== undefined) ? bn.latency_ms + 'ms' : 'متصل';
+    if (bn.usdt_free !== null && bn.usdt_free !== undefined) bnTxt += ' · ' + fmt(bn.usdt_free,2) + '$';
+    bnCls = 'pos';
+    binBadge = 'باينانس: <span class="dot"></span>متصل ' + (bn.latency_ms ?? '') + 'ms' + (bn.keys_present ? ' 🔑' : '');
+    $('bin-badge').className = 'badge b-bin-ok';
+  } else {
+    bnTxt = bn.keys_present ? 'فشل الاتصال' : 'بلا مفاتيح API';
+    bnCls = bn.keys_present ? 'neg' : '';
+    binBadge = 'باينانس: ' + (bn.keys_present ? 'غير متصل ⚠' : 'بلا مفاتيح');
+    $('bin-badge').className = 'badge ' + (bn.keys_present ? 'b-bin-bad' : 'b-off');
+  }
+  if (bn.testnet) binBadge += ' 🧪TESTNET';
+  $('bin-badge').innerHTML = binBadge;
   const cards = [
     ['الرصيد الورقي', fmt(d.paper_balance,2)+'$', 'gld'],
     ['الإيجوتي (مع غير المحقق)', fmt(eq,2)+'$', eq>=d.paper_balance?'pos':'neg'],
     ['غير المحقق (مفتوح)', usd(s.unrealized||0), cls(s.unrealized||0)],
+    ['اتصال باينانس', bnTxt, bnCls],
+    ['رصيد USDT الحقيقي', (bn.usdt_free!==null&&bn.usdt_free!==undefined)? fmt(bn.usdt_free,2)+'$' : '—', bn.keys_present?'tealc':''],
+    ['وضع التنفيذ', d.real_mode ? '🔴 حقيقي' : '🧪 ورقي', d.real_mode ? 'neg' : 'tealc'],
     ['نشطة / معلقة', `${s.open_n} / ${s.pending_n}`, 'tealc'],
     ['صفقات مغلقة', s.closed_n||0, ''],
     ['نسبة الفوز', (s.win_rate!==null&&s.win_rate!==undefined)? s.win_rate.toFixed(1)+'%':'—', 'tealc'],
     ['عامل الربح PF', (s.profit_factor!==null&&s.profit_factor!==undefined)? s.profit_factor.toFixed(2):'—', (s.profit_factor||0)>=1?'pos':'neg'],
     ['صافي الربح', usd(s.total_pnl||0), cls(s.total_pnl||0)],
-    ['دورات المسح', s.cycles||0, ''],
-    ['التقاطات صالحة', s.setups_valid||0, ''],
     ['مزود البيانات', (d.data&&d.data.active)? d.data.active.toUpperCase() : '—', 'tealc'],
     ['آخر مسح', s.last_scan_at? s.last_scan_at.slice(11,16)+' UTC' : '—', ''],
   ];
@@ -198,7 +310,22 @@ function renderCards(d){
   const tb = $('trade-badge');
   tb.textContent = d.trading_enabled ? 'توليد الإشارات: مفعّل' : 'توليد الإشارات: معطّل';
   tb.className = 'badge ' + (d.trading_enabled ? 'b-on' : 'b-off');
+  // [FE1.4.0] زر التداول الحقيقي + شارة الوضع + لافتة الوضع
+  REAL_MODE = !!d.real_mode;
+  const rt = $('real-toggle');
+  if (rt.checked !== REAL_MODE) rt.checked = REAL_MODE;
+  $('real-status-text').textContent = 'التداول الحقيقي: ' + (REAL_MODE ? 'مُفعّل ⚠' : 'متوقف');
+  const mb = $('mode-badge');
+  mb.textContent = 'الوضع: ' + (REAL_MODE ? 'حقيقي 🔴' : 'ورقي 🧪');
+  mb.className = 'badge ' + (REAL_MODE ? 'b-real' : 'b-paper');
+  $('mode-banner').innerHTML = REAL_MODE
+    ? '<div class="banner banner-real">⚠ التداول الحقيقي نشط — الإشارات الجديدة تُنفَّذ بأوامر فعلية على حسابك في Binance (شراء LIMIT عند فيبو 0.382 ← بيع سوق عند الوقف/الهدف)</div>'
+    : '<div class="banner banner-paper">🧪 وضع ورقي — الصفقات المعروضة للتقييم فقط، لا أوامر حقيقية على Binance · فعّل مفتاح التداول الحقيقي للتنفيذ الفعلي</div>';
   $('ver').textContent = d.version + ' — ' + d.strategy;
+}
+
+function modePill(isReal){
+  return isReal ? '<span class="pill p-real">حقيقية 🔴</span>' : '<span class="pill p-paper">ورقية</span>';
 }
 
 function renderOpen(list){
@@ -227,7 +354,7 @@ function renderOpen(list){
       ? `<button class="mini cxl" onclick="cancelOrder(${s.id},'${s.symbol}')">✖ إلغاء</button>`
       : `<button class="mini" onclick="closeTrade(${s.id},'${s.symbol}')">🔒 إغلاق</button>`;
     return `<tr>
-      <td><b>${s.symbol}</b></td><td>${st}</td>
+      <td><b>${s.symbol}</b></td><td>${st}</td><td>${modePill(s.is_real)}</td>
       <td>${live[0]}</td><td>${live[1]}</td><td>${live[2]}</td>
       <td>${fmt(isPend?s.entry_price:s.fill_price)}</td>
       <td class="neg">${fmt(s.stop_loss)}</td><td class="pos">${fmt(s.take_profit)}</td>
@@ -239,7 +366,7 @@ function renderOpen(list){
     </tr>`;
   }).join('');
   $('open-box').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
-    <th>الزوج</th><th>الحالة</th><th>السعر الآن</th><th>غير المحقق</th><th>التقدم نحو الهدف</th>
+    <th>الزوج</th><th>الحالة</th><th>الوضع</th><th>السعر الآن</th><th>غير المحقق</th><th>التقدم نحو الهدف</th>
     <th>${'دخول/ملء'}</th><th>وقف</th><th>هدف 1.618</th>
     <th>R:R</th><th>الكمية</th><th>أُنشئ</th><th>الصلاحية</th><th>إجراء</th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -248,7 +375,7 @@ function renderOpen(list){
 function renderClosed(list){
   if(!list.length){ $('closed-box').innerHTML = '<div class="empty">لا صفقات مغلقة بعد</div>'; return; }
   let rows = list.map(s => `<tr>
-    <td><b>${s.symbol}</b></td>
+    <td><b>${s.symbol}</b></td><td>${modePill(s.is_real)}</td>
     <td>${fmt(s.fill_price)} → ${fmt(s.close_price)}</td>
     <td class="${cls(s.pnl_usdt)}"><b>${usd(s.pnl_usdt)}</b></td>
     <td class="${cls(s.pnl_pct)}">${pct(s.pnl_pct)}</td>
@@ -256,7 +383,7 @@ function renderClosed(list){
     <td class="mut small">${dt(s.closed_at)}</td>
   </tr>`).join('');
   $('closed-box').innerHTML = `<table><thead><tr>
-    <th>الزوج</th><th>دخول → خروج</th><th>النتيجة</th><th>%</th><th>السبب</th><th>أُغلقت</th>
+    <th>الزوج</th><th>الوضع</th><th>دخول → خروج</th><th>النتيجة</th><th>%</th><th>السبب</th><th>أُغلقت</th>
   </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
@@ -269,7 +396,7 @@ function renderDetections(list){
     <td>${x.w2_retrace!==null&&x.w2_retrace!==undefined?(x.w2_retrace*100).toFixed(1)+'%':'—'} <span class="${x.w2_in_zone?'zone-ok':'zone-no'}">${x.w2_in_zone?'✔':''}</span></td>
     <td>${x.w4_retrace!==null&&x.w4_retrace!==undefined?(x.w4_retrace*100).toFixed(1)+'%':'—'} <span class="${x.w4_in_zone?'zone-ok':'zone-no'}">${x.w4_in_zone?'✔':''}</span></td>
     <td>${fmt(x.entry_zone_low)}</td><td class="neg small">${fmt(x.stop_loss)}</td><td class="pos small">${fmt(x.take_profit)}</td>
-    <td>${x.traded?'<span class="pill p-open">نُفذت ورقيًا</span>':'<span class="mut small">للاطلاع</span>'}</td>
+    <td>${x.traded?'<span class="pill p-open">نُفذت</span>':'<span class="mut small">للاطلاع</span>'}</td>
     <td class="mut small">${dt(x.detected_at)}</td>
   </tr>`).join('');
   $('det-box').innerHTML = `<table><thead><tr>
@@ -302,8 +429,24 @@ async function toggleTrading(){
   } catch(e){ toast('فشل التبديل: '+e.message); }
 }
 
+// [FE1.4.0] زر التداول الحقيقي — مثل V9: تفعيل يتطلب مفاتيح + فحص اتصال ناجح من السيرفر
+async function toggleReal(el){
+  const target = el.checked;
+  if (target && !confirm('⚠ تشغيل التداول الحقيقي؟\n\nستُنفَّذ الإشارات الجديدة بأوامر فعلية على حسابك في Binance:\n• شراء LIMIT حقيقي عند فيبو 0.382\n• بيع سوق حقيقي عند الوقف/الهدف\n• بقواعد باينانس الكاملة وسقف أمان لكل أمر\n\nتأكد من ضبط المفاتيح (BINANCE_API_KEY / SECRET) وتوفر رصيد USDT.')) {
+    el.checked = REAL_MODE; return;
+  }
+  if (!target && !confirm('إيقاف التداول الحقيقي والعودة للوضع الورقي الآمن؟\n(الصفقات الحقيقية المفتوحة ستستمر بالإدارة حتى إغلاقها)')) {
+    el.checked = REAL_MODE; return;
+  }
+  try {
+    const d = await api('/api/trading/real', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({enable: target})});
+    toast(d.message || 'تم التبديل'); refresh();
+  } catch(e){ el.checked = !target; toast('فشل التبديل: ' + e.message); }
+}
+
 async function closeTrade(id, symbol){
-  if(!confirm('إغلاق صفقة '+symbol+' بسعر السوق الحالي (ورقي)؟')) return;
+  if(!confirm('إغلاق صفقة '+symbol+' بسعر السوق الحالي؟\n(الحقيقية: بيع سوق فعلي على باينانس)')) return;
   try {
     const d = await api('/api/trades/close', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
     toast(d.message || 'أُغلقت الصفقة'); refresh();
@@ -311,7 +454,7 @@ async function closeTrade(id, symbol){
 }
 
 async function cancelOrder(id, symbol){
-  if(!confirm('إلغاء الأمر المعلق على '+symbol+'؟')) return;
+  if(!confirm('إلغاء الأمر المعلق على '+symbol+'؟\n(الحقيقية: إلغاء الأمر الفعلي على باينانس)')) return;
   try {
     const d = await api('/api/trades/cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
     toast(d.message || 'أُلغي الأمر'); refresh();

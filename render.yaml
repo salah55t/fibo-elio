@@ -11,11 +11,17 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
-      # وضع ورقي دائم — لا مفاتيح تداول مطلوبة (الشموع العامة تكفي)
+      # وضع ورقي افتراضي — مفاتيح باينانس مطلوبة فقط لزر التداول الحقيقي [FE1.4.0]
       - key: BINANCE_API_KEY
         sync: false
       - key: BINANCE_API_SECRET
         sync: false
+      # [FE1.4.0] التداول الحقيقي: "1" يجعل الأوامر على تيستنت باينانس (اختباري آمن)
+      - key: BINANCE_TESTNET
+        value: "0"
+      # [FE1.4.0] سقف أمان: أقصى قيمة USDT لأمر الشراء الحقيقي الواحد
+      - key: REAL_MAX_NOTIONAL_USDT
+        value: "50"
       # حماية اللوحة (admin/test123 مثل المشروع السابق)
       - key: DASHBOARD_USERNAME
         sync: false
