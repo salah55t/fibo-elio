@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_fe140.py — اختبارات التداول الحقيقي + قواعد باينانس + بطاقة الاتصال FE1.4.0
+test_fe140.py — اختبارات التداول الحقيقي + قواعد باينانس + بطاقة الاتصال FE1.4.0/1.4.1
 
-سبع جولات:
+ثماني جولات:
   1) قواعد باينانس: دقة الكمية/السعر، أدنى قيمة/كمية، سقف الأمان، رفض الوقف الواسع
   2) بطاقة اتصال باينانس: بلا مفاتيح (فحص عام) / بمفاتيح (رصيد) / فشل / الكاش
   3) زر التداول الحقيقي: رفض بلا مفاتيح / تفعيل بمفاتيح + اتصال / استمرار الحالة / إيقاف
@@ -12,6 +12,8 @@ test_fe140.py — اختبارات التداول الحقيقي + قواعد ب
   6) إغلاق حقيقي: بيع سوق + محاسبة بلا مساس بالرصيد الورقي / الغبار يُغلق محاسبيًا
   7) نقاط API واللوحة: /api/binance/status، /health mode، /api/all يحمل binance،
      الهيكل السبراني (زر حقيقي + بطاقة اتصال + خلفية متحركة) في PANEL_HTML
+  8) [FE1.4.1] الطبقة بلا أسواق: أدوات الدقة/التوحيد الخام + حارس منع load_markets
+     (سبب أعطال OOM على خطة 512MB — نسخة التداول لا تلمس كون الأسواق إطلاقًا)
 
 تشغيل: pytest test_fe140.py -v   (من داخل مجلد المشروع)
 """
@@ -47,16 +49,24 @@ def clean_db(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def real_reset():
-    """حالة التداول الحقيقي وكاش الاتصال نظيفان قبل وبعد كل اختبار."""
+    """حالة التداول الحقيقي وكاشا الاتصال وقواعد الأسواق نظيفان قبل وبعد كل اختبار."""
     vnz.is_real_mode = False
     with vnz._bin_status_lock:
         vnz._bin_status_cache["ts"] = 0.0
         vnz._bin_status_cache["data"] = None
+    with vnz._REAL_RULES_LOCK:
+        vnz._REAL_RULES_CACHE.clear()
+    with vnz._trade_ex_lock:
+        vnz._trade_ex = None
     yield
     vnz.is_real_mode = False
     with vnz._bin_status_lock:
         vnz._bin_status_cache["ts"] = 0.0
         vnz._bin_status_cache["data"] = None
+    with vnz._REAL_RULES_LOCK:
+        vnz._REAL_RULES_CACHE.clear()
+    with vnz._trade_ex_lock:
+        vnz._trade_ex = None
 
 
 @pytest.fixture()
@@ -65,79 +75,103 @@ def client(clean_db, real_reset):
 
 
 class FakeBinance:
-    """نسخة تداول وهمية بقواعد باينانس مبسطة (خطوة 0.00001 للكمية و0.01 للسعر).
+    """[FE1.4.1] نسخة تداول وهمية على النقاط الخام لباينانس (implicit API) —
+    نفس الشكل الذي تستهلكه الطبقة بلا أسواق: privateGetAccount/publicGetExchangeInfo/
+    privatePostOrder/privateGetOrder/privateDeleteOrder.
 
-    markets: BTC/USDT بحدود واقعية (minQty=0.0001، minNotional=10.0)
-    سلوك قابل للبرمجة: fill_immediately، sell_fail، cancel_ok...
+    قواعد BTC/USDT: خطوة كمية 0.00001، أدنى كمية 0.0001، خطوة سعر 0.01،
+    أدنى قيمة 10.0 — بيع سوق ينفذ فورًا بمتوسط 102.0.
+    حارس صارم: أي نداء load_markets يفجّر BaseException (انتهاك الطبقة بلا أسواق
+    = سبب أعطال OOM في FE1.4.0).
     """
+
+    markets = None  # لا أسواق أصلًا — أي محاولة وصول فشل صراحة
 
     def __init__(self, usdt_free=1000.0, base_free=0.0):
         self.usdt_free = usdt_free
         self.base_free = base_free
-        self.orders = []
+        self.orders = []          # سجلات خام: {orderId, symbol, type, side, status, executedQty, cummulativeQuoteQty, price}
         self.canceled = []
         self._oid = 9000
         self.sell_fail = False
         self.create_fail = False
-        self.markets = {
-            "BTC/USDT": {
-                "symbol": "BTC/USDT", "active": True,
-                "precision": {"amount": 5, "price": 2},
-                "limits": {
-                    "amount": {"min": 0.0001, "max": 1000.0},
-                    "cost": {"min": 10.0, "max": None},
-                },
-            },
-        }
+        self.exchange_info_calls = 0
 
-    # قواعد الدقة
-    def amount_to_precision(self, symbol, amount):
-        return f"{math.floor(float(amount) * 1e5) / 1e5:.5f}"
+    # حارس الطبقة بلا أسواق — BaseException كي لا يبتلعها except Exception في vnz
+    def load_markets(self, *a, **k):
+        raise BaseException("VIOLATION: طبقة التداول استدعت load_markets (سبب OOM في FE1.4.0)")
 
-    def price_to_precision(self, symbol, price):
-        return f"{math.floor(float(price) * 100) / 100:.2f}"
+    # قواعد السوق الواحد — استجابة خام كيلوبايتات مثل exchangeInfo?symbol=
+    def publicGetExchangeInfo(self, params=None):
+        self.exchange_info_calls += 1
+        sym = str((params or {}).get("symbol") or "").upper()
+        if sym == "BTCUSDT":
+            return {"symbols": [{
+                "symbol": "BTCUSDT", "status": "TRADING",
+                "filters": [
+                    {"filterType": "PRICE_FILTER", "tickSize": "0.01000000"},
+                    {"filterType": "LOT_SIZE", "stepSize": "0.00001000", "minQty": "0.00010000"},
+                    {"filterType": "NOTIONAL", "minNotional": "10.00000000"},
+                ],
+            }]}
+        return {"symbols": []}
 
     # فحص الاتصال
     def fetch_time(self):
         return 1700000000000
 
-    def fetch_balance(self):
+    # الحساب الخام — بديل fetch_balance الذي كان يحمّل كون الأسواق (OOM)
+    def privateGetAccount(self):
         return {
-            "USDT": {"free": self.usdt_free, "total": self.usdt_free},
-            "BTC": {"free": self.base_free, "total": self.base_free},
-            "info": {"canTrade": True},
+            "canTrade": True,
+            "balances": [
+                {"asset": "USDT", "free": str(self.usdt_free), "locked": "0.00000000"},
+                {"asset": "BTC", "free": str(self.base_free), "locked": "0.00000000"},
+            ],
         }
 
-    # الأوامر
-    def create_order(self, symbol, type_, side, amount, price=None, params=None):
-        if self.create_fail:
+    # الأوامر عبر النقاط الخام
+    def privatePostOrder(self, params):
+        p = params or {}
+        otype = str(p.get("type") or "").upper()
+        if self.create_fail or (otype == "MARKET" and self.sell_fail):
             raise RuntimeError("binance reject: insufficient balance")
         self._oid += 1
-        order = {
-            "id": str(self._oid), "symbol": symbol, "type": type_, "side": side,
-            "amount": float(amount), "price": float(price) if price else None,
-            "filled": 0.0, "average": None, "status": "open", "fee": None,
-        }
-        if type_ == "limit":
-            self.orders.append(order)
-        else:  # سوق يُنفذ فورًا
-            order["status"] = "closed"
-            order["filled"] = float(amount)
-            order["average"] = 102.0  # سعر تنفيذ وهمي ثابت للاختبار
-            self.orders.append(order)
-        return order
+        qty = float(p.get("quantity") or 0.0)
+        price = float(p.get("price") or 0.0)
+        rec = {"orderId": self._oid, "symbol": p.get("symbol"),
+               "type": otype, "side": str(p.get("side") or "").upper(),
+               "status": "NEW", "executedQty": "0.00000000",
+               "cummulativeQuoteQty": "0.00000000",
+               "price": f"{price:.8f}" if price else "0.00000000"}
+        if otype == "MARKET":  # سوق يُنفذ فورًا
+            rec["status"] = "FILLED"
+            rec["executedQty"] = f"{qty:.8f}"
+            rec["cummulativeQuoteQty"] = f"{qty * 102.0:.8f}"  # سعر تنفيذ وهمي ثابت للاختبار
+        self.orders.append(rec)
+        return dict(rec)
 
-    def fetch_order(self, order_id, symbol):
+    def _find(self, order_id):
         for o in self.orders:
-            if str(o["id"]) == str(order_id):
-                return dict(o)
-        return {"id": str(order_id), "status": "canceled", "filled": 0.0, "average": None}
+            if str(o["orderId"]) == str(order_id):
+                return o
+        return None
 
-    def cancel_order(self, order_id, symbol):
-        self.canceled.append(str(order_id))
-        for o in self.orders:
-            if str(o["id"]) == str(order_id) and o["filled"] == 0.0:
-                o["status"] = "canceled"
+    def privateGetOrder(self, params):
+        o = self._find((params or {}).get("orderId"))
+        if o is None:  # غير موجود → ملغى بلا ملء (نفس سلوك الاختبار القديم)
+            return {"orderId": (params or {}).get("orderId"), "status": "CANCELED",
+                    "executedQty": "0.00000000", "cummulativeQuoteQty": "0.00000000",
+                    "price": "0"}
+        return dict(o)
+
+    def privateDeleteOrder(self, params):
+        oid = (params or {}).get("orderId")
+        self.canceled.append(str(oid))
+        o = self._find(oid)
+        if o is not None and float(o["executedQty"]) == 0.0:
+            o["status"] = "CANCELED"
+        return {"orderId": oid, "status": "CANCELED"}
 
 
 class FakeSetup:
@@ -351,11 +385,11 @@ def test_create_real_signal_places_limit_order(clean_db, real_reset, monkeypatch
     assert ok is True
     assert len(ex.orders) == 1
     order = ex.orders[0]
-    assert order["side"] == "buy" and order["type"] == "limit"
-    assert order["price"] == 100.0                       # دقة السعر مطبقة
+    assert order["side"] == "BUY" and order["type"] == "LIMIT"
+    assert float(order["price"]) == 100.0                # دقة السعر مطبقة
     row = vnz.db.query("SELECT * FROM signals ORDER BY id DESC", one=True)
     assert row["is_real"] == 1
-    assert row["order_id"] == order["id"]
+    assert row["order_id"] == str(order["orderId"])
     assert 0 < row["quantity"] <= 0.5                    # سقف 50$ عند سعر 100
     # الرصيد الورقي لم يُمس بإنشاء إشارة حقيقية
     assert vnz.get_paper_balance() == vnz.PAPER_BALANCE_START
@@ -412,8 +446,9 @@ def test_real_pending_filled_from_exchange(clean_db, real_reset, monkeypatch):
     ex = FakeBinance()
     real_setup(monkeypatch, ex, real=True)
     sig = _insert_real_pending(order_id="77")
-    ex.orders.append({"id": "77", "status": "closed", "filled": 0.5, "average": 100.02,
-                      "price": 100.0, "side": "buy", "type": "limit", "amount": 0.5})
+    # المنصة: الأمر ملئ بالكامل — متوسط التنفيذ 50.01/0.5 = 100.02
+    ex.orders.append({"orderId": 77, "status": "FILLED", "executedQty": "0.5",
+                      "cummulativeQuoteQty": "50.01", "price": "100.0"})
     vnz.handle_real_pending(sig, close_now=99.0, p0=90.0)
     row = row_by_id(vnz.db, sig["id"])
     assert row["status"] == "open"
@@ -425,8 +460,8 @@ def test_real_pending_structural_invalidation_cancels(clean_db, real_reset, monk
     ex = FakeBinance()
     real_setup(monkeypatch, ex, real=True)
     sig = _insert_real_pending(order_id="78")
-    ex.orders.append({"id": "78", "status": "open", "filled": 0.0, "average": None,
-                      "price": 100.0, "side": "buy", "type": "limit", "amount": 0.5})
+    ex.orders.append({"orderId": 78, "status": "NEW", "executedQty": "0.0",
+                      "cummulativeQuoteQty": "0.0", "price": "100.0"})
     vnz.handle_real_pending(sig, close_now=88.0, p0=90.0)  # إغلاق خلف P0 → إبطال
     assert "78" in ex.canceled
     row = row_by_id(vnz.db, sig["id"])
@@ -449,9 +484,9 @@ def test_real_pending_partial_fill_opens_partial(clean_db, real_reset, monkeypat
     ex = FakeBinance()
     real_setup(monkeypatch, ex, real=True)
     sig = _insert_real_pending(order_id="80", qty=0.5)
-    # المنصة: ألغيت بعد ملء 0.2 فقط
-    ex.orders.append({"id": "80", "status": "canceled", "filled": 0.2, "average": 100.0,
-                      "price": 100.0, "side": "buy", "type": "limit", "amount": 0.5})
+    # المنصة: ألغيت بعد ملء 0.2 فقط — متوسط 20.0/0.2 = 100.0
+    ex.orders.append({"orderId": 80, "status": "CANCELED", "executedQty": "0.2",
+                      "cummulativeQuoteQty": "20.0", "price": "100.0"})
     vnz.handle_real_pending(sig, close_now=99.0, p0=90.0)
     row = row_by_id(vnz.db, sig["id"])
     assert row["status"] == "open"
@@ -481,12 +516,12 @@ def test_real_close_market_sell_and_accounting(clean_db, real_reset, monkeypatch
     bal_before = vnz.get_paper_balance()
     vnz.close_real_trade(sig, 120.0, "هدف فيبوناتشي 1.618 تحقق")
     # بيع سوق تم
-    sells = [o for o in ex.orders if o["side"] == "sell"]
-    assert len(sells) == 1 and sells[0]["type"] == "market"
+    sells = [o for o in ex.orders if o["side"] == "SELL"]
+    assert len(sells) == 1 and sells[0]["type"] == "MARKET"
     row = row_by_id(vnz.db, sig["id"])
     assert row["status"] == "closed"
     assert float(row["close_price"]) == 102.0      # سعر التنفيذ من أمر السوق الوهمي
-    assert row["exit_order_id"] == sells[0]["id"]
+    assert row["exit_order_id"] == str(sells[0]["orderId"])
     # PnL محسوب (ربح) لكن الرصيد الورقي بلا مساس
     assert float(row["pnl_usdt"]) > 0
     assert vnz.get_paper_balance() == bal_before
@@ -511,7 +546,7 @@ def test_real_close_dust_accounting_only(clean_db, real_reset, monkeypatch):
     real_setup(monkeypatch, ex, real=True)
     sig = _insert_real_open(qty=0.5, fill=100.0)
     vnz.close_real_trade(sig, 120.0, "هدف فيبوناتشي 1.618 تحقق")
-    assert len([o for o in ex.orders if o["side"] == "sell"]) == 0  # لا أمر بيع
+    assert len([o for o in ex.orders if o["side"] == "SELL"]) == 0  # لا أمر بيع
     row = row_by_id(vnz.db, sig["id"])
     assert row["status"] == "closed"
     assert "غبار" in (row["close_reason"] or "")
@@ -542,7 +577,7 @@ def test_api_binance_status_endpoint(client, clean_db, real_reset, monkeypatch):
     assert body["connected"] is True
     assert body["usdt_free"] == 321.0
     assert body["real_mode"] is False
-    assert body["version"] == "FE1.4.0"
+    assert body["version"] == "FE1.4.1"
 
 
 def test_health_mode_paper_and_real(client, clean_db, real_reset, monkeypatch):
@@ -587,7 +622,7 @@ def test_panel_cyber_structure():
     assert "banner-real" in html and "banner-paper" in html
     assert "p-real" in html and "modePill" in html
     import panel as panel_mod
-    assert panel_mod.BOT_VERSION == "FE1.4.0"
+    assert panel_mod.BOT_VERSION == "FE1.4.1"
 
 
 def test_ddl_migration_adds_real_columns(clean_db):
@@ -598,3 +633,63 @@ def test_ddl_migration_adds_real_columns(clean_db):
     vnz.migrate_db()
     cols2 = {r["name"] for r in vnz.db.query("PRAGMA table_info(signals)")}
     assert cols == cols2
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# الجولة 8 — [FE1.4.1] الطبقة بلا أسواق: أدوات الدقة/التوحيد + حارس load_markets
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_floor_step_and_fmt_dec():
+    # أرضية على الخطوة بدقة Decimal (بدل amount_to_precision/price_to_precision)
+    assert vnz._floor_step(0.123456789, 0.00001) == 0.12345
+    assert vnz._floor_step(100.9999, 0.01) == 100.99
+    assert vnz._floor_step(5.0, 0.0) == 5.0        # بلا خطوة → القيمة كما هي
+    # نص عشري بلا أُس علمي — باينانس ترفض 1e-05
+    assert vnz._fmt_dec(1e-05) == "0.00001"
+    assert vnz._fmt_dec(100.0) == "100"
+    assert vnz._fmt_dec(0.5) == "0.5"
+
+
+def test_norm_real_order_mapping():
+    """توحيد الاستجابة الخام على شكل ccxt — بلا تغيير على أي منطق أعلى الطبقة."""
+    raw = {"orderId": 42, "status": "FILLED", "executedQty": "0.5",
+           "cummulativeQuoteQty": "50.01", "price": "100.0"}
+    n = vnz._norm_real_order(raw)
+    assert n["id"] == "42" and n["status"] == "closed"
+    assert n["filled"] == 0.5 and abs(n["average"] - 100.02) < 1e-9
+    assert vnz._norm_real_order({"orderId": 1, "status": "NEW"})["status"] == "open"
+    assert vnz._norm_real_order({"orderId": 2, "status": "EXPIRED"})["status"] == "expired"
+    assert vnz._norm_real_order({"orderId": 3, "status": "REJECTED"})["status"] == "rejected"
+    assert vnz._norm_real_order({"orderId": 4, "status": "PARTIALLY_FILLED",
+                                 "executedQty": "0.1", "cummulativeQuoteQty": "10.0"})["status"] == "open"
+    assert vnz._norm_real_order(None)["status"] == "open"      # فارغ → يُعامل حيًا (أمان)
+
+
+def test_rules_single_symbol_cache():
+    """exchangeInfo?symbol= يُستدعى مرة واحدة ثم كاش REAL_RULES_TTL_SEC."""
+    ex = FakeBinance()
+    vnz.real_market_rules("BTC/USDT", ex)
+    vnz.real_market_rules("BTC/USDT", ex)
+    vnz.real_market(ex, "BTC/USDT")
+    assert ex.exchange_info_calls == 1               # الكاش يعمل
+    forced = vnz.real_market_rules("BTC/USDT", ex, force=True)
+    assert ex.exchange_info_calls == 2 and forced["min_cost"] == 10.0
+
+
+def test_trading_layer_never_loads_markets(clean_db, real_reset, monkeypatch):
+    """حارس OOM: كل مسارات الطبقة الحقيقية تمر دون load_markets إطلاقًا —
+    أي انتهاك يفجّر BaseException من النسخة الوهمية فيُسقط الاختبار فورًا
+    (هذا هو سبب أعطال «Ran out of memory 512MB» في FE1.4.0)."""
+    ex = FakeBinance(usdt_free=1000.0)
+    real_setup(monkeypatch, ex, real=True)
+    assert vnz.real_adjust_price(ex, "BTC/USDT", 100.0) == 100.0
+    assert vnz.real_adjust_amount(ex, "BTC/USDT", 0.5) == 0.5
+    mkt = vnz.real_market(ex, "BTC/USDT")
+    assert vnz.real_min_cost(mkt) == 10.0
+    assert vnz.real_min_amount(mkt) == 0.0001
+    assert vnz.compute_quantity_real("BTC/USDT", 100.0, 95.0, 1000.0, ex) is not None
+    st = vnz.binance_status_snapshot(force=True)
+    assert st["connected"] is True and st["usdt_free"] == 1000.0
+    assert vnz.fetch_free_base(ex, "BTC") == 0.0
+    assert vnz.real_market_rules("NOPE/USDT", ex) == {"tick": 0.0, "step": 0.0,
+                                                      "min_qty": 0.0, "min_cost": 0.0, "status": ""}

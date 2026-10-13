@@ -46,6 +46,26 @@
  • المحاسبة: الصفقة الحقيقية تُسجل مثل الورقية (أرباح/نسب/إشعارات) لكن دون أي
    مساس بالرصيد الورقي — وعمود «الوضع» في اللوحة يفرز حقيقية/ورقية.
 
+ FE1.4.1: علاج أعطال OOM (نفاد الذاكرة 512MB) التي رافقت FE1.4.0:
+ • السبب الجذري: نداءات ccxt الموحدة على نسخة التداول (fetch_balance/create_order/
+   fetch_order/cancel_order/amount_to_precision) تستدعي load_markets() داخليًا
+   فتحمّل كون أسواق باينانس الكامل (~1600+ سوق ببياناتها الخام) = نتوء +150-300MB
+   فوق أساس الخدمة ← قتل فوق سقف 512MB ← إعادة إقلاع ← تكرار كل دقيقتين.
+   prune_markets لم يكن ينفع لأنه يقلّم «بعد» اكتمال التحميل (النتوء حدث أصلًا).
+ • الحل الجذري: طبقة تداول «بلا أسواق نهائيًا» عبر نقاط باينانس الخام (implicit API
+   في ccxt — لا تلمس load_markets إطلاقًا):
+     الحساب/الرصيد  ← privateGetAccount      (GET /api/v3/account)
+     قواعد السوق    ← publicGetExchangeInfo?symbol= (كيلوبايتات بدل كون الأسواق + كاش 6 ساعات)
+     الأمر          ← privatePostOrder       (POST /api/v3/order)
+     حالة الأمر     ← privateGetOrder        (GET /api/v3/order)
+     الإلغاء        ← privateDeleteOrder     (DELETE /api/v3/order)
+   والدقة (LOT_SIZE/PRICE_FILTER) تُطبق يدويًا بأرضية Decimal على stepSize/tickSize
+   بدل amount_to_precision/price_to_precision — نفس القواعد بلا أي كون أسواق.
+ • حمية إضافية: malloc_trim بعد gc لإرجاع الذاكرة المحررة فعليًا للنظام (المُوزّع
+   في CPython يحتجزها)، وخفض عتبات التنظيف (gc عند 360MB، حرج عند 440MB).
+ • القواعد لم تُنسَ: نفس فلاتر باينانس (دقة/أدنى كمية/أدنى قيمة) وسقف الأمر و
+   TESTNET — لا تغيير على أي منطق تداول، فقط مصدر القواعد أرحم ذاكرةً.
+
  FE1.0.1: طبقة مزودي بيانات متعددة — باينانس أولًا كما في الأصل، ثم Bybit → OKX
  → Gate.io تلقائيًا عند الحظر/الفشل. الدرس المستفاد من المشروع السابق: عنوان
  الخروج المشترك لخدمات Render يتعرض لحظر وزن باينانس (-1003) المتجدد بسبب
@@ -107,6 +127,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import gc
+from decimal import Decimal, ROUND_FLOOR
 import pandas as pd
 import requests
 
@@ -134,7 +155,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.4.0"  # FE1.4.0: زر التداول الحقيقي مثل V9 + قواعد باينانس الكاملة + بطاقة اتصال باينانس + لوحة سبرانية نيون
+BOT_VERSION = "FE1.4.1"  # FE1.4.1: طبقة تداول بلا أسواق (implicit API) — علاج جذري لأعطال OOM على خطة 512MB
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -189,8 +210,8 @@ PANEL_URL = os.getenv("PANEL_URL", "")            # بديل اشتقاق ثان
 # كانت تعيد إقلاع الخدمة كل دقائق = «الخمول» الظاهري. السبب: تحميل أسواق 4 منصات كاملة (~40-80MB لكل واحدة)
 MEM_LAZY_MARKETS = os.getenv("MEM_LAZY_MARKETS", "1").strip().lower() not in ("0", "false", "no", "off")
 MEM_PRUNE_MARKETS = int(os.getenv("MEM_PRUNE_MARKETS", "400"))    # لا يُقلَّم مزود أسواقه أقل من هذا العدد
-MEM_GC_THRESHOLD_MB = float(os.getenv("MEM_GC_THRESHOLD_MB", "380"))  # تجميع قسري فوق هذا
-MEM_CRITICAL_MB = float(os.getenv("MEM_CRITICAL_MB", "450"))          # سجل حرج فوق هذا
+MEM_GC_THRESHOLD_MB = float(os.getenv("MEM_GC_THRESHOLD_MB", "360"))  # تجميع قسري فوق هذا ([FE1.4.1] 380←360)
+MEM_CRITICAL_MB = float(os.getenv("MEM_CRITICAL_MB", "440"))          # سجل حرج فوق هذا ([FE1.4.1] 450←440)
 
 # [FE1.4.0] التداول الحقيقي — زر مثل V9: تفعيله يحول الإشارات الجديدة إلى أوامر
 # فعلية على باينانس (LIMIT عند فيبو 0.382 ← بيع سوق عند الوقف/الهدف). الورقي يبقى
@@ -198,6 +219,7 @@ MEM_CRITICAL_MB = float(os.getenv("MEM_CRITICAL_MB", "450"))          # سجل �
 BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "0").strip().lower() in ("1", "true", "yes", "on")
 REAL_MAX_NOTIONAL_USDT = float(os.getenv("REAL_MAX_NOTIONAL_USDT", "50.0"))  # سقف قيمة أمر الشراء الحقيقي الواحد (حماية)
 BIN_STATUS_TTL_SEC = float(os.getenv("BIN_STATUS_TTL_SEC", "60"))  # كاش بطاقة اتصال باينانس
+REAL_RULES_TTL_SEC = float(os.getenv("REAL_RULES_TTL_SEC", "21600"))  # [FE1.4.1] كاش قواعد السوق الواحد (6 ساعات)
 
 DASHBOARD_PROTECTED = bool(DASHBOARD_USERNAME and DASHBOARD_PASSWORD)
 USE_POSTGRES = DATABASE_URL.startswith("postgres")
@@ -211,6 +233,17 @@ logger = get_logger("fibo-elio")
 
 
 # [FE1.3.1] أدوات قياس وتنظيف الذاكرة — بلا تبعيات خارجية (قراءة /proc مباشرة)
+def _malloc_trim() -> None:
+    """[FE1.4.1] إرجاع الذاكرة المحررة فعليًا لنظام التشغيل عبر glibc malloc_trim.
+    gc.collect() يحرر الكائنات لكن مُوزّع CPython يحتجز الصفحات (تجزئة الـ heap)
+    فلا تنخفض RSS — وmalloc_trim هو ما يعيدها للنظام فعلًا. بلا أثر إن فشلت."""
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 def rss_mb() -> float:
     """الذاكرة المقيمة الحالية بالميجابايت — 0.0 إن لم تتوفر /proc (بيئات غير لينكس)."""
     try:
@@ -224,9 +257,11 @@ def rss_mb() -> float:
 
 
 def mem_check(reason: str = "") -> float:
-    """قياس + تنظيف ذكي: gc.collect() فوق عتبة التحذير، وسجل حرج فوق الحد الأخير.
-    تُستدعى دوريًا من حلقات المسح/المراقبة — قراءة /proc رخيصة والتنظيف عند الحاجة فقط.
+    """قياس + تنظيف ذكي: malloc_trim دائمًا (رخيص)، وgc.collect() فوق عتبة التحذير،
+    وسجل حرج فوق الحد الأخير. تُستدعى دوريًا من حلقات المسح/المراقبة —
+    قراءة /proc ونداء trim رخيصان والتنظيف الثقيل عند الحاجة فقط.
     تعيد RSS الحالية بالميجابايت."""
+    _malloc_trim()  # [FE1.4.1] إرجاع الصفحات المحررة سابقًا للنظام — يقاوم زحف RSS المزمن
     m = rss_mb()
     if m >= MEM_GC_THRESHOLD_MB:
         gc.collect()
@@ -701,7 +736,6 @@ detector = PivotDetector(DetectorConfig(
 
 _trade_ex_lock = threading.Lock()
 _trade_ex: Any = None            # نسخة التداول (مفاتيح خاصة) — تُبنى مرة واحدة كسولًا
-_trade_pruned = False            # تقليم أسواق نسخة التداول لمرة واحدة (حمية الذاكرة)
 _bin_probe: Any = None           # نسخة عامة بلا مفاتيح لفحص الاتصال عندما لا توجد مفاتيح
 _bin_status_lock = threading.Lock()
 _bin_status_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
@@ -761,12 +795,14 @@ def binance_status_snapshot(force: bool = False) -> Dict[str, Any]:
         data["connected"] = True
         data["latency_ms"] = round((time.time() - t0) * 1000.0)
         if keys_ok:
-            bal = ex.fetch_balance()
-            usdt = (bal or {}).get("USDT") or {}
+            # [FE1.4.1] privateGetAccount بدل fetch_balance — fetch_balance كانت
+            # تستدعي load_markets داخليًا فتحمّل كون أسواق باينانس كاملًا (سبب OOM)!
+            acc = _real_account(ex)
+            usdt = next((b for b in (acc.get("balances") or [])
+                         if isinstance(b, dict) and b.get("asset") == "USDT"), {})
             data["usdt_free"] = float(usdt.get("free") or 0.0)
-            data["usdt_total"] = float(usdt.get("total") or 0.0)
-            info = (bal or {}).get("info") or {}
-            ct = info.get("canTrade")
+            data["usdt_total"] = float(usdt.get("free") or 0.0) + float(usdt.get("locked") or 0.0)
+            ct = acc.get("canTrade")
             data["can_trade"] = bool(ct) if ct is not None else None
     except Exception as exc:
         data["error"] = str(exc)[:220]
@@ -776,21 +812,112 @@ def binance_status_snapshot(force: bool = False) -> Dict[str, Any]:
     return data
 
 
-def real_market(ex, symbol: str) -> Dict[str, Any]:
-    """قواعد السوق من باينانس (فلاتر الدقة/الكمية/القيمة) — بلا استثناءات أبدًا."""
+def _real_account(ex) -> Dict[str, Any]:
+    """[FE1.4.1] حساب باينانس الخام (GET /api/v3/account عبر privateGetAccount) —
+    نقطة implicit لا تستدعي load_markets إطلاقًا (بديل fetch_balance الذي كان يحمّل
+    كون الأسواق كاملًا ويسبب أعطال OOM)."""
+    return ex.privateGetAccount() or {}
+
+
+# ── [FE1.4.1] أدوات الطبقة بلا أسواق — قواعد السوق الواحد + الدقة اليدوية ──────
+_REAL_RULES_LOCK = threading.Lock()
+_REAL_RULES_CACHE: Dict[str, Dict[str, Any]] = {}  # symbol -> {"ts": float, "rules": dict}
+
+
+def _bin_sym(symbol: str) -> str:
+    """صيغة باينانس الخام: BTC/USDT ← BTCUSDT."""
+    return str(symbol).replace("/", "").replace(":", "").upper()
+
+
+def _fmt_dec(v: float) -> str:
+    """نص عشري بلا أُس علمي (باينانس ترفض 1e-05) — عبر Decimal لتفادي انحراف العوامات."""
+    return format(Decimal(str(v)).normalize(), "f")
+
+
+def _floor_step(value: float, step: float) -> float:
+    """أرضية القيمة على مضاعفات الخطوة (stepSize للكمية/tickSize للسعر) بدقة Decimal
+    — بديل amount_to_precision/price_to_precision التي تتطلب كون الأسواق كاملًا."""
     try:
-        if not ex.markets:
-            ex.load_markets()
-            global _trade_pruned
-            if not _trade_pruned:
-                _trade_pruned = True
-                n = prune_markets(ex, list(dict.fromkeys(list(watchlist) + [symbol])))
-                if n >= 0:
-                    logger.info("تقليم أسواق نسخة التداول — بقي %d زوج فقط (حمية الذاكرة)", n)
-        return ex.markets.get(symbol) or {}
-    except Exception as exc:
-        logger.warning("تعذر جلب قواعد السوق %s: %s", symbol, exc)
+        if not step or step <= 0:
+            return value
+        q = (Decimal(str(value)) / Decimal(str(step))).to_integral_value(rounding=ROUND_FLOOR)
+        return float(q * Decimal(str(step)))
+    except Exception:
+        return value
+
+
+def _norm_real_order(raw: Any) -> Dict[str, Any]:
+    """توحيد استجابة باينانس الخام على نفس شكل ccxt الذي تستهلكه بقية الشيفرة:
+    {id, status(open/closed/canceled/expired/rejected), filled, average, price} —
+    فلا يتغير أي منطق أعلى الطبقة (handle_real_pending/close_real_trade...)."""
+    raw = raw or {}
+    st = str(raw.get("status") or "").upper()
+    st_map = {"NEW": "open", "PENDING_CANCEL": "open", "PARTIALLY_FILLED": "open",
+              "FILLED": "closed", "CANCELED": "canceled", "CANCELLED": "canceled",
+              "REJECTED": "rejected", "EXPIRED": "expired"}
+    filled = float(raw.get("executedQty") or 0.0)
+    quote = float(raw.get("cummulativeQuoteQty") or 0.0)
+    avg = (quote / filled) if (filled > 0 and quote > 0) else None
+    price = float(raw.get("price") or 0.0)
+    return {
+        "id": str(raw.get("orderId") or raw.get("clientOrderId") or ""),
+        "status": st_map.get(st, st.lower() or "open"),
+        "filled": filled,
+        "average": avg,
+        "price": price or None,
+        "raw": raw,
+    }
+
+
+def real_market_rules(symbol: str, ex=None, force: bool = False) -> Dict[str, Any]:
+    """[FE1.4.1] قواعد سوق واحد من باينانس عبر exchangeInfo?symbol=… — استجابة كيلوبايتات
+    بدل كون الأسواق الكامل (آلاف الميجابايتات)، مع كاش REAL_RULES_TTL_SEC.
+    بلا load_markets نهائيًا. يعيد {tick, step, min_qty, min_cost, status} أو {} بأمان."""
+    now = time.time()
+    with _REAL_RULES_LOCK:
+        c = _REAL_RULES_CACHE.get(symbol)
+        if c and not force and now - c["ts"] < REAL_RULES_TTL_SEC:
+            return c["rules"]
+    ex = ex or binance_trade_exchange()
+    if ex is None:
         return {}
+    try:
+        raw = ex.publicGetExchangeInfo({"symbol": _bin_sym(symbol)}) or {}
+        syms = raw.get("symbols") or []
+        s = syms[0] if syms else {}
+        flt = {f.get("filterType"): f for f in (s.get("filters") or []) if isinstance(f, dict)}
+        notion = flt.get("NOTIONAL") or flt.get("MIN_NOTIONAL") or {}
+        rules = {
+            "tick": float((flt.get("PRICE_FILTER") or {}).get("tickSize") or 0.0),
+            "step": float((flt.get("LOT_SIZE") or {}).get("stepSize") or 0.0),
+            "min_qty": float((flt.get("LOT_SIZE") or {}).get("minQty") or 0.0),
+            "min_cost": float(notion.get("minNotional") or 0.0),
+            "status": s.get("status") or "",
+        }
+        with _REAL_RULES_LOCK:
+            _REAL_RULES_CACHE[symbol] = {"ts": now, "rules": rules}
+        return rules
+    except Exception as exc:
+        logger.warning("تعذر جلب قواعد السوق %s من باينانس: %s", symbol, exc)
+        with _REAL_RULES_LOCK:
+            c = _REAL_RULES_CACHE.get(symbol)
+        return dict(c["rules"]) if c else {}
+
+
+def real_market(ex, symbol: str) -> Dict[str, Any]:
+    """قواعد السوق بصيغة موحدة خفيفة (بلا أسواق — [FE1.4.1]):
+    {limits:{cost:{min},amount:{min}}, step, tick} من كاش exchangeInfo?symbol=.
+    الفلاتر نفسها التي كانت من كون الأسواق (NOTIONAL/LOT_SIZE) لكن بمصدر رخيم."""
+    r = real_market_rules(symbol, ex)
+    if not r:
+        return {}
+    return {
+        "symbol": symbol,
+        "limits": {"cost": {"min": r.get("min_cost") or None},
+                   "amount": {"min": r.get("min_qty") or None}},
+        "precision_step": r.get("step") or 0.0,
+        "precision_tick": r.get("tick") or 0.0,
+    }
 
 
 def real_min_cost(mkt: Dict[str, Any]) -> float:
@@ -818,18 +945,26 @@ def real_min_amount(mkt: Dict[str, Any]) -> float:
 
 
 def real_adjust_amount(ex, symbol: str, qty: float) -> float:
-    """أرضية الكمية على خطوة LOT_SIZE (amount_to_precision) — بأمان تام بلا استثناءات."""
+    """أرضية الكمية على خطوة LOT_SIZE (stepSize من قواعد السوق عبر Decimal) —
+    بلا استثناءات وبلا أسواق ([FE1.4.1] بدل amount_to_precision)."""
+    if ex is None and binance_trade_exchange() is None:
+        return qty  # بلا طبقة دقة متاحة — سقوط آمن كما في الأصل
     try:
-        v = float(ex.amount_to_precision(symbol, qty))
+        r = real_market_rules(symbol, ex)
+        v = _floor_step(float(qty), r.get("step") or 0.0)
         return v if v > 0 else 0.0
     except Exception:
         return math.floor(qty * 1e6) / 1e6
 
 
 def real_adjust_price(ex, symbol: str, price: float) -> float:
-    """دقة السعر على tickSize (price_to_precision) — بأمان تام بلا استثناءات."""
+    """دقة السعر على tickSize (أرضية Decimal) — بلا استثناءات وبلا أسواق
+    ([FE1.4.1] بدل price_to_precision). الأرضية آمنة لأمر الشراء (سعر أدنى يملأ)."""
+    if ex is None and binance_trade_exchange() is None:
+        return price  # بلا طبقة دقة متاحة — سقوط آمن كما في الأصل
     try:
-        return float(ex.price_to_precision(symbol, price))
+        r = real_market_rules(symbol, ex)
+        return _floor_step(float(price), r.get("tick") or 0.0)
     except Exception:
         return price
 
@@ -883,12 +1018,18 @@ def compute_quantity_real(symbol: str, entry: float, sl: float, free_usdt: float
 
 
 def place_real_limit_buy(symbol: str, price: float, qty: float) -> Optional[Dict[str, Any]]:
-    """أمر LIMIT BUY حقيقي عند فيبو 0.382 — يبقى معلقًا على المنصة كأمر حقيقي."""
+    """أمر LIMIT BUY حقيقي عند فيبو 0.382 — يبقى معلقًا على المنصة كأمر حقيقي.
+    [FE1.4.1] عبر نقطة باينانس الخام privatePostOrder — بلا أسواق إطلاقًا."""
     ex = binance_trade_exchange()
     if ex is None:
         return None
     try:
-        order = ex.create_order(symbol, "limit", "buy", qty, price, {"newOrderRespType": "FULL"})
+        raw = ex.privatePostOrder({
+            "symbol": _bin_sym(symbol), "side": "BUY", "type": "LIMIT",
+            "timeInForce": "GTC", "quantity": _fmt_dec(qty), "price": _fmt_dec(price),
+            "newOrderRespType": "FULL",
+        })
+        order = _norm_real_order(raw)
         log_and_notify("info",
                        f"🟢 أمر حقيقي على باينانس: شراء LIMIT {symbol} — كمية {qty} عند {fmt_price(price)} "
                        f"(id={order.get('id')})", "REAL_ORDER")
@@ -899,12 +1040,17 @@ def place_real_limit_buy(symbol: str, price: float, qty: float) -> Optional[Dict
 
 
 def place_real_market_sell(symbol: str, qty: float) -> Optional[Dict[str, Any]]:
-    """أمر بيع سوق حقيقي — للإغلاق عند الوقف/الهدف/يدويًا."""
+    """أمر بيع سوق حقيقي — للإغلاق عند الوقف/الهدف/يدويًا.
+    [FE1.4.1] عبر نقطة باينانس الخام privatePostOrder — بلا أسواق إطلاقًا."""
     ex = binance_trade_exchange()
     if ex is None:
         return None
     try:
-        order = ex.create_order(symbol, "market", "sell", qty, None, {"newOrderRespType": "FULL"})
+        raw = ex.privatePostOrder({
+            "symbol": _bin_sym(symbol), "side": "SELL", "type": "MARKET",
+            "quantity": _fmt_dec(qty), "newOrderRespType": "FULL",
+        })
+        order = _norm_real_order(raw)
         log_and_notify("info",
                        f"🔴 أمر حقيقي على باينانس: بيع سوق {symbol} — كمية {qty} (id={order.get('id')})",
                        "REAL_ORDER")
@@ -915,18 +1061,21 @@ def place_real_market_sell(symbol: str, qty: float) -> Optional[Dict[str, Any]]:
 
 
 def fetch_real_order(ex, symbol: str, order_id: Any) -> Optional[Dict[str, Any]]:
-    """حالة الأمر الحقيقي من المنصة — None عند فشل عابر (تُعاد المحاولة في الدورة القادمة)."""
+    """حالة الأمر الحقيقي من المنصة — [FE1.4.1] privateGetOrder موحّد بـ _norm_real_order.
+    None عند فشل عابر (تُعاد المحاولة في الدورة القادمة)."""
     try:
-        return ex.fetch_order(order_id, symbol)
+        raw = ex.privateGetOrder({"symbol": _bin_sym(symbol), "orderId": int(str(order_id))})
+        return _norm_real_order(raw)
     except Exception as exc:
         logger.warning("تعذر جلب حالة الأمر الحقيقي %s/%s: %s", symbol, order_id, exc)
         return None
 
 
 def cancel_real_order(ex, symbol: str, order_id: Any) -> bool:
-    """إلغاء أمر معلق حقيقي — False يعني إعادة الفحص/المحاولة في الدورة القادمة."""
+    """إلغاء أمر معلق حقيقي — [FE1.4.1] privateDeleteOrder.
+    False يعني إعادة الفحص/المحاولة في الدورة القادمة."""
     try:
-        ex.cancel_order(order_id, symbol)
+        ex.privateDeleteOrder({"symbol": _bin_sym(symbol), "orderId": int(str(order_id))})
         return True
     except Exception as exc:
         logger.warning("تعذر إلغاء الأمر الحقيقي %s/%s: %s", symbol, order_id, exc)
@@ -934,11 +1083,14 @@ def cancel_real_order(ex, symbol: str, order_id: Any) -> bool:
 
 
 def fetch_free_base(ex, base: str) -> float:
-    """الرصيد الحر للعملة الأساسية — للتحقق قبل البيع (نفس منطق V9)."""
+    """الرصيد الحر للعملة الأساسية — للتحقق قبل البيع (نفس منطق V9).
+    [FE1.4.1] من الحساب الخام بلا أسواق."""
     try:
-        bal = ex.fetch_balance()
-        cur = (bal or {}).get(base) or {}
-        return float(cur.get("free") or 0.0)
+        acc = _real_account(ex)
+        for b in (acc.get("balances") or []):
+            if isinstance(b, dict) and b.get("asset") == base:
+                return float(b.get("free") or 0.0)
+        return 0.0
     except Exception as exc:
         logger.warning("تعذر جلب رصيد %s الحر: %s", base, exc)
         return 0.0
