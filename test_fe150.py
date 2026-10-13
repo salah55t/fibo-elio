@@ -366,7 +366,7 @@ class TestRateLimitAbort:
         assert res["ok"] is False and "أُجهض" in res["error"]
 
     def test_ban_abort_sets_retry_hint(self, clean_db, scan_reset, monkeypatch):
-        # [FE1.5.1] بعد إجهاض حظر باينانس: إعادة محاولة قريبة (30 د) بدل الإيقاع الكامل
+        # [FE1.6.0] بعد إجهاض حظر باينانس: إعادة محاولة قريبة (30 د) بدل الإيقاع الكامل
         fake = FakeScanExchange([_ticker("AAAUSDT")],
                                 {"AAAUSDT": Exception('binance 418 {"code":-1003,"msg":"IP banned"}')})
         monkeypatch.setattr(vnz, "_binance_public_probe", lambda: fake)
@@ -375,7 +375,7 @@ class TestRateLimitAbort:
         assert snap["retry_after_sec"] == vnz.SCANNER_BAN_RETRY_SEC == 1800.0
 
     def test_ban_abort_on_ticker_sets_retry_hint(self, clean_db, scan_reset, monkeypatch):
-        # [FE1.5.1] الحظر عند نداء التكتة نفسه (المسار الخارجي) — نفس التلميح
+        # [FE1.6.0] الحظر عند نداء التكتة نفسه (المسار الخارجي) — نفس التلميح
         class BannedTickerExchange:
             def publicGetTicker24hr(self):
                 raise Exception('binance 418 {"code":-1003,"msg":"Way too much request weight used; IP banned until 1"}')
@@ -578,7 +578,7 @@ class TestProtectionAndPanel:
 
     def test_panel_hardening_marks(self):
         from panel import PANEL_HTML, BOT_VERSION
-        assert BOT_VERSION == "FE1.5.1"
+        assert BOT_VERSION == "FE1.6.0"
         assert "const esc = " in PANEL_HTML               # تهريب HTML
         assert "esc(n.message)" in PANEL_HTML             # الإشعارات مُهرّبة (كانت XSS)
         assert "esc(s.symbol)" in PANEL_HTML or "esc(x.symbol)" in PANEL_HTML

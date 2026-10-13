@@ -216,6 +216,10 @@ class DetectorConfig:
     min_wave_bars        : int        = 2
     require_fib_confluence: bool      = False
     fib_tolerance_pct    : float      = 1.0
+    # [FE1.6.0] أرضية التناسب للأمواج الدافعة (اقتباس ElliottWavesEngine
+    # MinMotiveWaveProportion=0.15): كل موجة دافعة ≥ 15% من الحركة الأمومية
+    # لوغاريتميًا. 0 يعطل القاعدة الرابعة.
+    min_wave_proportion  : float      = 0.15
 
     def __post_init__(self) -> None:
         if self.deviation_threshold <= 0:
@@ -242,6 +246,11 @@ class DetectorConfig:
             raise ValueError(
                 f"price_source must be 'close', 'hl', or 'hlc3', "
                 f"got '{self.price_source}'"
+            )
+        if not (0.0 <= self.min_wave_proportion <= 1.0):
+            raise ValueError(
+                f"min_wave_proportion must be within [0, 1], "
+                f"got {self.min_wave_proportion}"
             )
 
 
@@ -635,6 +644,25 @@ class PivotDetector:
 
         high_idx = low_idx = 0
         direction = 0   # 0=undecided, 1=uptrend, -1=downtrend
+        last_bar = -1   # [FE1.6.0] شريط آخر محور مؤكد — حدود شرائح تحسين الويك
+
+        def _peak_at(k: int) -> None:
+            """[FE1.6.0] قمة عند القيمة القصوى المطلقة الحقيقية (ويك) في الشريحة
+            (last_bar, k] — كانت القمة تُثبّت على شريط الإغلاق الأقصى رغم أن ذيلًا
+            أعلى على شريط آخر داخل الترند هو القمة البصرية التي يراها المتداول
+            ويحترمها السعر الحي (اقتباس PivotScanner المرجعي: القيم القصوى
+            المطلقة على High/Low)."""
+            nonlocal last_bar
+            j = self._wick_extreme_index(highs, last_bar + 1, k, want_max=True)
+            pivots.append((j, float(highs[j]), 1))
+            last_bar = j
+
+        def _trough_at(k: int) -> None:
+            """[FE1.6.0] قاع عند القيمة القصوى المطلقة الحقيقية (ويك) في الشريحة."""
+            nonlocal last_bar
+            j = self._wick_extreme_index(lows, last_bar + 1, k, want_max=False)
+            pivots.append((j, float(lows[j]), -1))
+            last_bar = j
 
         for i in range(1, n):
             if direction == 0:
@@ -649,12 +677,12 @@ class PivotDetector:
 
                 if move_up >= threshold:
                     # Uptrend established from low_idx
-                    pivots.append((low_idx, float(lows[low_idx]), -1))
+                    _trough_at(i)
                     direction = 1
                     high_idx  = i
                 elif move_down >= threshold:
                     # Downtrend established from high_idx
-                    pivots.append((high_idx, float(highs[high_idx]), 1))
+                    _peak_at(i)
                     direction = -1
                     low_idx   = i
 
@@ -666,7 +694,7 @@ class PivotDetector:
                     reversal = (prices[high_idx] - prices[i]) / prices[high_idx]
                     if reversal >= threshold:
                         # Confirm the peak and start a new downtrend
-                        pivots.append((high_idx, float(highs[high_idx]), 1))
+                        _peak_at(i)
                         direction = -1
                         low_idx   = i
 
@@ -678,7 +706,7 @@ class PivotDetector:
                     reversal = (prices[i] - prices[low_idx]) / prices[low_idx]
                     if reversal >= threshold:
                         # Confirm the trough and start a new uptrend
-                        pivots.append((low_idx, float(lows[low_idx]), -1))
+                        _trough_at(i)
                         direction = 1
                         high_idx  = i
 
@@ -687,11 +715,27 @@ class PivotDetector:
         # the next confirmation.  We include it because the scanner needs to
         # assess the most recent potential Wave 5 completion.
         if direction == 1:
-            pivots.append((high_idx, float(highs[high_idx]), 1))
+            _peak_at(n - 1)
         elif direction == -1:
-            pivots.append((low_idx, float(lows[low_idx]), -1))
+            _trough_at(n - 1)
 
         return self._raw_tuples_to_pivots(pivots)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # [FE1.6.0] مساعد الويك — القيمة القصوى المطلقة داخل شريحة
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _wick_extreme_index(arr: np.ndarray, lo: int, hi: int, want_max: bool) -> int:
+        """فهرس القيمة القصوى (أعلى High أو أدنى Low) في الشريحة [lo..hi].
+        عند التساوي يُفضّل الشريط الأحدث ليظل كل محور بعد سابقه تمامًا،
+        ولا يُنتج أبدًا محورين على الشريط نفسه (الشريحة تبدأ بعد آخر محور)."""
+        lo = max(lo, 0)
+        hi = min(max(hi, lo), len(arr) - 1)
+        seg  = arr[lo : hi + 1]
+        seg_rev = seg[::-1]
+        pos = int(np.argmax(seg_rev)) if want_max else int(np.argmin(seg_rev))
+        return lo + (len(seg) - 1 - pos)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Step 2c — Window-based pivot detection (scipy)
@@ -862,6 +906,9 @@ class PivotDetector:
 
         # Pre-cache timestamps from the DataFrame
         timestamps = df["timestamp"].tolist()
+        # [FE1.6.0] مصفوفتا High/Low الحقيقيتان — لفحص R1/R3 واعيًا بالذيل
+        highs_arr = df["high"].to_numpy(dtype=np.float64)
+        lows_arr  = df["low"].to_numpy(dtype=np.float64)
 
         for start in range(n - 5):
             window = pivots[start : start + 6]
@@ -880,12 +927,33 @@ class PivotDetector:
             # ── Extract P0–P5 prices ─────────────────────────────────────────
             p0, p1, p2, p3, p4, p5 = (pv.price for pv in window)
 
+            # ── [FE1.6.0] قيم قصوى مطلقة (ويكات) للشرائح بين المحاور ─────────
+            # (P0, P2] لفحص R1 و (P3, P5] لفحص R3 — الويك الذي يخترق أصل W1
+            # أو أرض W1 يعني أن الوقف البنيوي سيُلمس حيًا حتى لو محافطة الإغلاقات
+            i0, i2 = window[0].bar_index, window[2].bar_index
+            i3, i5 = window[3].bar_index, window[5].bar_index
+            if i2 > i0:
+                wick_min_low_p0p2  = float(np.min(lows_arr[i0 + 1 : i2 + 1]))
+                wick_max_high_p0p2 = float(np.max(highs_arr[i0 + 1 : i2 + 1]))
+            else:
+                wick_min_low_p0p2 = wick_max_high_p0p2 = None
+            if i5 > i3:
+                wick_min_low_p3p5  = float(np.min(lows_arr[i3 + 1 : i5 + 1]))
+                wick_max_high_p3p5 = float(np.max(highs_arr[i3 + 1 : i5 + 1]))
+            else:
+                wick_min_low_p3p5 = wick_max_high_p3p5 = None
+
             # ── Validate impulse ─────────────────────────────────────────────
             try:
                 result = validate_impulse(
                     P0=p0, P1=p1, P2=p2,
                     P3=p3, P4=p4, P5=p5,
                     fib_tolerance_pct=self.cfg.fib_tolerance_pct,
+                    min_wave_proportion=self.cfg.min_wave_proportion,
+                    wick_min_low_p0p2=wick_min_low_p0p2,
+                    wick_max_high_p0p2=wick_max_high_p0p2,
+                    wick_min_low_p3p5=wick_min_low_p3p5,
+                    wick_max_high_p3p5=wick_max_high_p3p5,
                 )
             except ValueError as exc:
                 # validate_impulse raises ValueError for invalid pivot inputs
@@ -982,6 +1050,7 @@ def scan_for_impulses(
     min_wave_bars: int = 2,
     require_fib_confluence: bool = False,
     fib_tolerance_pct: float = 1.0,
+    min_wave_proportion: float = 0.15,
 ) -> List[DetectedSetup]:
     """
     One-liner convenience function: detect Elliott Wave impulse setups.
@@ -1020,5 +1089,6 @@ def scan_for_impulses(
         min_wave_bars=min_wave_bars,
         require_fib_confluence=require_fib_confluence,
         fib_tolerance_pct=fib_tolerance_pct,
+        min_wave_proportion=min_wave_proportion,
     )
     return PivotDetector(cfg).scan(df)

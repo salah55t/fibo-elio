@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.5.1"  # FE1.5.1: إعادة محاولة ذكية للماسح بعد إجهاض حظر باينانس 418/429 (30 دقيقة بدل 6 ساعات)
+BOT_VERSION = "FE1.6.0"  # FE1.6.0: اقتباسات ElliottWavesEngine — فحص R1/R3 واعي بالذيل + فضاء لوغاريتمي + أرضية تناسبية للأمواج + سلّم أهداف احتمالي + تقييم مركب + بوابة تحيز الفريم الأعلى
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -246,6 +246,16 @@ SCAN_MAX_SPREAD_PCT = float(os.getenv("SCAN_MAX_SPREAD_PCT", "0.15"))  # أقص�
 SCAN_MIN_RANGE_PCT = float(os.getenv("SCAN_MIN_RANGE_PCT", "2.0"))     # أدنى مدى 24h % — الموجات تحتاج حركة
 SCAN_KLINES_LIMIT = int(os.getenv("SCAN_KLINES_LIMIT", "200"))         # شموع 15m لكل مرشح (وزن 2 فقط)
 SCANNER_BAN_RETRY_SEC = float(os.getenv("SCANNER_BAN_RETRY_SEC", "1800"))  # [FE1.5.1] إعادة محاولة بعد إجهاض 418/429 (30 دقيقة)
+
+# [FE1.6.0] اقتباسات ElliottWavesEngine (github.com/SmarterSystems/ElliottWavesEngine)
+# فحص ذيل شامل للقواعد + أرضية تناسبية للأمواج الدافعة + سلّم أهداف احتمالي
+# + بوابة تحيز الاتجاه من فريم أعلى — كلها متغيرات بيئة قابلة للضبط الحي
+WAVE_MIN_PROPORTION = float(os.getenv("WAVE_MIN_PROPORTION", "0.15"))  # أرضية الموجة الدافعة من الحركة الأمومية (0 يعطل القاعدة الرابعة)
+TP_LADDER_ENABLED = os.getenv("TP_LADDER_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+TP_MIN_RR = float(os.getenv("TP_MIN_RR", "0.5"))          # أدنى مخاطرة/عائد يقبل به هدف من السلّم — وإلا بقي 1.618 الأصلي (الوقف البنيوي يجعل R:R النموذجي 0.5-0.8)
+HTF_BIAS_ENABLED = os.getenv("HTF_BIAS_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+HTF_BIAS_TIMEFRAME = os.getenv("HTF_BIAS_TIMEFRAME", "1d")  # فريم التحيز الأعلى (يوجّه فريم الكشف 15m)
+HTF_BIAS_CACHE_SEC = float(os.getenv("HTF_BIAS_CACHE_SEC", "14400"))  # كاش التحيز 4 ساعات (وزن REST مهمل)
 
 # [FE1.3.0] البقاء الحي — نبضة ذاتية إلى /health العام (بلا مصادقة) تمنع نوم Render المجاني
 # (الخطة المجانية تُخمد الخدمة بعد 15 دقيقة بلا طلبات خارجية، والاستيقاظ يأخذ نحو دقيقة)
@@ -365,6 +375,7 @@ scan_stats_lock = threading.Lock()
 scan_stats: Dict[str, Any] = {
     "cycles": 0, "scanned": 0, "setups_valid": 0, "setups_bull_traded": 0,
     "setups_bear_seen": 0, "rejected_active_limit": 0, "rejected_symbol_busy": 0,
+    "rejected_htf_bias": 0,  # [FE1.6.0] إشارات صاعدة مرفوضة لانحياز هابط قوي على الفريم الأعلى
     "last_scan_at": "", "last_scan_fetched": 0,  # [FE1.0.1] تشخيص دورة المسح
 }
 
@@ -797,6 +808,8 @@ def fetch_ohlcv_df(symbol: str, timeframe: str, limit: int = OHLCV_LIMIT,
 
 
 # كاشف المحاور — إعداد المؤلف الافتراضي (zigzag + close + min_wave_bars=2)
+# [FE1.6.0] + أرضية التناسب WAVE_MIN_PROPORTION والفحص الواعي بالذيل يعملان
+# تلقائيًا داخل كاشف المحاور (محاور مُنقّاة بالويك + قيم قصى مطلقة بين المحاور)
 detector = PivotDetector(DetectorConfig(
     method="zigzag",
     deviation_threshold=DEVIATION_THRESHOLD,
@@ -804,6 +817,7 @@ detector = PivotDetector(DetectorConfig(
     min_wave_bars=MIN_WAVE_BARS,
     require_fib_confluence=False,
     fib_tolerance_pct=FIB_TOLERANCE_PCT,
+    min_wave_proportion=WAVE_MIN_PROPORTION,
 ))
 
 
@@ -1180,12 +1194,41 @@ def fetch_free_base(ex, base: str) -> float:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def compute_take_profit(setup: DetectedSetup) -> float:
-    """الهدف = امتداد 1.618 للموجة 1 من قاع الموجة 2 (منطق الأصل حرفيًا)."""
+    """الهدف = امتداد 1.618 للموجة 1 من قاع الموجة 2 (منطق الأصل حرفيًا).
+    [FE1.6.0] صار الهدف الاحتياطي لسلّم compute_tp_ladder."""
     p0, p1, p2 = setup.pivot_prices[0], setup.pivot_prices[1], setup.pivot_prices[2]
     fib = FibonacciLevels(swing_start=p0, swing_end=p1)
     targets = fib.extension_levels(ratios=(1.618, 1.272), base_price=p2)
     tp = next((lv for lv in targets if lv.ratio == 1.618), targets[-1])
     return float(tp.price)
+
+
+def compute_tp_ladder(setup: DetectedSetup) -> List[Tuple[float, str]]:
+    """[FE1.6.0] سلّم أهداف الموجة 5 باحتمالاتها (اقتباس ElliottWavesEngine:
+    سلّم أهداف باحتمالاتهم + تصعيد عند تجاوز الأهداف):
+      1) W5 = W1 من قاع/قمة W4 — أشهر علاقة بين الموجتين (الأكثر حدوثًا)
+      2) W5 = 0.618 × W3 من قاع/قمة W4 — امتداد متوسط
+      3) امتداد 1.618 للموجة 1 من قاع W2 — هدف الأصل الأصلي (الأبعد)
+    مرتبة: الصاعد تصاعديًا (الأقرب أولًا) والهابط تنازليًا.
+    الاختيار في create_pending_signal: أقرب هدف يحقق TP_MIN_RR — يرفع نسبة
+    الإصابة بدل مطاردة الهدف البعيد دائمًا، مع أرضية R:R صارمة."""
+    P = setup.pivot_prices
+    p0, p1, p2, p3, p4 = P[0], P[1], P[2], P[3], P[4]
+    w1 = abs(p1 - p0)
+    w3 = abs(p3 - p2)
+    if setup.direction == "BULLISH":
+        cands = [
+            (p4 + w1, "w5_eq_w1"),            # W5 = W1 (مساواة)
+            (p4 + 0.618 * w3, "w5_0618_w3"),  # W5 = 0.618 × W3
+            (p2 + 1.618 * w1, "ext_1618"),    # امتداد 1.618 (الأصل)
+        ]
+        return sorted(cands, key=lambda t: t[0])
+    cands = [
+        (p4 - w1, "w5_eq_w1"),
+        (p4 - 0.618 * w3, "w5_0618_w3"),
+        (p2 - 1.618 * w1, "ext_1618"),
+    ]
+    return sorted(cands, key=lambda t: t[0], reverse=True)
 
 
 def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
@@ -1674,6 +1717,14 @@ def create_pending_signal(symbol: str, setup: DetectedSetup) -> bool:
     entry = float(setup.entry_zone_low)
     sl = float(setup.stop_loss_price)
     tp = compute_take_profit(setup)
+    # [FE1.6.0] سلّم الأهداف: أقرب هدف احتمالي يحقق أرضية R:R — وإلا بقي 1.618
+    tp_basis = "ext_1618"
+    risk_per_coin_pre = entry - sl
+    if TP_LADDER_ENABLED and risk_per_coin_pre > 0:
+        for cand, basis in compute_tp_ladder(setup):
+            if (cand - entry) / risk_per_coin_pre >= TP_MIN_RR:
+                tp, tp_basis = float(cand), basis
+                break
     if not (entry > 0 and sl > 0 and tp > entry > sl):
         logger.info("[%s] أسعار الإعداد غير منطقية (entry=%s sl=%s tp=%s) — تجاهل",
                     symbol, fmt_price(entry), fmt_price(sl), fmt_price(tp))
@@ -1727,7 +1778,9 @@ def create_pending_signal(symbol: str, setup: DetectedSetup) -> bool:
         "w4_in_zone": bool(fib.wave4_in_zone) if fib else False,
         "entry_zone_low": round(setup.entry_zone_low, 8),
         "entry_zone_high": round(setup.entry_zone_high, 8),
-        "tp_note": "امتداد 1.618 للموجة 1 من قاع الموجة 2 (الأصل)",
+        "tp_note": "سلّم أهداف FE1.6.0 (W5=W1، 0.618×W3، امتداد 1.618) — الأصل 1.618 احتياطًا",
+        "tp_basis": tp_basis,
+        "tp_ladder": [round(c, 8) for c, _ in compute_tp_ladder(setup)] if TP_LADDER_ENABLED else [],
     })
     db.execute(
         "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price, stop_loss,"
@@ -1739,10 +1792,13 @@ def create_pending_signal(symbol: str, setup: DetectedSetup) -> bool:
     with scan_stats_lock:
         scan_stats["setups_bull_traded"] += 1
     mode_tag = "حقيقية 🔴" if real else "ورقية"
+    basis_txt = {
+        "w5_eq_w1": "W5=W1", "w5_0618_w3": "W5=0.618×W3", "ext_1618": "امتداد 1.618",
+    }.get(tp_basis, tp_basis)
     if fib:
         signal_msg = (
             f"🌊 إشارة إليوت+فيبو جديدة ({mode_tag}): {symbol}\n"
-            f"دخول معلّق: {fmt_price(entry)} | وقف بنيوي: {fmt_price(sl)} | هدف 1.618: {fmt_price(tp)}\n"
+            f"دخول معلّق: {fmt_price(entry)} | وقف بنيوي: {fmt_price(sl)} | هدف {basis_txt}: {fmt_price(tp)}\n"
             f"R:R = {rr:.2f} | W2={fib.wave2_retrace_pct*100:.1f}% W4={fib.wave4_retrace_pct*100:.1f}%"
         )
     else:
@@ -1961,22 +2017,46 @@ def monitor_step() -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def select_best_setup(setups: List[DetectedSetup]) -> Optional[DetectedSetup]:
-    """تقييم الأصل حرفيًا: +1 لمنطقة W2 المثالية، +1 لمنطقة W4، وللمتساويين الأحدث."""
+    """[FE1.6.0] تقييم مركب (اقتباس ElliottWavesEngine §5-8: التقييم الإرشادي
+    وبدل +1/+1 الحرفي):
+      • مناطق W2/W4 المثالية (كالسابق لكن بنقاط عائمة)
+      • تناوب العمق: W2 عميق مع W4 أضح منه (بنية إليوت صحية)
+      • امتداد W3 قرب 1.618 من W1 (الموجة الأقوى إحصائيًا)
+      • مساواة W5≈W1 (أشهر علاقة بين الموجتين)
+      • الأحدث يحسم التعادل (كما كان) — النتيجة تقرب 4 منازل لثبات المقارنة"""
     if not setups:
         return None
     if len(setups) == 1:
         return setups[0]
 
-    def score(s: DetectedSetup) -> Tuple[int, float]:
+    def score(s: DetectedSetup) -> Tuple[float, float]:
         fib = s.validation_result.fib
-        pts = 0
+        pts = 0.0
         if fib:
             if fib.wave2_in_zone:
-                pts += 1
+                pts += 1.0
             if fib.wave4_in_zone:
-                pts += 1
+                pts += 1.0
+            # تناوب العمق: W2 في منطقته ويبلع W4 بوضوح — تناوب صحي بديل +1/+1
+            w2r, w4r = fib.wave2_retrace_pct, fib.wave4_retrace_pct
+            if 0.382 <= w2r <= 0.886 and 0.0 < w4r <= 0.5 and w2r > w4r + 0.1:
+                pts += 0.5
+        P = s.pivot_prices
+        try:
+            w1 = abs(math.log(P[1]) - math.log(P[0]))
+            w3 = abs(math.log(P[3]) - math.log(P[2]))
+            w5 = abs(math.log(P[5]) - math.log(P[4]))
+            if w1 > 0:
+                # امتداد W3/W1 قرب 1.618 (1.618 ← 1.0 نقطة، البعد يتناقص خطيًا)
+                ext = w3 / w1
+                pts += max(0.0, 1.0 - abs(ext - 1.618) / 1.618)
+            if min(w1, w5) > 0:
+                # مساواة W5≈W1 حتى نصف نقطة (0.5 × تشابه نسبي)
+                pts += 0.5 * (1.0 - abs(w5 - w1) / max(w1, w5))
+        except (ValueError, ZeroDivisionError, IndexError):
+            pass
         recency = s.detected_at.timestamp() if s.detected_at else 0.0
-        return (pts, recency)
+        return (round(pts, 4), recency)
 
     return max(setups, key=score)
 
@@ -2373,6 +2453,55 @@ def universe_scan_loop() -> None:
             slept += 60.0
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# [FE1.6.0] بوابة تحيز الفريم الأعلى — اقتباس ElliottWavesEngine: درجات الشهرية/
+# اليومية توجّه الساعية. إشارة صاعدة على 15m داخل حقبة هابطة واضحة على اليومي
+# = عكس التدفق — أرجح مصادر الخسارة في أنظمة الموجات.
+# فشل الجلب = مجهول = يُسمح (fail-open) — البوابة فلتر جودة لا نقطة فشل.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_htf_lock = threading.Lock()
+_htf_cache: Dict[str, Dict[str, Any]] = {}   # symbol -> {ts, bias, note}
+
+
+def htf_bias(symbol: str) -> Optional[bool]:
+    """تحيز الاتجاه من فريم أعلى (HTF_BIAS_TIMEFRAME الافتراضي 1d):
+      True  = لا انحياز هابط قوي — تُسمح الإشارات الصاعدة
+      False = حقبة هابطة واضحة (الشرطان الثلاثة معًا): الإغلاق تحت SMA50،
+              SMA20 تحت SMA50، وصافي آخر 20 شمعة أسوأ من -8%
+      None  = مجهول (فشل جلب/بيانات ناقصة) — يُسمح fail-open
+    كاش 4 ساعات لكل رمز (HTF_BIAS_CACHE_SEC) — وزن REST مهمل (~6 نداءات/15 دقيقة)."""
+    now = time.time()
+    with _htf_lock:
+        c = _htf_cache.get(symbol)
+        if c and now - c["ts"] < HTF_BIAS_CACHE_SEC:
+            return c["bias"]
+    bias: Optional[bool] = None
+    note = ""
+    try:
+        df = fetch_ohlcv_df(symbol, HTF_BIAS_TIMEFRAME, limit=80, min_candles=55)
+        if df is not None and len(df) >= 55:
+            closes = df["close"].to_numpy(dtype=float)
+            sma20 = float(closes[-20:].mean())
+            sma50 = float(closes[-50:].mean())
+            base20 = float(closes[-21])
+            net20 = (float(closes[-1]) / base20 - 1.0) if base20 > 0 else 0.0
+            last = float(closes[-1])
+            strong_bear = last < sma50 and sma20 < sma50 and net20 < -0.08
+            bias = not strong_bear
+            note = (f"SMA20={sma20:.6g} SMA50={sma50:.6g} "
+                    f"net20={net20 * 100:.1f}% strong_bear={strong_bear}")
+    except Exception as exc:
+        logger.debug("[%s] تعذر حساب تحيز الفريم الأعلى: %s", symbol, exc)
+        bias = None
+    with _htf_lock:
+        _htf_cache[symbol] = {"ts": now, "bias": bias, "note": note}
+    if bias is False:
+        logger.info("[%s] تحيز %s هابط قوي — رفض الإشارات الصاعدة (%s)",
+                    symbol, HTF_BIAS_TIMEFRAME, note)
+    return bias
+
+
 def scan_cycle() -> None:
     """دورة كشف كاملة على القائمة — الكشف الصاعد يُنفذ ورقيًا والهابط يُعرض فقط."""
     db.ensure()
@@ -2415,6 +2544,10 @@ def scan_cycle() -> None:
                             scan_stats["rejected_active_limit"] += 1
                     elif not trading_on:
                         logger.info("[%s] إعداد صاعد صالح لكن توليد الإشارات معطل (ورقي متوقف)", symbol)
+                    elif HTF_BIAS_ENABLED and htf_bias(symbol) is False:
+                        # [FE1.6.0] حقبة هابطة واضحة على الفريم الأعلى — لا دخولات عكس التدفق
+                        with scan_stats_lock:
+                            scan_stats["rejected_htf_bias"] += 1
                     else:
                         traded = create_pending_signal(symbol, best)
                     register_detection(symbol, best, traded=traded)

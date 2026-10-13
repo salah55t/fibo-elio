@@ -192,7 +192,16 @@ class TestPaperFlow:
         assert row["strategy_name"] == "Elliott_Fibonacci"
         assert math.isclose(float(row["entry_price"]), s.entry_zone_low, rel_tol=1e-6)
         assert math.isclose(float(row["stop_loss"]), s.stop_loss_price, rel_tol=1e-6)
-        assert math.isclose(float(row["take_profit"]), vnz.compute_take_profit(s), rel_tol=1e-6)
+        # [FE1.6.0] الهدف من سلّم الأهداف: أقرب مرشح يحقق TP_MIN_RR وإلا 1.618 الأصلي
+        entry_, sl_ = float(s.entry_zone_low), float(s.stop_loss_price)
+        risk_ = entry_ - sl_
+        exp_tp = vnz.compute_take_profit(s)
+        if vnz.TP_LADDER_ENABLED and risk_ > 0:
+            for cand, _basis in vnz.compute_tp_ladder(s):
+                if (cand - entry_) / risk_ >= vnz.TP_MIN_RR:
+                    exp_tp = float(cand)
+                    break
+        assert math.isclose(float(row["take_profit"]), exp_tp, rel_tol=1e-6)
         assert float(row["take_profit"]) > float(row["entry_price"]) > float(row["stop_loss"])
 
     def test_pending_fill_on_touch(self, clean_db, monkeypatch):
@@ -320,7 +329,7 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "FE1.5.1"
+        assert body["version"] == "FE1.6.0"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 
@@ -851,7 +860,7 @@ class TestWebSocketPriceFeedFE120:
         r = client.get("/api/ws/status")
         assert r.status_code == 200
         data = r.get_json()
-        assert data["version"] == "FE1.5.1"
+        assert data["version"] == "FE1.6.0"
         assert data["enabled"] is True
         assert "prices" in data and "subscriptions" in data and "candles" in data
 
@@ -869,7 +878,7 @@ class TestWebSocketPriceFeedFE120:
         client = vnz.app.test_client()
         data = client.get("/health").get_json()
         assert data["live_feed"] in ("websocket", "rest")
-        assert data["version"] == "FE1.5.1"
+        assert data["version"] == "FE1.6.0"
 
     def test_ws_exchange_unknown_provider_raises(self):
         with pytest.raises(ValueError):
