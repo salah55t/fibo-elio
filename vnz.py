@@ -79,6 +79,29 @@
  • النتيجة: لا يوجد في المشروع بأكمله أي مسار ساخن يستدعي load_markets —
    كون الأسواق (~+150-300MB) لم يعد يُلمس إطلاقًا في التشغيل الطبيعي.
 
+ FE1.5.0: ماسح الكون الكامل + إصلاحات مراجعة اللوحة (طلب «راجع لوحة التحكم واصلح
+ المشاكل الضاهرة اريد اضافة الية فحص اولي لكل ازواج باينانس الملائمة لهذه
+ الاستراتيجية»):
+ • ماسح كون باينانس: بدل قائمة يدوية ثابتة (crypto_list.txt) يفحص الماسح كامل
+   أسواق USDT عبر نقاط خام رخيصة الوزن (لا load_markets إطلاقًا — درس FE1.4.x):
+   1) publicGetTicker24hr (وزن 80) ← ترشيح: سيولة ≥ SCAN_MIN_VOLUME_USDT،
+      سبريد ≤ SCAN_MAX_SPREAD_PCT، مدى 24h ≥ SCAN_MIN_RANGE_PCT (الموجات تحتاج
+      حركة)، استبعاد العملات المستقرة/الورقية والرموز المرفوعة (UP/DOWN/BULL/BEAR).
+   2) أعلى SCAN_CANDIDATES مرشحًا ← شموع 15m خام لكل مرشح ← عدّاد زيجزاج بنفس
+      عتبة الانعكاس DEVIATION_THRESHOLD + ATR% + سعة الموجات + كفاءة الاتجاه
+      ← درجة ملاءمة 0-100 موجهة لاستراتيجية إليوت+فيبو (0.70 تقني + 0.30 سيولة).
+   3) أعلى SCAN_TOP_N يُطبق تلقائيًا على قائمة المراقبة (مع الحفاظ الإجباري على
+      الرموز ذات الصفقات النشطة) وتُحدّث أسواق الويب سوكت المصنوعة للرموز الجديدة.
+ • حماية IP (418/429): وزن منخفض جدًا (~160 لكل فحص كل 6 ساعات) + إيقاع مهذب
+   + إجهاض فوري وحفظ النتائج القديمة عند أي قيد من باينانس.
+ • زر «فحص الآن» في اللوحة (POST /api/scan/run محمي) + جدول النتائج + بطاقة حالة.
+ • إصلاحات مراجعة اللوحة الحية: حالة WS كانت عالقة «connecting» وlive_streams=0
+   رغم التدفق (إعادة اتصال تيار الشموع كانت تُنزل حالة الرمز رغم تدفق السعر —
+   الآن التدفق الحديث يحمي الحالة)، بقايا أسعار/شموع متقادمة للرموز الملغاة
+   تُنظّف ولا تُعرض (كانت تظهر أعمار ساعات!)، HEAD / يرجع 200 بلا مصادقة
+   لفاحصات الصحة (GET / يبقى محميًا)، /api/signals و/api/pnl_history أصبحتا
+   محميتين (كانتا تكشفان بيانات الصفقات للعامة).
+
  FE1.0.1: طبقة مزودي بيانات متعددة — باينانس أولًا كما في الأصل، ثم Bybit → OKX
  → Gate.io تلقائيًا عند الحظر/الفشل. الدرس المستفاد من المشروع السابق: عنوان
  الخروج المشترك لخدمات Render يتعرض لحظر وزن باينانس (-1003) المتجدد بسبب
@@ -168,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.4.2"  # FE1.4.2: إغلاق بقية ثغرات load_markets (مسح REST + ويب سوكت + دقة الورقي) — عزل كامل لكون الأسواق
+BOT_VERSION = "FE1.5.0"  # FE1.5.0: ماسح كون باينانس الكامل + إصلاحات مراجعة اللوحة الحية
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -210,6 +233,18 @@ WS_ENABLED = os.getenv("WS_ENABLED", "1").strip().lower() not in ("0", "false", 
 WS_STALE_SEC = float(os.getenv("WS_STALE_SEC", "90"))     # أقدم عمر مقبول لبيانات الويب سوكت قبل الرجوع لـ REST
 WS_SYNC_INTERVAL = float(os.getenv("WS_SYNC_INTERVAL", "10"))  # إيقاع مزامنة الاشتراكات مع الصفقات النشطة
 WS_RECV_TIMEOUT_SEC = float(os.getenv("WS_RECV_TIMEOUT_SEC", "60"))  # مهلة انتظار رسالة قبل اعتبار المزود ميتًا
+
+# [FE1.5.0] ماسح الكون الكامل — فحص أولي ديناميكي لكل أزواج باينانس USDT الملائمة
+# للاستراتيجية (موجات إليوت + فيبوناتشي) بدل قائمة يدوية ثابتة. درس حرب الذاكرة:
+# لا load_markets إطلاقًا — نقاط خام فقط (ticker/24hr + klines) بوزن منخفض جدًا.
+SCAN_UNIVERSE_ENABLED = os.getenv("SCAN_UNIVERSE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+SCAN_INTERVAL_SEC = float(os.getenv("SCAN_INTERVAL_SEC", "21600"))    # فحص كامل كل 6 ساعات
+SCAN_TOP_N = int(os.getenv("SCAN_TOP_N", "20"))                       # عدد الأزواج المطبقة على قائمة المراقبة
+SCAN_CANDIDATES = int(os.getenv("SCAN_CANDIDATES", "40"))             # كم مرشحًا يُحلَّل بشموع 15m
+SCAN_MIN_VOLUME_USDT = float(os.getenv("SCAN_MIN_VOLUME_USDT", "5000000"))  # سيولة 24h أدنى (5 مليون $)
+SCAN_MAX_SPREAD_PCT = float(os.getenv("SCAN_MAX_SPREAD_PCT", "0.15"))  # أقصى فرق bid/ask %
+SCAN_MIN_RANGE_PCT = float(os.getenv("SCAN_MIN_RANGE_PCT", "2.0"))     # أدنى مدى 24h % — الموجات تحتاج حركة
+SCAN_KLINES_LIMIT = int(os.getenv("SCAN_KLINES_LIMIT", "200"))         # شموع 15m لكل مرشح (وزن 2 فقط)
 
 # [FE1.3.0] البقاء الحي — نبضة ذاتية إلى /health العام (بلا مصادقة) تمنع نوم Render المجاني
 # (الخطة المجانية تُخمد الخدمة بعد 15 دقيقة بلا طلبات خارجية، والاستيقاظ يأخذ نحو دقيقة)
@@ -1210,16 +1245,27 @@ _ws_loop: Any = None
 _ws_thread_started = False
 WS_CANDLE_KEEP = 5                 # نحتفظ بآخر 5 شموع (الأخيرة قيد التكوين كما في REST)
 WS_PRICE_FROM_CANDLE_TTL = 30.0    # املا السعر من إغلاق الشمعة إن غاب الـ ticker أطول من ذلك
+WS_SNAPSHOT_MAX_AGE_SEC = 1800.0   # [FE1.5.0] ما فوق هذا العمر لا يُعرض في اللوحة (بقايا رموز ملغاة)
 
 
 def _ws_mark(symbol: str, provider: str, state: str, error: str = "") -> None:
-    """تحديث حالة اشتراك رمز للتشخيص (/api/ws/status واللوحة)."""
+    """تحديث حالة اشتراك رمز للتشخيص (/api/ws/status واللوحة).
+    [FE1.5.0] إصلاح «connecting العالقة»: إعادة اتصال تيار واحد (شموع مثلًا) لا
+    تُنزل حالة الرمز من «live» طالما تدفق حديث من التيار الآخر — كانت إعادة
+    اتصال الشموع تُعاد الحالة «connecting» باستمرار رغم تدفق السعر (579 تحديثًا)
+    فتبدو live_streams=0 كذبًا في اللوحة."""
     with _ws_lock:
         sub = _ws_subs.setdefault(symbol, {
             "provider": provider, "state": state, "last_error": "",
-            "updates": 0, "last_msg_at": None, "started_at": utc_now_iso(),
+            "updates": 0, "last_msg_at": None, "last_msg_ts": 0.0,
+            "started_at": utc_now_iso(),
         })
         sub["provider"] = provider
+        if state in ("connecting", "error") and sub.get("state") == "live":
+            fresh = bool(sub.get("last_msg_ts")) and (time.time() - float(sub["last_msg_ts"])) <= WS_STALE_SEC
+            if fresh:
+                sub["last_error"] = error[:200]
+                return
         sub["state"] = state
         sub["last_error"] = error[:200]
 
@@ -1239,6 +1285,7 @@ def ws_apply_price(symbol: str, price: Any, source: str) -> bool:
         if sub is not None:
             sub["updates"] += 1
             sub["last_msg_at"] = utc_now_iso()
+            sub["last_msg_ts"] = now      # [FE1.5.0] لحماية الحالة من إعادة اتصال التيار الآخر
             sub["state"] = "live"
             sub["last_error"] = ""
     return True
@@ -1280,6 +1327,7 @@ def ws_apply_ohlcv(symbol: str, candles: Any, source: str) -> bool:
         if sub is not None:
             sub["updates"] += 1
             sub["last_msg_at"] = utc_now_iso()
+            sub["last_msg_ts"] = now      # [FE1.5.0] لحماية الحالة من إعادة اتصال التيار الآخر
             sub["state"] = "live"
             sub["last_error"] = ""
     with _ws_lock:
@@ -1294,10 +1342,11 @@ def ws_feed_snapshot() -> Dict[str, Any]:
     now = time.time()
     with _ws_lock:
         subs = {s: dict(v) for s, v in _ws_subs.items()}
+        # [FE1.5.0] لا بقايا متقادمة في اللوحة — كانت أعمار ساعات (1.8h!) تظهر للرموز الملغاة
         prices = {s: {"price": v["price"], "age_sec": round(now - v["ts"], 1), "source": v["source"]}
-                  for s, v in _ws_price.items()}
+                  for s, v in _ws_price.items() if now - v["ts"] <= WS_SNAPSHOT_MAX_AGE_SEC}
         candles = {s: {"n": len(v["candles"]), "age_sec": round(now - v["ts"], 1), "source": v["source"]}
-                   for s, v in _ws_candles.items()}
+                   for s, v in _ws_candles.items() if now - v["ts"] <= WS_SNAPSHOT_MAX_AGE_SEC}
         symbols = sorted(_ws_tasks.keys())
     live_n = sum(1 for v in subs.values() if v.get("state") == "live")
     return {
@@ -1502,6 +1551,8 @@ def ws_sync_subscriptions() -> Dict[str, int]:
     for sym in current - wanted:
         with _ws_lock:
             tasks = _ws_tasks.pop(sym, None)
+            _ws_candles.pop(sym, None)   # [FE1.5.0] لا بقايا أسعار/شموع متقادمة للرمز الملغى
+            _ws_price.pop(sym, None)
         if tasks:
             for t in tasks.values():
                 asyncio.run_coroutine_threadsafe(_ws_cancel_task(t), _ws_loop)
@@ -1945,6 +1996,365 @@ def maybe_notify_outage() -> None:
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# [FE1.5.0] ماسح الكون الكامل — فحص أولي لكل أزواج باينانس الملائمة للاستراتيجية
+# ══════════════════════════════════════════════════════════════════════════════
+# المبدأ: بدل قائمة يدوية ثابتة (crypto_list.txt)، يفحص الماسح كامل أسواق باينانس
+# USDT عبر نقاط خام رخيصة الوزن (لا load_markets إطلاقًا — درس FE1.4.x):
+#   المرحلة 1: publicGetTicker24hr (وزن 80) ← ترشيح سيولة/سبريد/مدى + استبعاد
+#              العملات المستقرة والرموز المرفوعة.
+#   المرحلة 2: أفضل SCAN_CANDIDATES ← شموع 15m خام ← زيجزاج بعتبة الاستراتيجية
+#              نفسها + ATR% + سعة الموجات + كفاءة الاتجاه ← درجة ملاءمة 0-100.
+#   المرحلة 3: أعلى SCAN_TOP_N يُطبق على قائمة المراقبة (الرموز النشطة محفوظة
+#              إجباريًا) وتُحدّث أسواق الويب سوكت المصنوعة للرموز الجديدة.
+# حماية IP (418/429): وزن إجمالي ~160 لكل فحص كل 6 ساعات + إيقاع مهذب + إجهاض
+# فوري مع حفظ النتائج السابقة عند أي قيد — الفحص لا يضرب التغذية الحية أبدًا.
+
+_scanner_lock = threading.RLock()  # RLock: scanner_state_snapshot قد تُستدعى داخل الحصار نفسه (Lock كان يُحدث Deadlock)
+_scanner_state: Dict[str, Any] = {
+    "enabled": SCAN_UNIVERSE_ENABLED, "running": False, "last_scan_at": None,
+    "next_scan_at": None, "duration_ms": None, "universe": None, "passed": None,
+    "candidates": None, "applied": False, "error": None,
+}
+_scanner_results: List[Dict[str, Any]] = []   # أعلى النتائج (قواميس صغيرة — ≤ 20 صفًا)
+_scanner_boot_restored = False
+
+# أصول أساس مستقرة/ورقية — بلا موجات إليوت ذات معنى (بيزوج USDT شبه ثابت أو ورقي)
+_SCAN_STABLE_BASES = {
+    "USDC", "FDUSD", "TUSD", "BUSD", "DAI", "USDP", "PYUSD", "USDS", "USDE",
+    "USD1", "XUSD", "AEUR", "EURI", "EUR", "GBP", "TRY", "BRL", "ARS", "JPY",
+    "RUB", "UAH", "ZAR", "USDT",
+}
+
+
+def scanner_state_snapshot() -> Dict[str, Any]:
+    """لقطة حالة الماسح + النتائج الحالية — للوحة (/api/all) والتشخيص."""
+    with _scanner_lock:
+        out = dict(_scanner_state)
+        out["results"] = list(_scanner_results)
+        return out
+
+
+def _liq_norm(quote_volume: float) -> float:
+    """تطبيع لوغاريتمي للسيولة: 5M$ ← 0.0 ، 1B$ وأكثر ← 1.0."""
+    if quote_volume <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (math.log10(quote_volume) - 6.7) / (9.0 - 6.7)))
+
+
+def zigzag_pivots(closes: List[float], deviation: float) -> List[Tuple[int, float]]:
+    """نقاط انعكاس الزيجزاج بنفس دلالة عتبة الانعكاس الخاصة بالاستراتيجية:
+    في الصعود يُتتبع القمة الجارية، وهبوط ≥ deviation عنها يؤكد القمة نقطة انعكاس
+    ويقلب التتبع للقاع الجاري (والعكس). آخر قصوى غير مؤكدة تُضاف للنهاية.
+    (مستقل عن كاشف المحاور الكامل — الفحص الأولي يريد ثراء الموجات لا نماذج P0-P5)."""
+    if len(closes) < 3:
+        return []
+    piv: List[Tuple[int, float]] = []
+    ext_i, ext_p = 0, closes[0]
+    trend = 1  # +1: تتبّع القمة الجارية / -1: تتبّع القاع الجاري
+    for i in range(1, len(closes)):
+        p = closes[i]
+        if trend == 1:
+            if p >= ext_p:
+                ext_i, ext_p = i, p
+            elif ext_p > 0 and p <= ext_p * (1.0 - deviation):
+                piv.append((ext_i, ext_p))       # قمة مؤكدة
+                trend = -1
+                ext_i, ext_p = i, p
+        else:
+            if p <= ext_p:
+                ext_i, ext_p = i, p
+            elif ext_p > 0 and p >= ext_p * (1.0 + deviation):
+                piv.append((ext_i, ext_p))       # قاع مؤكد
+                trend = 1
+                ext_i, ext_p = i, p
+    piv.append((ext_i, ext_p))                    # آخر قصوى (غير مؤكدة) — مفيدة للعدّ
+    return piv
+
+
+def _scanner_score_candidate(symbol: str, klines: list) -> Optional[Dict[str, Any]]:
+    """درجة ملاءمة زوج لاستراتيجية الموجات (0-100) من شموع 15m خام:
+    ثراء الانعكاسات + كفاءة الاتجاه + سعة الموجات + تذبذب صحي (ATR% بلا فوضى)."""
+    if not klines or len(klines) < 60:
+        return None
+    try:
+        closes = [float(k[4]) for k in klines]
+        highs = [float(k[2]) for k in klines]
+        lows = [float(k[3]) for k in klines]
+    except (TypeError, ValueError, IndexError):
+        return None
+    n = len(closes)
+    if closes[0] <= 0:
+        return None
+    piv = zigzag_pivots(closes, DEVIATION_THRESHOLD)
+    n_piv = len(piv)
+    trs = []
+    for i in range(1, n):
+        if closes[i - 1] > 0:
+            trs.append((highs[i] - lows[i]) / closes[i - 1])
+    atr_pct = (sum(trs) / len(trs) * 100.0) if trs else 0.0
+    # ثراء الموجات: 4 انعكاسات ← 0 ، 20+ ← 1 (نافذة 200 شمعة 15m)
+    wave_score = max(0.0, min(1.0, (n_piv - 4) / 16.0))
+    # سعة الموجات: متوسط الحركة بين الانعكاسات نسبةً للسعر (0.6% ← 0 ، 3%+ ← 1)
+    amps = []
+    for a in range(1, len(piv)):
+        if piv[a - 1][1] > 0:
+            amps.append(abs(piv[a][1] - piv[a - 1][1]) / piv[a - 1][1] * 100.0)
+    avg_amp = (sum(amps) / len(amps)) if amps else 0.0
+    amp_score = max(0.0, min(1.0, (avg_amp - 0.6) / 2.4))
+    # كفاءة الاتجاه: صافي الحركة ÷ مجموع مسارات الانعكاسات (توجّه يحتضن دافع إليوت)
+    path = sum(amps)
+    net = abs(closes[-1] - closes[0]) / closes[0] * 100.0
+    trend_eff = (net / path) if path > 0 else 0.0
+    trend_score = max(0.0, min(1.0, trend_eff / 0.35))
+    # ATR صحي: حركة كافية بلا فوضى — 0.15% أدنى، 0.6-1.8% مثالي، فوق 4.8% يصفر تدريجيًا
+    if atr_pct < 0.15:
+        atr_score = atr_pct / 0.15 * 0.5
+    elif atr_pct <= 1.8:
+        atr_score = 1.0
+    else:
+        atr_score = max(0.0, 1.0 - (atr_pct - 1.8) / 3.0)
+    total = (0.35 * wave_score + 0.25 * trend_score + 0.20 * amp_score + 0.20 * atr_score) * 100.0
+    return {
+        "symbol": symbol, "pivots": n_piv,
+        "atr_pct": round(atr_pct, 3), "avg_wave_pct": round(avg_amp, 3),
+        "trend_eff": round(trend_eff, 3), "score": round(total, 1),
+    }
+
+
+def _scanner_filter_tickers(tickers: list) -> Tuple[List[Dict[str, Any]], int]:
+    """المرحلة 1: ترشيح كل أسواق USDT — سيولة، سبريد، مدى، استبعاد المستقر/المرفوع.
+    ترجع (المرشحون مرتبون بالسيولة تنازليًا، حجم الكون الكلي لأزواج USDT)."""
+    universe = 0
+    out: List[Dict[str, Any]] = []
+    for t in (tickers or []):
+        if not isinstance(t, dict):
+            continue
+        sym = str(t.get("symbol") or "")
+        if not sym.endswith("USDT"):
+            continue
+        universe += 1
+        base = sym[:-4]
+        if not base or base.upper() in _SCAN_STABLE_BASES:
+            continue
+        if base.upper().endswith(("UP", "DOWN", "BULL", "BEAR")):  # رموز مرفوعة (leveraged tokens)
+            continue
+        try:
+            last = float(t.get("lastPrice") or 0)
+            qv = float(t.get("quoteVolume") or 0)
+            bid = float(t.get("bidPrice") or 0)
+            ask = float(t.get("askPrice") or 0)
+            high = float(t.get("highPrice") or 0)
+            low = float(t.get("lowPrice") or 0)
+        except (TypeError, ValueError):
+            continue
+        if last <= 0 or qv < SCAN_MIN_VOLUME_USDT:
+            continue
+        mid = (bid + ask) / 2.0 if (bid > 0 and ask > 0) else last
+        spread = ((ask - bid) / mid * 100.0) if (mid > 0 and ask >= bid > 0) else 0.0
+        if spread > SCAN_MAX_SPREAD_PCT:
+            continue
+        rng = ((high - low) / low * 100.0) if (low > 0 and high >= low) else 0.0
+        if rng < SCAN_MIN_RANGE_PCT:
+            continue
+        out.append({"symbol": sym, "base": base, "last": last, "qv": qv,
+                    "spread_pct": round(spread, 4), "range_pct": round(rng, 2)})
+    out.sort(key=lambda x: x["qv"], reverse=True)
+    return out, universe
+
+
+def ws_refresh_fabricated_markets() -> None:
+    """[FE1.5.0] بعد تغيّر قائمة المراقبة: حقن أسواق مصنوعة للرموز الجديدة داخل
+    نسخ الويب سوكت الجاهزة — وإلا فشل market() للرمز الجديد عند أول اشتراك
+    (الأسواق المصنوعة تُبنى من قائمة المراقبة لحظة إنشاء النسخة فقط)."""
+    if not _ws_exchanges:
+        return
+    n = 0
+    for name, ex in list(_ws_exchanges.items()):
+        try:
+            if getattr(ex, "markets", None) is None:
+                continue
+            fab = _fabricate_ws_markets(name, watchlist)
+            ex.markets.update(fab)
+            ex.markets_by_id.update(fab)
+            n += 1
+        except Exception as exc:
+            logger.debug("تحديث أسواق WS المصنوعة لـ %s فشل: %s", name, exc)
+    if n:
+        logger.info("أسواق ويب سوكت المصنوعة حُدّثت لـ %d مزود بعد تغيير قائمة المراقبة", n)
+
+
+def _apply_scan_watchlist(results: List[Dict[str, Any]]) -> bool:
+    """تطبيق نتائج الفحص على قائمة المراقبة — مع الحفاظ الإجباري على كل رمز لديه
+    صفقة نشطة (معلق/مفتوح) فلا يُهجر مركز مفتوح أبدًا، ثم تحديث أسواق WS."""
+    top = [f"{r.get('base')}/USDT" for r in results if r.get("base")]
+    if not top:
+        return False
+    try:
+        rows = db.query("SELECT DISTINCT symbol FROM signals WHERE status IN ('pending','open')")
+        active = {r["symbol"] for r in (rows or [])}
+    except Exception:
+        active = set()
+    merged = list(top)
+    for sym in sorted(active):
+        if sym not in merged:
+            merged.append(sym)
+    watchlist[:] = merged
+    ws_refresh_fabricated_markets()
+    return True
+
+
+def run_universe_scan(force: bool = False, trigger: str = "auto") -> Dict[str, Any]:
+    """فحص كامل لكون باينانس: ترشيح + تحليل شموع + تطبيق أعلى N على قائمة المراقبة.
+    آمن على الذاكرة (نقاط خام، تحرير فوري للنتوء الكبير) وآمن على IP (إجهاض عند 418/429).
+    force=True يتجاوز فحص «الجارٍ الآن» للاستخدام اليدوي — الحارس نفسه يبقى ساريًا."""
+    with _scanner_lock:
+        if _scanner_state["running"] and not force:
+            return {"ok": False, "error": "فحص جارٍ بالفعل", "scanner": scanner_state_snapshot()}
+        _scanner_state["running"] = True
+        _scanner_state["error"] = None
+    t0 = time.time()
+    ok = False
+    try:
+        ex = _binance_public_probe()
+        tickers = ex.publicGetTicker24hr()          # كل الأسواق دفعة واحدة — وزن 80
+        passed, universe = _scanner_filter_tickers(tickers)
+        del tickers                                  # تحرير فوري للنتوء المُحلَّل
+        mem_check("بعد ترشيح كون باينانس")
+        cand = passed[:max(SCAN_CANDIDATES, SCAN_TOP_N)]
+        results: List[Dict[str, Any]] = []
+        aborted: Optional[str] = None
+        for i, c in enumerate(cand):
+            try:
+                raw = ex.publicGetKlines({"symbol": c["symbol"], "interval": SIGNAL_TIMEFRAME,
+                                          "limit": SCAN_KLINES_LIMIT})
+                sc = _scanner_score_candidate(c["symbol"], raw or [])
+            except Exception as exc:
+                msg = str(exc)
+                if "418" in msg or "429" in msg or "banned" in msg.lower() or "-1003" in msg:
+                    aborted = f"باينانس قيّد الطلبات ({msg[:140]})"
+                    break
+                sc = None
+            if sc:
+                liq = _liq_norm(c["qv"])
+                sc["final"] = round(0.70 * sc["score"] + 0.30 * liq * 100.0, 1)
+                sc["base"] = c["base"]
+                sc["qv"] = c["qv"]
+                sc["range_pct"] = c["range_pct"]
+                sc["last"] = c["last"]
+                results.append(sc)
+            if (i + 1) % 10 == 0:
+                mem_check("أثناء تحليل مرشحي الكون")
+            time.sleep(0.25)   # إيقاع مهذب (enableRateLimit يعمل أيضًا)
+        if aborted:
+            with _scanner_lock:
+                _scanner_state["running"] = False
+                _scanner_state["error"] = f"أُجهض الفحص: {aborted} — النتائج السابقة محفوظة"
+                _scanner_state["duration_ms"] = int((time.time() - t0) * 1000)
+                _scanner_state["universe"] = universe
+                _scanner_state["passed"] = len(passed)
+                _scanner_state["candidates"] = len(results)
+            log_and_notify("warning", f"🛰 ماسح الكون: {_scanner_state['error']}", "UNIVERSE_SCAN")
+            return {"ok": False, "error": _scanner_state["error"]}
+        results.sort(key=lambda r: r["final"], reverse=True)
+        results = results[:max(SCAN_TOP_N, 1)]
+        applied = False
+        if results and SCAN_UNIVERSE_ENABLED:
+            applied = _apply_scan_watchlist(results)
+        now_iso = utc_now_iso()
+        with _scanner_lock:
+            _scanner_state.update({
+                "running": False, "last_scan_at": now_iso,
+                "duration_ms": int((time.time() - t0) * 1000),
+                "universe": universe, "passed": len(passed),
+                "candidates": len(cand), "applied": applied, "error": None,
+            })
+            _scanner_results[:] = results
+        try:
+            db_set_state("scan_results", json.dumps({"at": now_iso, "results": results}))
+        except Exception as exc:
+            logger.warning("تعذر حفظ نتائج فحص الكون: %s", exc)
+        ok = True
+        if results:
+            top3 = " · ".join(f"{r['symbol']} ({r['final']})" for r in results[:3])
+            log_and_notify(
+                "info",
+                f"🛰 فحص الكون ({trigger}): {universe} زوج USDT ← {len(passed)} مرشحًا ← "
+                f"حُلل {len(cand)} ← طُبق {len(results)} على قائمة المراقبة\nالأعلى ملاءمة: {top3}",
+                "UNIVERSE_SCAN",
+            )
+        else:
+            log_and_notify("warning", "🛰 فحص الكون: لا نتائج — تحقق من فلاتر السيولة/المدى أو اتصال باينانس", "UNIVERSE_SCAN")
+        return {"ok": True, "applied": applied, "count": len(results), "universe": universe}
+    except Exception as exc:
+        with _scanner_lock:
+            _scanner_state["running"] = False
+            _scanner_state["error"] = f"{type(exc).__name__}: {exc}"[:240]
+            _scanner_state["duration_ms"] = int((time.time() - t0) * 1000)
+        logger.warning("ماسح الكون فشل: %s", exc)
+        return {"ok": False, "error": _scanner_state["error"]}
+    finally:
+        if not ok:
+            with _scanner_lock:
+                if _scanner_state["running"]:
+                    _scanner_state["running"] = False
+
+
+def restore_scan_results() -> None:
+    """[FE1.5.0] استعادة نتائج آخر فحص كون من قاعدة البيانات وتطبيقها فورًا عند
+    الإقلاع — فلا يعمل البوت بالقائمة اليدوية القديمة حتى أول فحص (~90 ثانية).
+    الرموز ذات الصفقات النشطة تُحفظ دائمًا في كل حالة."""
+    global _scanner_boot_restored
+    if _scanner_boot_restored or not SCAN_UNIVERSE_ENABLED:
+        return
+    _scanner_boot_restored = True
+    try:
+        raw = db_get_state("scan_results", None)
+        if not raw:
+            return
+        payload = json.loads(raw)
+        results = payload.get("results") or []
+        if not results:
+            return
+        with _scanner_lock:
+            _scanner_results[:] = results
+            _scanner_state["last_scan_at"] = payload.get("at")
+            _scanner_state["applied"] = True
+        if _apply_scan_watchlist(results):
+            logger.info("استعادة فحص الكون: %d زوجًا مطبقًا من آخر فحص (%s)", len(results), payload.get("at"))
+    except Exception as exc:
+        logger.warning("تعذرت استعادة نتائج فحص الكون: %s", exc)
+
+
+def universe_scan_loop() -> None:
+    """خيط الماسح: فحص أول بعد ~90 ثانية من الإقلاع (بعد دفء التغذية)، ثم كل
+    SCAN_INTERVAL_SEC. أي فشل لا يقتل الخيط — يُسجل ويعيد المحاولة في موعدها."""
+    time.sleep(90.0)
+    while True:
+        try:
+            db.ensure()
+            if SCAN_UNIVERSE_ENABLED:
+                run_universe_scan(trigger="auto")
+        except Exception as exc:
+            logger.warning("ماسح الكون: فشل دورة: %s", exc)
+            with _scanner_lock:
+                _scanner_state["running"] = False
+                _scanner_state["error"] = str(exc)[:240]
+        mem_check("بعد دورة ماسح الكون")
+        try:
+            from datetime import timedelta
+            _dt = datetime.now(timezone.utc) + timedelta(seconds=SCAN_INTERVAL_SEC)
+            with _scanner_lock:
+                _scanner_state["next_scan_at"] = _dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception:
+            pass
+        # نوم مجزأ (60 ثانية) — يسمح بمستقبل مرن للإيقاف ويبقى الخيط خفيفًا
+        slept = 0.0
+        while slept < SCAN_INTERVAL_SEC:
+            time.sleep(min(60.0, SCAN_INTERVAL_SEC - slept))
+            slept += 60.0
+
+
 def scan_cycle() -> None:
     """دورة كشف كاملة على القائمة — الكشف الصاعد يُنفذ ورقيًا والهابط يُعرض فقط."""
     db.ensure()
@@ -2173,6 +2583,11 @@ def compute_stats() -> Dict[str, Any]:
 
 @app.route("/")
 def home():
+    # [FE1.5.0] فاحصات الصحة ترسل HEAD بلا بيانات دخول — كان يُرد 401 ويظهر خطأ
+    # في سجلات Render. HEAD يرجع 200 بلا جسم ولا مصادقة (لا يكشف شيئًا)،
+    # وGET / يبقى محميًا بالكامل كما هو.
+    if request.method == "HEAD":
+        return Response("", 200)
     resp = require_dashboard_auth()
     if resp:
         return resp
@@ -2199,6 +2614,12 @@ def health():
             "critical_mb": MEM_CRITICAL_MB,
         },
         "keep_alive": keep_alive_snapshot(),  # [FE1.3.0] تشخيص النبضة — عام بلا مصادقة لكرون جوب
+        "scanner": {  # [FE1.5.0] ملخص ماسح الكون — عام بلا تفاصيل النتائج (المحمية في /api/all)
+            "enabled": SCAN_UNIVERSE_ENABLED,
+            "running": bool(_scanner_state["running"]),
+            "last_scan_at": _scanner_state["last_scan_at"],
+            "results_n": len(_scanner_results),
+        },
         "time": utc_now_iso(),
     })
 
@@ -2238,6 +2659,7 @@ def api_all():
             "critical_mb": MEM_CRITICAL_MB,
         },
         "keep_alive": keep_alive_snapshot(),  # [FE1.3.0] بطاقة النبضة في اللوحة
+        "scanner": scanner_state_snapshot(),  # [FE1.5.0] ماسح الكون + النتائج
     })
 
 
@@ -2313,12 +2735,20 @@ def api_ws_status():
 
 @app.route("/api/signals")
 def api_signals():
+    # [FE1.5.0] أصبحت محمية — كانت تكشف بيانات الصفقات للعامة بلا مصادقة
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
     rows = db.query("SELECT * FROM signals ORDER BY id DESC LIMIT 100")
     return jsonify({"signals": [_parse_sig_row(r) for r in rows], "version": BOT_VERSION})
 
 
 @app.route("/api/pnl_history")
 def api_pnl_history():
+    # [FE1.5.0] أصبحت محمية — كانت تكشف سجل الأرباح للعامة بلا مصادقة
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
     rows = db.query(
         "SELECT id, symbol, pnl_usdt, pnl_pct, closed_at FROM signals"
         " WHERE status='closed' ORDER BY id ASC LIMIT 500"
@@ -2391,6 +2821,28 @@ def api_trading_real():
     return jsonify({"ok": True, "real_mode": is_real_mode, "message": msg, "binance": bin_snap})
 
 
+@app.route("/api/scan/run", methods=["POST"])
+def api_scan_run():
+    """[FE1.5.0] فحص يدوي فوري لكون باينانس من زر اللوحة — يُنفذ في خيط منفصل
+    (يستغرق نحو دقيقة) والنتائج تظهر عبر التحديث الدوري للوحة. محمي بالمصادقة."""
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
+    with _scanner_lock:
+        running = bool(_scanner_state["running"])
+    if running:
+        return jsonify({"ok": False, "running": True,
+                        "message": "فحص جارٍ بالفعل — النتائج تظهر خلال لحظات"})
+    def _job():
+        try:
+            run_universe_scan(force=True, trigger="manual")
+        except Exception as exc:
+            logger.warning("فحص يدوي فشل: %s", exc)
+    threading.Thread(target=_job, daemon=True, name="manual-scan").start()
+    return jsonify({"ok": True, "running": True,
+                    "message": "بدأ فحص كون باينانس — النتائج تظهر في قسم «فحص أزواج باينانس» خلال نحو دقيقة"})
+
+
 @app.route("/api/stats/reset", methods=["POST"])
 def api_stats_reset():
     resp = require_dashboard_auth()
@@ -2460,11 +2912,14 @@ def initialize_bot_services() -> None:
     init_db()
     restore_trading_flag()
     restore_real_mode_flag()
+    restore_scan_results()  # [FE1.5.0] قبل إقلاع WS — الأسواق المصنوعة تُبنى من القائمة المحدثة
     load_markets_async()
     start_ws_price_feed()  # [FE1.2.0] الأسعار الحية من ويب سوكت — REST احتياطًا فقط
     threading.Thread(target=scan_loop, daemon=True, name="scan-loop").start()
     threading.Thread(target=monitor_loop, daemon=True, name="monitor-loop").start()
     threading.Thread(target=keep_alive_loop, daemon=True, name="keep-alive").start()
+    if SCAN_UNIVERSE_ENABLED:  # [FE1.5.0] خيط ماسح الكون — فحص أول بعد 90 ثانية ثم كل SCAN_INTERVAL_SEC
+        threading.Thread(target=universe_scan_loop, daemon=True, name="universe-scanner").start()
     ka_target = resolve_keep_alive_url()
     ka_txt = (f"نشط — نبضة كل {int(KEEP_ALIVE_INTERVAL_SEC)} ثانية إلى {ka_target}"
               if (KEEP_ALIVE_ENABLED and ka_target) else "معطل ⚠ (خطر نوم الخدمة على الخطة المجانية)")
@@ -2472,6 +2927,8 @@ def initialize_bot_services() -> None:
                else "مسبق (الوضع القديم) — خطر OOM")
     real_txt = ("🔴 نشط — الإشارات الجديدة أوامر فعلية على باينانس ⚠" if is_real_mode
                 else "⚪ متوقف — وضع ورقي آمن (فعّله من زر اللوحة)")
+    scan_txt = (f"مفعّل — فحص كامل كل {int(SCAN_INTERVAL_SEC/60)} دقيقة وأعلى {SCAN_TOP_N} زوجًا يُطبق تلقائيًا"
+                if SCAN_UNIVERSE_ENABLED else "معطل (قائمة يدوية من crypto_list.txt)")
     log_and_notify(
         "info",
         f"🚀 Fibo-Elio {BOT_VERSION} أقلع — استراتيجية واحدة: Elliott_Fibonacci (المنطق الأصلي)\n"
@@ -2480,6 +2937,7 @@ def initialize_bot_services() -> None:
         f"انعكاس الزيجزاج {DEVIATION_THRESHOLD*100:.2f}% | أقصى صفقات {MAX_OPEN_TRADES} | مخاطرة {RISK_PCT_PER_TRADE}%\n"
         f"البقاء الحي: {ka_txt}\n"
         f"التداول الحقيقي: {real_txt} | سقف الأمر {REAL_MAX_NOTIONAL_USDT:.0f}$ | تيستنت {'نعم' if BINANCE_TESTNET else 'لا'}\n"
+        f"ماسح الكون: {scan_txt}\n"
         f"الذاكرة: {mem_txt} — الحد 512MB",
         "BOOT",
     )

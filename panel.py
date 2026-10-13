@@ -2,15 +2,22 @@
 # -*- coding: utf-8 -*-
 """
 panel.py — لوحة تحكم Fibo-Elio السبرانية (عربية RTL، نيون مشع على أسود متحرك)
-[FE1.4.0] إعادة تصميم كاملة بأسلوب منصات الهكر: خلفية سوداء متحركة (شبكة +
-هالات نيون نابضة + خطوط مسح)، ألوان نيون مشعة بتوهج، خط Orbitron/Share Tech Mono.
-تعرض: بطاقة اتصال باينانس الحية (الاتصال/زمن الاستجابة/رصيد USDT)، زر التداول
-الحقيقي (مثل V9) بشروط تفعيل صارمة، الحالة الورقية، الصفقات المفتوحة/المعلقة
-بتتبع حي وفرز حقيقية/ورقية، إغلاق/إلغاء يدوي، المغلقة، التقاطات الموجات،
-الإشعارات، شارة مصدر كل سعر حي (⚡WS/REST)، البقاء الحي والذاكرة.
+[FE1.4.0] إعادة تصميم بأسلوب منصات الهكر: خلفية سوداء متحركة (شبكة + هالات نيون
+نابضة + خطوط مسح)، ألوان نيون مشعة بتوهج، خط Orbitron/Share Tech Mono.
+[FE1.5.0] قسم «فحص أزواج باينانس (الكون الكامل)»: جدول درجات الملاءمة
+للاستراتيجية + زر «فحص الآن» + بطاقة حالة الفحص.
+[FE1.5.0] إصلاحات مراجعة اللوحة الحية: تهريب HTML (esc) لكل بيانات API (كان
+innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعارات)، جداول مغلقة/التقاطات/الفحص
+ضمن .tbl-wrap (كانت تفيض على الموبايل بلا تمرير)، عارضة مستقلة لكل قسم (كان خطأ
+واحد يجمّد تحديث اللوحة كاملة صامتًا)، usd/cls آمنة ضد null، حارس تكرار refresh
++ إيقاف عند إخفاء التبويب، لا اختطاف مفتاح التداول الحقيقي أثناء الطلب الجاري.
+تعرض أيضًا: بطاقة اتصال باينانس الحية، زر التداول الحقيقي (مثل V9)، الحالة
+الورقية، الصفقات المفتوحة/المعلقة بتتبع حي وفرز حقيقية/ورقية، إغلاق/إلغاء يدوي،
+المغلقة، التقاطات الموجات، الإشعارات، شارة مصدر كل سعر (⚡WS/REST)، البقاء الحي
+والذاكرة.
 """
 
-BOT_VERSION = "FE1.4.2"
+BOT_VERSION = "FE1.5.0"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -78,6 +85,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
     font-family:'Share Tech Mono',monospace; text-shadow:0 0 6px currentColor;
     box-shadow:0 0 10px rgba(0,255,156,.12); transition:.2s; }
   button.act:hover { background:rgba(0,255,156,.14); box-shadow:0 0 18px rgba(0,255,156,.45); }
+  button.act:disabled { opacity:.55; cursor:wait; }
   button.act.danger { border-color:var(--red); color:var(--red); box-shadow:0 0 10px rgba(255,51,85,.12); }
   button.act.danger:hover { background:rgba(255,51,85,.14); box-shadow:0 0 18px rgba(255,51,85,.45); }
   /* ── زر التداول الحقيقي: مفتاح نيون أحمر مثل V9 ── */
@@ -116,7 +124,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   section { background:var(--panel); border:1px solid var(--line2); border-radius:14px; padding:14px 16px;
     margin-bottom:16px; backdrop-filter:blur(4px); box-shadow:0 0 16px rgba(0,229,255,.04); }
   section h2 { font-size:.92rem; color:var(--cyan); margin-bottom:10px; display:flex; align-items:center;
-    gap:8px; text-shadow:0 0 8px rgba(0,229,255,.5); border-bottom:1px dashed rgba(0,229,255,.22);
+    flex-wrap:wrap; gap:8px; text-shadow:0 0 8px rgba(0,229,255,.5); border-bottom:1px dashed rgba(0,229,255,.22);
     padding-bottom:8px; }
   table { width:100%; border-collapse:collapse; font-size:.78rem; }
   th { color:var(--cyan); text-align:right; padding:6px 8px; border-bottom:1px solid rgba(0,229,255,.3);
@@ -165,6 +173,8 @@ PANEL_HTML = r"""<!DOCTYPE html>
     border:1px solid var(--cyan); color:var(--cyan); padding:10px 20px; border-radius:12px; display:none;
     z-index:99; max-width:90vw; font-size:.8rem; text-shadow:0 0 6px rgba(0,229,255,.6);
     box-shadow:0 0 18px rgba(0,229,255,.35); }
+  @media (max-width:640px){ body{padding:10px} .grid{grid-template-columns:repeat(auto-fit,minmax(135px,1fr))}
+    h1{font-size:1.1rem} button.act{padding:7px 10px; font-size:.74rem} }
 </style>
 </head>
 <body>
@@ -189,7 +199,15 @@ PANEL_HTML = r"""<!DOCTYPE html>
   </header>
 
   <div id="mode-banner"></div>
+  <div id="err-banner" style="display:none" class="banner banner-real"></div>
   <div class="grid" id="cards"></div>
+
+  <section>
+    <h2>🛰 فحص أزواج باينانس (الكون الكامل) <span class="mut small">— فلترة سيولة/سبريد/مدى على كل أسواق USDT ثم تحليل موجات زيجزاج 15م بعتبة الاستراتيجية نفسها — أعلى النتائج تُطبَّق تلقائيًا على قائمة المراقبة</span>
+      <span class="spacer"></span><button class="act" id="scan-btn" onclick="scanNow()">🛰 فحص الآن</button></h2>
+    <div id="scan-status" class="mut small" style="margin-bottom:8px">—</div>
+    <div id="scan-box"></div>
+  </section>
 
   <section>
     <h2>📈 الصفقات المفتوحة والأوامر المعلقة <span class="mut small">— تتبع حي: الأسعار من ويب سوكت ⚡ (REST احتياطًا) · الحقيقية تُدار مباشرة من باينانس</span></h2>
@@ -214,6 +232,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   <footer>
     استراتيجية واحدة فقط: <b>موجة إليوت (دافع 5 موجات، قواعد صارمة ثلاث)</b> + <b>مستويات فيبوناتشي</b>
     (دخول 0.382 لتراجع الموجة 3 · وقف بنيوي خلف P0 · هدف امتداد 1.618 للموجة 1) —
+    ماسح الكون [FE1.5.0]: فحص أولي لكل أزواج باينانس USDT واختيار الأنسب للاستراتيجية تلقائيًا —
     التداول الحقيقي [FE1.4.0]: أمر LIMIT حقيقي عند فيبو 0.382 ← بيع سوق عند الوقف/الهدف، بقواعد باينانس
     (LOT_SIZE · NOTIONAL · دقة السعر/الكمية · كفاية الرصيد) —
     تتبع حي + إغلاق/إلغاء يدوي [FE1.1.0] + أسعار حية من ويب سوكت [FE1.2.0] + مضاد نوم محصّن [FE1.3.0]<br>
@@ -226,13 +245,17 @@ PANEL_HTML = r"""<!DOCTYPE html>
 <script>
 const $ = id => document.getElementById(id);
 const fmt = (v, d=4) => (v===null||v===undefined||isNaN(v)) ? '—' : Number(v).toLocaleString('en-US',{maximumFractionDigits:d});
-const pct = v => (v===null||v===undefined) ? '—' : (v>=0?'+':'') + v.toFixed(2) + '%';
-const usd = v => (v>=0?'+':'') + v.toFixed(2) + '$';
-const cls = v => v>=0 ? 'pos' : 'neg';
-const dt = s => s ? s.replace('T',' ').replace('Z','') : '—';
+const pct = v => (v===null||v===undefined||isNaN(v)) ? '—' : (v>=0?'+':'') + Number(v).toFixed(2) + '%';
+const usd = v => (v===null||v===undefined||isNaN(v)) ? '—' : ((v>=0?'+':'') + Number(v).toFixed(2) + '$');
+const cls = v => (v===null||v===undefined||isNaN(v)) ? '' : (v>=0 ? 'pos' : 'neg');
+const dt = s => s ? String(s).replace('T',' ').replace('Z','') : '—';
+// [FE1.5.0] تهريب HTML لكل بيانات API — كانت innerHTML مكشوفة على XSS مخزّن
+const esc = s => String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-let WSSTATE = null;   // حالة تغذية الويب سوكت [FE1.2.0] — من /api/ws/status
+let WSSTATE = null;    // حالة تغذية الويب سوكت [FE1.2.0] — من /api/ws/status
 let REAL_MODE = false; // حالة زر التداول الحقيقي [FE1.4.0]
+let REAL_BUSY = false; // [FE1.5.0] لا اختطاف للمفتاح أثناء طلب التبديل الجاري
+let REFRESHING = false;
 
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2500); }
 
@@ -249,13 +272,13 @@ function renderFeed(ws){
 function srcBadge(sym){
   const p = (WSSTATE && WSSTATE.enabled && WSSTATE.prices) ? WSSTATE.prices[sym] : null;
   if(p && p.age_sec !== undefined && p.age_sec < 90)
-    return `<span class="src src-ws" title="ويب سوكت عبر ${p.source} — عمر آخر تحديث ${p.age_sec} ث">⚡WS</span>`;
+    return `<span class="src src-ws" title="ويب سوكت عبر ${esc(p.source)} — عمر آخر تحديث ${p.age_sec} ث">⚡WS</span>`;
   return '<span class="src src-rest" title="طلبات REST (احتياط عند غياب التيار)">REST</span>';
 }
 
 function renderCards(d){
-  const s = d.stats;
-  const eq = d.paper_balance + (s.unrealized||0);
+  const s = d.stats || {};
+  const eq = (d.paper_balance||0) + (s.unrealized||0);
   // [FE1.4.0] بطاقة اتصال باينانس + رصيد USDT الحقيقي + وضع التنفيذ
   const bn = d.binance || {};
   let bnTxt, bnCls, binBadge;
@@ -280,13 +303,13 @@ function renderCards(d){
     ['اتصال باينانس', bnTxt, bnCls],
     ['رصيد USDT الحقيقي', (bn.usdt_free!==null&&bn.usdt_free!==undefined)? fmt(bn.usdt_free,2)+'$' : '—', bn.keys_present?'tealc':''],
     ['وضع التنفيذ', d.real_mode ? '🔴 حقيقي' : '🧪 ورقي', d.real_mode ? 'neg' : 'tealc'],
-    ['نشطة / معلقة', `${s.open_n} / ${s.pending_n}`, 'tealc'],
+    ['نشطة / معلقة', `${s.open_n||0} / ${s.pending_n||0}`, 'tealc'],
     ['صفقات مغلقة', s.closed_n||0, ''],
-    ['نسبة الفوز', (s.win_rate!==null&&s.win_rate!==undefined)? s.win_rate.toFixed(1)+'%':'—', 'tealc'],
-    ['عامل الربح PF', (s.profit_factor!==null&&s.profit_factor!==undefined)? s.profit_factor.toFixed(2):'—', (s.profit_factor||0)>=1?'pos':'neg'],
+    ['نسبة الفوز', (s.win_rate!==null&&s.win_rate!==undefined)? Number(s.win_rate).toFixed(1)+'%':'—', 'tealc'],
+    ['عامل الربح PF', (s.profit_factor!==null&&s.profit_factor!==undefined)? Number(s.profit_factor).toFixed(2):'—', (s.profit_factor||0)>=1?'pos':'neg'],
     ['صافي الربح', usd(s.total_pnl||0), cls(s.total_pnl||0)],
-    ['مزود البيانات', (d.data&&d.data.active)? d.data.active.toUpperCase() : '—', 'tealc'],
-    ['آخر مسح', s.last_scan_at? s.last_scan_at.slice(11,16)+' UTC' : '—', ''],
+    ['مزود البيانات', esc((d.data&&d.data.active)? d.data.active.toUpperCase() : '—'), 'tealc'],
+    ['آخر مسح', s.last_scan_at? esc(s.last_scan_at.slice(11,16))+' UTC' : '—', ''],
   ];
   // [FE1.3.0] بطاقة البقاء الحي — دليل مرئي أن مضاد النوم يعمل
   const ka = d.keep_alive || {};
@@ -297,23 +320,37 @@ function renderCards(d){
     if (ka.last_ping_at) kaTxt += ' · ' + ka.last_ping_at.slice(11,19) + ' UTC';
   }
   cards.push(['البقاء الحي (مضاد النوم)', kaTxt, kaCls]);
-  // [FE1.3.1] بطاقة الذاكرة — مراقبة استهلاك RAM ضد سقف 512MB
+  // [FE1.3.1] بطاقة الذاكرة — العتبات من السيرفر نفسه (كانت افتراضيات قديمة 450/380)
   const mem = d.memory || {};
   let memTxt = '—', memCls = '';
   if (mem.rss_mb) {
+    const crit = mem.critical_mb || 440, gc = mem.gc_threshold_mb || 360;
     memTxt = Math.round(mem.rss_mb) + ' / 512 MB';
-    memCls = mem.rss_mb >= (mem.critical_mb || 450) ? 'neg' : (mem.rss_mb >= (mem.gc_threshold_mb || 380) ? 'gld' : 'pos');
+    memCls = mem.rss_mb >= crit ? 'neg' : (mem.rss_mb >= gc ? 'gld' : 'pos');
   }
   cards.push(['الذاكرة (RAM)', memTxt, memCls]);
+  // [FE1.5.0] بطاقة ماسح الكون
+  const sc = d.scanner || {};
+  let scTxt = 'معطل', scCls = '';
+  if (sc.enabled) {
+    if (sc.running) { scTxt = '⏳ جارٍ الآن...'; scCls = 'gld'; }
+    else {
+      const n = (sc.results && sc.results.length) || 0;
+      scTxt = sc.last_scan_at ? sc.last_scan_at.slice(11,16) + ' UTC · ' + n + ' زوجًا' : 'بانتظار أول فحص';
+      scCls = 'vioc';
+    }
+    if (sc.error) { scTxt = '⚠ فشل آخر فحص'; scCls = 'neg'; }
+  }
+  cards.push(['🛰 فحص أزواج باينانس', scTxt, scCls]);
   $('cards').innerHTML = cards.map(c =>
     `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}">${c[1]}</div></div>`).join('');
   const tb = $('trade-badge');
   tb.textContent = d.trading_enabled ? 'توليد الإشارات: مفعّل' : 'توليد الإشارات: معطّل';
   tb.className = 'badge ' + (d.trading_enabled ? 'b-on' : 'b-off');
-  // [FE1.4.0] زر التداول الحقيقي + شارة الوضع + لافتة الوضع
+  // [FE1.4.0] زر التداول الحقيقي + شارة الوضع + لافتة الوضع — [FE1.5.0] بلا اختطاف أثناء الطلب
   REAL_MODE = !!d.real_mode;
   const rt = $('real-toggle');
-  if (rt.checked !== REAL_MODE) rt.checked = REAL_MODE;
+  if (!REAL_BUSY && rt.checked !== REAL_MODE) rt.checked = REAL_MODE;
   $('real-status-text').textContent = 'التداول الحقيقي: ' + (REAL_MODE ? 'مُفعّل ⚠' : 'متوقف');
   const mb = $('mode-badge');
   mb.textContent = 'الوضع: ' + (REAL_MODE ? 'حقيقي 🔴' : 'ورقي 🧪');
@@ -321,11 +358,43 @@ function renderCards(d){
   $('mode-banner').innerHTML = REAL_MODE
     ? '<div class="banner banner-real">⚠ التداول الحقيقي نشط — الإشارات الجديدة تُنفَّذ بأوامر فعلية على حسابك في Binance (شراء LIMIT عند فيبو 0.382 ← بيع سوق عند الوقف/الهدف)</div>'
     : '<div class="banner banner-paper">🧪 وضع ورقي — الصفقات المعروضة للتقييم فقط، لا أوامر حقيقية على Binance · فعّل مفتاح التداول الحقيقي للتنفيذ الفعلي</div>';
-  $('ver').textContent = d.version + ' — ' + d.strategy;
+  $('ver').textContent = (d.version||'—') + ' — ' + (d.strategy||'');
 }
 
 function modePill(isReal){
   return isReal ? '<span class="pill p-real">حقيقية 🔴</span>' : '<span class="pill p-paper">ورقية</span>';
+}
+
+// [FE1.5.0] قسم فحص الكون — جدول النتائج + حالة الفحص
+function renderScanner(d){
+  const sc = d.scanner || {};
+  const st = $('scan-status');
+  let txt = sc.enabled ? 'الفحص التلقائي مفعّل (كل 6 ساعات افتراضيًا)' : 'الفحص التلقائي معطل — استخدم «فحص الآن»';
+  if (sc.running) txt = '⏳ فحص جارٍ الآن — يستغرق نحو دقيقة...';
+  else if (sc.last_scan_at) txt += ' · آخر فحص: ' + dt(sc.last_scan_at) + ' UTC'
+    + (sc.duration_ms ? ` · استغرق ${(sc.duration_ms/1000).toFixed(0)} ث` : '');
+  if (sc.universe) txt += ` · الكون ${sc.universe} زوج ← ${sc.passed ?? '—'} مرشحًا ← حُلل ${sc.candidates ?? '—'}`;
+  if (sc.next_scan_at && !sc.running) txt += ' · الفحص القادم: ' + dt(sc.next_scan_at) + ' UTC';
+  if (sc.error) txt = '⚠ ' + esc(sc.error);
+  st.innerHTML = txt;
+  const list = sc.results || [];
+  if(!list.length){ $('scan-box').innerHTML = '<div class="empty">لا نتائج فحص بعد — اضغط «🛰 فحص الآن» أو انتظر الفحص التلقائي</div>'; return; }
+  let rows = list.map((r,i) => `<tr>
+    <td class="mut">${i+1}</td>
+    <td><b>${esc(r.symbol||'')}</b></td>
+    <td><span class="pill ${r.final>=70?'p-bull':(r.final>=45?'p-pending':'p-loss')}">${fmt(r.final,1)}</span></td>
+    <td>${fmt(r.pivots,0)}</td>
+    <td>${fmt(r.atr_pct,2)}%</td>
+    <td>${fmt(r.avg_wave_pct,2)}%</td>
+    <td>${fmt(r.trend_eff,2)}</td>
+    <td>${fmt(r.range_pct,2)}%</td>
+    <td>${fmt(r.qv,0)}$</td>
+    <td>${sc.applied ? '<span class="pill p-open">مطبق ✓</span>' : '<span class="mut small">نتيجة فقط</span>'}</td>
+  </tr>`).join('');
+  $('scan-box').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
+    <th>#</th><th>الزوج</th><th>درجة الملاءمة</th><th>انعكاسات الزيجزاج</th><th>ATR%</th>
+    <th>متوسط الموجة</th><th>كفاءة الاتجاه</th><th>مدى 24h</th><th>سيولة 24h</th><th>الحالة</th>
+  </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderOpen(list){
@@ -335,7 +404,7 @@ function renderOpen(list){
     const st = isPend ? '<span class="pill p-pending">معلق</span>' : '<span class="pill p-open">مفتوح</span>';
     const fib = s.fib || {};
     // تتبع حي [FE1.1.0] + شارة المصدر [FE1.2.0]
-    const cp = s.current_price ? `${srcBadge(s.symbol)}<span class="liveprice">${fmt(s.current_price)}</span>` : '<span class="mut">—</span>';
+    const cp = s.current_price ? `${srcBadge(esc(s.symbol))}<span class="liveprice">${fmt(s.current_price)}</span>` : '<span class="mut">—</span>';
     let live;
     if(!isPend){
       const u = s.unrealized_usdt;
@@ -351,10 +420,10 @@ function renderOpen(list){
       live = [cp, '<span class="mut small">أمر منتظر</span>', de];
     }
     const act = isPend
-      ? `<button class="mini cxl" onclick="cancelOrder(${s.id},'${s.symbol}')">✖ إلغاء</button>`
-      : `<button class="mini" onclick="closeTrade(${s.id},'${s.symbol}')">🔒 إغلاق</button>`;
+      ? `<button class="mini cxl" onclick="cancelOrder(${s.id},'${esc(s.symbol)}')">✖ إلغاء</button>`
+      : `<button class="mini" onclick="closeTrade(${s.id},'${esc(s.symbol)}')">🔒 إغلاق</button>`;
     return `<tr>
-      <td><b>${s.symbol}</b></td><td>${st}</td><td>${modePill(s.is_real)}</td>
+      <td><b>${esc(s.symbol)}</b></td><td>${st}</td><td>${modePill(s.is_real)}</td>
       <td>${live[0]}</td><td>${live[1]}</td><td>${live[2]}</td>
       <td>${fmt(isPend?s.entry_price:s.fill_price)}</td>
       <td class="neg">${fmt(s.stop_loss)}</td><td class="pos">${fmt(s.take_profit)}</td>
@@ -367,7 +436,7 @@ function renderOpen(list){
   }).join('');
   $('open-box').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
     <th>الزوج</th><th>الحالة</th><th>الوضع</th><th>السعر الآن</th><th>غير المحقق</th><th>التقدم نحو الهدف</th>
-    <th>${'دخول/ملء'}</th><th>وقف</th><th>هدف 1.618</th>
+    <th>دخول/ملء</th><th>وقف</th><th>هدف 1.618</th>
     <th>R:R</th><th>الكمية</th><th>أُنشئ</th><th>الصلاحية</th><th>إجراء</th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
@@ -375,51 +444,66 @@ function renderOpen(list){
 function renderClosed(list){
   if(!list.length){ $('closed-box').innerHTML = '<div class="empty">لا صفقات مغلقة بعد</div>'; return; }
   let rows = list.map(s => `<tr>
-    <td><b>${s.symbol}</b></td><td>${modePill(s.is_real)}</td>
+    <td><b>${esc(s.symbol)}</b></td><td>${modePill(s.is_real)}</td>
     <td>${fmt(s.fill_price)} → ${fmt(s.close_price)}</td>
     <td class="${cls(s.pnl_usdt)}"><b>${usd(s.pnl_usdt)}</b></td>
     <td class="${cls(s.pnl_pct)}">${pct(s.pnl_pct)}</td>
-    <td class="mut small">${s.close_reason||''}</td>
+    <td class="mut small">${esc(s.close_reason||'')}</td>
     <td class="mut small">${dt(s.closed_at)}</td>
   </tr>`).join('');
-  $('closed-box').innerHTML = `<table><thead><tr>
+  // [FE1.5.0] داخل .tbl-wrap — كانت تفيض على الموبايل بلا تمرير
+  $('closed-box').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
     <th>الزوج</th><th>الوضع</th><th>دخول → خروج</th><th>النتيجة</th><th>%</th><th>السبب</th><th>أُغلقت</th>
-  </tr></thead><tbody>${rows}</tbody></table>`;
+  </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderDetections(list){
   if(!list.length){ $('det-box').innerHTML = '<div class="empty">لا التقاطات بعد — بانتظار تكوّن موجات دافعة صالحة على فريم الكشف</div>'; return; }
-  let rows = list.map(x => `<tr>
-    <td><b>${x.symbol}</b> <span class="mut small">${x.timeframe}</span></td>
+  let rows = list.map(x => {
+    const pivs = Array.isArray(x.pivots) ? x.pivots.map(p=>fmt(p)).join(' · ') : '—';
+    return `<tr>
+    <td><b>${esc(x.symbol)}</b> <span class="mut small">${esc(x.timeframe||'')}</span></td>
     <td><span class="pill ${x.direction==='BULLISH'?'p-bull':'p-bear'}">${x.direction==='BULLISH'?'صاعدة ↑':'هابطة ↓'}</span></td>
-    <td class="small mut">P0…P5: ${x.pivots.map(p=>fmt(p)).join(' · ')}</td>
+    <td class="small mut">P0…P5: ${pivs}</td>
     <td>${x.w2_retrace!==null&&x.w2_retrace!==undefined?(x.w2_retrace*100).toFixed(1)+'%':'—'} <span class="${x.w2_in_zone?'zone-ok':'zone-no'}">${x.w2_in_zone?'✔':''}</span></td>
     <td>${x.w4_retrace!==null&&x.w4_retrace!==undefined?(x.w4_retrace*100).toFixed(1)+'%':'—'} <span class="${x.w4_in_zone?'zone-ok':'zone-no'}">${x.w4_in_zone?'✔':''}</span></td>
     <td>${fmt(x.entry_zone_low)}</td><td class="neg small">${fmt(x.stop_loss)}</td><td class="pos small">${fmt(x.take_profit)}</td>
     <td>${x.traded?'<span class="pill p-open">نُفذت</span>':'<span class="mut small">للاطلاع</span>'}</td>
     <td class="mut small">${dt(x.detected_at)}</td>
-  </tr>`).join('');
-  $('det-box').innerHTML = `<table><thead><tr>
+  </tr>`; }).join('');
+  // [FE1.5.0] داخل .tbl-wrap + pivots محمية ضد null (كان خطأ واحد يجمّد اللوحة)
+  $('det-box').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
     <th>الزوج</th><th>الاتجاه</th><th>المحاور</th><th>W2</th><th>W4</th>
     <th>منطقة الدخول</th><th>وقف</th><th>هدف</th><th>التنفيذ</th><th>وقت الالتقاط</th>
-  </tr></thead><tbody>${rows}</tbody></table>`;
+  </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderNotifs(list){
   if(!list.length){ $('notif-box').innerHTML = '<div class="empty">لا إشعارات</div>'; return; }
   $('notif-box').innerHTML = list.map(n =>
     `<div class="notif ${n.level==='warning'?'warn':(n.level==='error'||n.level==='critical')?'err':''}">
-      <b class="mut small">${dt(n.created_at)}</b> — ${n.message}</div>`).join('');
+      <b class="mut small">${dt(n.created_at)}</b> — ${esc(n.message)}</div>`).join('');
 }
 
 async function refresh(){
+  if (REFRESHING || document.hidden) return;  // [FE1.5.0] بلا تداخل طلبات ولا ضغط والإخفاء
+  REFRESHING = true;
   try {
     const d = await api('/api/all');
+    $('err-banner').style.display = 'none';
     try { WSSTATE = await api('/api/ws/status'); } catch(e){ WSSTATE = null; }
     renderFeed(WSSTATE);
-    renderCards(d); renderOpen(d.open_signals); renderClosed(d.closed_signals);
-    renderDetections(d.detections); renderNotifs(d.notifications);
-  } catch(e){ console.error(e); }
+    // [FE1.5.0] كل عارضة في حماية مستقلة — خطأ في جدول لا يجمّد البطاقات
+    const safe = fn => { try { fn(); } catch(e){ console.error(e); } };
+    safe(()=>renderCards(d)); safe(()=>renderScanner(d));
+    safe(()=>renderOpen(d.open_signals)); safe(()=>renderClosed(d.closed_signals));
+    safe(()=>renderDetections(d.detections)); safe(()=>renderNotifs(d.notifications));
+  } catch(e){
+    console.error(e);
+    const eb = $('err-banner');
+    eb.style.display = 'block';
+    eb.textContent = '⚠ فشل تحديث البيانات — ' + String(e.message||'').slice(0,140);
+  } finally { REFRESHING = false; }
 }
 
 async function toggleTrading(){
@@ -438,11 +522,28 @@ async function toggleReal(el){
   if (!target && !confirm('إيقاف التداول الحقيقي والعودة للوضع الورقي الآمن؟\n(الصفقات الحقيقية المفتوحة ستستمر بالإدارة حتى إغلاقها)')) {
     el.checked = REAL_MODE; return;
   }
+  REAL_BUSY = true;  // [FE1.5.0] الاستقصاء لا يعيد ضبط المفتاح أثناء الطلب
   try {
     const d = await api('/api/trading/real', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({enable: target})});
     toast(d.message || 'تم التبديل'); refresh();
   } catch(e){ el.checked = !target; toast('فشل التبديل: ' + e.message); }
+  finally { REAL_BUSY = false; }
+}
+
+// [FE1.5.0] زر فحص الكون — يبدأ الفحص في خيط منفصل بالسيرفر والنتائج تظهر تدريجيًا
+let SCAN_BUSY = false;
+async function scanNow(){
+  if (SCAN_BUSY) { toast('الفحص بدأ بالفعل — انتظر النتائج'); return; }
+  SCAN_BUSY = true;
+  const btn = $('scan-btn');
+  btn.disabled = true; btn.textContent = '⏳ جارٍ الفحص...';
+  try {
+    const d = await api('/api/scan/run', {method:'POST'});
+    toast(d.message || 'بدأ الفحص');
+    setTimeout(refresh, 5000); setTimeout(refresh, 25000); setTimeout(refresh, 55000);
+  } catch(e){ toast('فشل بدء الفحص: '+e.message); }
+  finally { SCAN_BUSY = false; btn.disabled = false; btn.textContent = '🛰 فحص الآن'; }
 }
 
 async function closeTrade(id, symbol){
@@ -471,6 +572,8 @@ async function resetStats(){
 
 refresh();
 setInterval(refresh, 30000);
+// [FE1.5.0] إيقاف الضغط والإخفاء + تحديث فوري عند العودة للتبويب
+document.addEventListener('visibilitychange', () => { if(!document.hidden) refresh(); });
 </script>
 </body>
 </html>"""
