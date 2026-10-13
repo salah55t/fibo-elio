@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.6.0"  # FE1.6.0: اقتباسات ElliottWavesEngine — فحص R1/R3 واعي بالذيل + فضاء لوغاريتمي + أرضية تناسبية للأمواج + سلّم أهداف احتمالي + تقييم مركب + بوابة تحيز الفريم الأعلى
+BOT_VERSION = "FE1.6.1"  # FE1.6.1: إصلاح انفجار WS KeyError:0 — فهرس markets_by_id باصطلاح ccxt 4.4+ (معرف → [قائمة]) فتعاد حيوية باينانس مباشرة بدل دوامة التعاقب إلى gate + تثبيت ccxt==4.5.87
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -356,10 +356,14 @@ def prune_markets(ex: Any, keep: Optional[List[str]] = None) -> int:
         ex.markets = slim
         mbid = getattr(ex, "markets_by_id", None)
         if isinstance(mbid, dict) and mbid:
-            ex.markets_by_id = {
-                i: m for i, m in mbid.items()
-                if i in keep_set or (isinstance(m, dict) and (m.get("symbol") in keep_set or m.get("id") in keep_set))
-            }
+            # [FE1.6.1] قيم الفهرس أصبحت قوائم أسواق (اصطلاح ccxt 4.4+) — نفحص
+            # أول سوق داخل القائمة نفسه لنقرر الإبقاء على المعرف أو حذفه
+            kept: Dict[str, Any] = {}
+            for i, m in mbid.items():
+                m0 = m[0] if (isinstance(m, list) and m) else m
+                if i in keep_set or (isinstance(m0, dict) and (m0.get("symbol") in keep_set or m0.get("id") in keep_set)):
+                    kept[i] = m
+            ex.markets_by_id = kept
         return len(slim)
     except Exception as exc:
         logger.debug("تقليم الأسواق لم يُكمل: %s", exc)
@@ -1463,6 +1467,29 @@ def get_recent_candles(symbol: str, timeframe: str, limit: int,
     return fetch_ohlcv_df(symbol, timeframe, limit=limit, min_candles=min_candles)
 
 
+def _index_markets_by_id(fab: Dict[str, Any]) -> Dict[str, Any]:
+    """[FE1.6.1] فهرس markets_by_id باصطلاح ccxt الحديث: المعرف الخام → [قائمة أسواق].
+    safe_market في ccxt 4.4+ يقرأ markets_by_id[id] كقائمة (len()==1 → [0]) —
+    قيمة dict مفردة تُفسَّر بعدد مفاتيحها وتنكسر في markets[0] بـ KeyError: 0
+    لكل رسالة miniTicker/kline (سبب استثناء handle_tickers في السجلات).
+    set_markets الداخلية لـ ccxt تبني هذا الاصطلاح — ونحن نتجاوزها بالحقن.
+    ملاحظة: القيم المزدوجة في fab (رمز موحد + معرف) تشير لنفس السوق — الفهرسة
+    بالمعرف الخام فقط وتزال الازدواجية تلقائيًا."""
+    by_id: Dict[str, Any] = {}
+    for m in fab.values():
+        if not isinstance(m, dict):
+            continue
+        mid = m.get("id")
+        if not mid:
+            continue
+        lst = by_id.get(mid)
+        if lst is None:
+            by_id[mid] = [m]
+        elif all(x.get("symbol") != m.get("symbol") for x in lst):
+            lst.append(m)
+    return by_id
+
+
 def _fabricate_ws_markets(name: str, symbols: List[str]) -> Dict[str, Any]:
     """[FE1.4.2] أسواق مصغّرة مصنوعة يدويًا لنسخة الويب سوكت — حتى لا يستدعي
     watch_ohlcv/watch_ticker الداخليان load_markets (كون الأسواق = نتوء OOM).
@@ -1504,7 +1531,9 @@ def _ws_exchange(name: str):
         if not getattr(ex, "markets", None):
             fab = _fabricate_ws_markets(name, watchlist)
             ex.markets = fab
-            ex.markets_by_id = fab  # نفس المعجم يغطي الرموز الموحدة والمعرفات
+            # [FE1.6.1] المعرف → [قائمة] باصطلاح ccxt 4.4+ (القيمة dict مفردة كانت
+            # تكسر safe_market بـ KeyError: 0 على كل رسالة تيار — سبب فشل باينانس WS)
+            ex.markets_by_id = _index_markets_by_id(fab)
             logger.info("أسواق مصنوعة مصغّرة لويب سوكت %s — %d رمز (بلا load_markets)", name, len(watchlist))
         _ws_exchanges[name] = ex
     return ex
@@ -2263,7 +2292,8 @@ def ws_refresh_fabricated_markets() -> None:
                 continue
             fab = _fabricate_ws_markets(name, watchlist)
             ex.markets.update(fab)
-            ex.markets_by_id.update(fab)
+            # [FE1.6.1] فهرس بالمعرف → [قائمة] لا dict مفردة (اصطلاح ccxt 4.4+)
+            ex.markets_by_id.update(_index_markets_by_id(fab))
             n += 1
         except Exception as exc:
             logger.debug("تحديث أسواق WS المصنوعة لـ %s فشل: %s", name, exc)
