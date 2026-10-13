@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.5.0"  # FE1.5.0: ماسح كون باينانس الكامل + إصلاحات مراجعة اللوحة الحية
+BOT_VERSION = "FE1.5.1"  # FE1.5.1: إعادة محاولة ذكية للماسح بعد إجهاض حظر باينانس 418/429 (30 دقيقة بدل 6 ساعات)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -245,6 +245,7 @@ SCAN_MIN_VOLUME_USDT = float(os.getenv("SCAN_MIN_VOLUME_USDT", "5000000"))  # س
 SCAN_MAX_SPREAD_PCT = float(os.getenv("SCAN_MAX_SPREAD_PCT", "0.15"))  # أقصى فرق bid/ask %
 SCAN_MIN_RANGE_PCT = float(os.getenv("SCAN_MIN_RANGE_PCT", "2.0"))     # أدنى مدى 24h % — الموجات تحتاج حركة
 SCAN_KLINES_LIMIT = int(os.getenv("SCAN_KLINES_LIMIT", "200"))         # شموع 15m لكل مرشح (وزن 2 فقط)
+SCANNER_BAN_RETRY_SEC = float(os.getenv("SCANNER_BAN_RETRY_SEC", "1800"))  # [FE1.5.1] إعادة محاولة بعد إجهاض 418/429 (30 دقيقة)
 
 # [FE1.3.0] البقاء الحي — نبضة ذاتية إلى /health العام (بلا مصادقة) تمنع نوم Render المجاني
 # (الخطة المجانية تُخمد الخدمة بعد 15 دقيقة بلا طلبات خارجية، والاستيقاظ يأخذ نحو دقيقة)
@@ -2014,7 +2015,7 @@ _scanner_lock = threading.RLock()  # RLock: scanner_state_snapshot قد تُست
 _scanner_state: Dict[str, Any] = {
     "enabled": SCAN_UNIVERSE_ENABLED, "running": False, "last_scan_at": None,
     "next_scan_at": None, "duration_ms": None, "universe": None, "passed": None,
-    "candidates": None, "applied": False, "error": None,
+    "candidates": None, "applied": False, "error": None, "retry_after_sec": None,
 }
 _scanner_results: List[Dict[str, Any]] = []   # أعلى النتائج (قواميس صغيرة — ≤ 20 صفًا)
 _scanner_boot_restored = False
@@ -2025,6 +2026,12 @@ _SCAN_STABLE_BASES = {
     "USD1", "XUSD", "AEUR", "EURI", "EUR", "GBP", "TRY", "BRL", "ARS", "JPY",
     "RUB", "UAH", "ZAR", "USDT",
 }
+
+
+def _scanner_ban_hint(msg: str) -> bool:
+    """هل الرسالة قيد باينانس (418/429/-1003)؟ — تُستخدم لجدولة إعادة محاولة قريبة."""
+    m = str(msg)
+    return "418" in m or "429" in m or "banned" in m.lower() or "-1003" in m
 
 
 def scanner_state_snapshot() -> Dict[str, Any]:
@@ -2254,6 +2261,7 @@ def run_universe_scan(force: bool = False, trigger: str = "auto") -> Dict[str, A
                 _scanner_state["universe"] = universe
                 _scanner_state["passed"] = len(passed)
                 _scanner_state["candidates"] = len(results)
+                _scanner_state["retry_after_sec"] = SCANNER_BAN_RETRY_SEC  # [FE1.5.1] إعادة محاولة قريبة بعد انتهاء الحظر
             log_and_notify("warning", f"🛰 ماسح الكون: {_scanner_state['error']}", "UNIVERSE_SCAN")
             return {"ok": False, "error": _scanner_state["error"]}
         results.sort(key=lambda r: r["final"], reverse=True)
@@ -2268,6 +2276,7 @@ def run_universe_scan(force: bool = False, trigger: str = "auto") -> Dict[str, A
                 "duration_ms": int((time.time() - t0) * 1000),
                 "universe": universe, "passed": len(passed),
                 "candidates": len(cand), "applied": applied, "error": None,
+                "retry_after_sec": None,   # [FE1.5.1] نجاح — عودة للإيقاع الكامل
             })
             _scanner_results[:] = results
         try:
@@ -2291,6 +2300,9 @@ def run_universe_scan(force: bool = False, trigger: str = "auto") -> Dict[str, A
             _scanner_state["running"] = False
             _scanner_state["error"] = f"{type(exc).__name__}: {exc}"[:240]
             _scanner_state["duration_ms"] = int((time.time() - t0) * 1000)
+            # [FE1.5.1] حظر باينان (418/429) عند نداء التكتة نفسه — إعادة محاولة قريبة لا 6 ساعات
+            _scanner_state["retry_after_sec"] = (SCANNER_BAN_RETRY_SEC
+                                                 if _scanner_ban_hint(exc) else None)
         logger.warning("ماسح الكون فشل: %s", exc)
         return {"ok": False, "error": _scanner_state["error"]}
     finally:
@@ -2327,10 +2339,12 @@ def restore_scan_results() -> None:
 
 
 def universe_scan_loop() -> None:
-    """خيط الماسح: فحص أول بعد ~90 ثانية من الإقلاع (بعد دفء التغذية)، ثم كل
-    SCAN_INTERVAL_SEC. أي فشل لا يقتل الخيط — يُسجل ويعيد المحاولة في موعدها."""
+    """خيط الماسح: فحص أول بعد ~90 ثانية من الإقلاع، ثم كل SCAN_INTERVAL_SEC.
+    [FE1.5.1] بعد إجهاض 418/429 (حظر IP مشترك Render مؤقت): إعادة محاولة بعد
+    SCANNER_BAN_RETRY_SEC (30 دقيقة) لاقتطاف نافذة انتهاء الحظر بدل انتظار 6 ساعات."""
     time.sleep(90.0)
     while True:
+        nap = SCAN_INTERVAL_SEC
         try:
             db.ensure()
             if SCAN_UNIVERSE_ENABLED:
@@ -2340,18 +2354,22 @@ def universe_scan_loop() -> None:
             with _scanner_lock:
                 _scanner_state["running"] = False
                 _scanner_state["error"] = str(exc)[:240]
+        with _scanner_lock:
+            hint = _scanner_state.get("retry_after_sec")
+            if hint and hint < nap:
+                nap = float(hint)
         mem_check("بعد دورة ماسح الكون")
         try:
             from datetime import timedelta
-            _dt = datetime.now(timezone.utc) + timedelta(seconds=SCAN_INTERVAL_SEC)
+            _dt = datetime.now(timezone.utc) + timedelta(seconds=nap)
             with _scanner_lock:
                 _scanner_state["next_scan_at"] = _dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         except Exception:
             pass
         # نوم مجزأ (60 ثانية) — يسمح بمستقبل مرن للإيقاف ويبقى الخيط خفيفًا
         slept = 0.0
-        while slept < SCAN_INTERVAL_SEC:
-            time.sleep(min(60.0, SCAN_INTERVAL_SEC - slept))
+        while slept < nap:
+            time.sleep(min(60.0, nap - slept))
             slept += 60.0
 
 

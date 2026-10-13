@@ -365,6 +365,41 @@ class TestRateLimitAbort:
         res = vnz.run_universe_scan(force=True, trigger="manual")
         assert res["ok"] is False and "أُجهض" in res["error"]
 
+    def test_ban_abort_sets_retry_hint(self, clean_db, scan_reset, monkeypatch):
+        # [FE1.5.1] بعد إجهاض حظر باينانس: إعادة محاولة قريبة (30 د) بدل الإيقاع الكامل
+        fake = FakeScanExchange([_ticker("AAAUSDT")],
+                                {"AAAUSDT": Exception('binance 418 {"code":-1003,"msg":"IP banned"}')})
+        monkeypatch.setattr(vnz, "_binance_public_probe", lambda: fake)
+        vnz.run_universe_scan(force=True, trigger="auto")
+        snap = vnz.scanner_state_snapshot()
+        assert snap["retry_after_sec"] == vnz.SCANNER_BAN_RETRY_SEC == 1800.0
+
+    def test_ban_abort_on_ticker_sets_retry_hint(self, clean_db, scan_reset, monkeypatch):
+        # [FE1.5.1] الحظر عند نداء التكتة نفسه (المسار الخارجي) — نفس التلميح
+        class BannedTickerExchange:
+            def publicGetTicker24hr(self):
+                raise Exception('binance 418 {"code":-1003,"msg":"Way too much request weight used; IP banned until 1"}')
+        monkeypatch.setattr(vnz, "_binance_public_probe", lambda: BannedTickerExchange())
+        res = vnz.run_universe_scan(trigger="auto")
+        assert res["ok"] is False
+        snap = vnz.scanner_state_snapshot()
+        assert snap["retry_after_sec"] == 1800.0 and snap["running"] is False
+
+    def test_success_clears_retry_hint(self, clean_db, scan_reset, monkeypatch):
+        with vnz._scanner_lock:
+            vnz._scanner_state["retry_after_sec"] = 1800.0
+        fake = FakeScanExchange([_ticker("AAAUSDT")], {"AAAUSDT": _wave_klines()})
+        monkeypatch.setattr(vnz, "_binance_public_probe", lambda: fake)
+        res = vnz.run_universe_scan(trigger="auto")
+        assert res["ok"] is True
+        assert vnz.scanner_state_snapshot()["retry_after_sec"] is None
+
+    def test_ban_hint_detector(self):
+        assert vnz._scanner_ban_hint("binance 418 banned until x") is True
+        assert vnz._scanner_ban_hint("429 Too Many Requests") is True
+        assert vnz._scanner_ban_hint("code -1003 weight") is True
+        assert vnz._scanner_ban_hint("Connection timeout") is False
+
     def test_generic_kline_error_skipped_not_abort(self, clean_db, scan_reset, monkeypatch):
         fake = FakeScanExchange([_ticker("AAAUSDT"), _ticker("BBBUSDT", qv=60_000_000)],
                                 {"AAAUSDT": Exception("timeout"),
@@ -543,7 +578,7 @@ class TestProtectionAndPanel:
 
     def test_panel_hardening_marks(self):
         from panel import PANEL_HTML, BOT_VERSION
-        assert BOT_VERSION == "FE1.5.0"
+        assert BOT_VERSION == "FE1.5.1"
         assert "const esc = " in PANEL_HTML               # تهريب HTML
         assert "esc(n.message)" in PANEL_HTML             # الإشعارات مُهرّبة (كانت XSS)
         assert "esc(s.symbol)" in PANEL_HTML or "esc(x.symbol)" in PANEL_HTML
