@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_fe140.py — اختبارات التداول الحقيقي + قواعد باينانس + بطاقة الاتصال FE1.4.0/1.4.1
+test_fe140.py — اختبارات التداول الحقيقي + قواعد باينانس + بطاقة الاتصال FE1.4.0→1.4.2
 
-ثماني جولات:
+تسع جولات:
   1) قواعد باينانس: دقة الكمية/السعر، أدنى قيمة/كمية، سقف الأمان، رفض الوقف الواسع
   2) بطاقة اتصال باينانس: بلا مفاتيح (فحص عام) / بمفاتيح (رصيد) / فشل / الكاش
   3) زر التداول الحقيقي: رفض بلا مفاتيح / تفعيل بمفاتيح + اتصال / استمرار الحالة / إيقاف
@@ -14,6 +14,7 @@ test_fe140.py — اختبارات التداول الحقيقي + قواعد ب
      الهيكل السبراني (زر حقيقي + بطاقة اتصال + خلفية متحركة) في PANEL_HTML
   8) [FE1.4.1] الطبقة بلا أسواق: أدوات الدقة/التوحيد الخام + حارس منع load_markets
      (سبب أعطال OOM على خطة 512MB — نسخة التداول لا تلمس كون الأسواق إطلاقًا)
+  9) [FE1.4.2] عزل كامل: شموع باينانس الخام + أسواق الويب سوكت المصنوعة المصغّرة
 
 تشغيل: pytest test_fe140.py -v   (من داخل مجلد المشروع)
 """
@@ -577,7 +578,7 @@ def test_api_binance_status_endpoint(client, clean_db, real_reset, monkeypatch):
     assert body["connected"] is True
     assert body["usdt_free"] == 321.0
     assert body["real_mode"] is False
-    assert body["version"] == "FE1.4.1"
+    assert body["version"] == "FE1.4.2"
 
 
 def test_health_mode_paper_and_real(client, clean_db, real_reset, monkeypatch):
@@ -622,7 +623,7 @@ def test_panel_cyber_structure():
     assert "banner-real" in html and "banner-paper" in html
     assert "p-real" in html and "modePill" in html
     import panel as panel_mod
-    assert panel_mod.BOT_VERSION == "FE1.4.1"
+    assert panel_mod.BOT_VERSION == "FE1.4.2"
 
 
 def test_ddl_migration_adds_real_columns(clean_db):
@@ -693,3 +694,52 @@ def test_trading_layer_never_loads_markets(clean_db, real_reset, monkeypatch):
     assert vnz.fetch_free_base(ex, "BTC") == 0.0
     assert vnz.real_market_rules("NOPE/USDT", ex) == {"tick": 0.0, "step": 0.0,
                                                       "min_qty": 0.0, "min_cost": 0.0, "status": ""}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# الجولة 9 — [FE1.4.2] العزل الكامل: شموع خام + أسواق WS المصنوعة
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_binance_raw_klines_mapping():
+    """publicGetKlines الخام ← نفس بنية fetch_ohlcv الموحدة بالضبط."""
+    class KEx:
+        def publicGetKlines(self, params):
+            assert params == {"symbol": "BTCUSDT", "interval": "1h", "limit": 3}
+            return [[1700000000000, "42000.10", "42100.20", "41900.30", "42050.40", "123.45"],
+                    [1700003600000, "42050.40", "42200.00", "42000.00", "42150.50", "98.76"],
+                    [1700007200000, "42150.50", "42300.00", "42100.00", "42250.60", "77.10",
+                     1700010799999, "0", "0", "0", "0", "0"]]
+    rows = vnz._binance_raw_klines(KEx(), "BTC/USDT", "1h", 3)
+    assert len(rows) == 3
+    assert rows[0] == [1700000000000, 42000.10, 42100.20, 41900.30, 42050.40, 123.45]
+    assert rows[2][0] == 1700007200000 and rows[2][4] == 42250.60  # الأعمدة الزائدة تُسقط
+
+
+def test_fabricate_ws_markets_id_formats():
+    """معرفات بصيغة كل منصة + قابلية الفهرسة بالرمز والمعرف معًا."""
+    for name, expected in (("binance", "BTCUSDT"), ("bybit", "BTCUSDT"),
+                           ("okx", "BTC-USDT"), ("gate", "BTC_USDT")):
+        mkts = vnz._fabricate_ws_markets(name, ["BTC/USDT", "ETH/USDT"])
+        m = mkts["BTC/USDT"]
+        assert m["id"] == expected
+        assert m["lowercaseId"] == expected.lower()
+        assert mkts[expected]["symbol"] == "BTC/USDT"     # فهرسة بالمعرف
+        assert m["base"] == "BTC" and m["quote"] == "USDT"
+        assert m["type"] == "spot" and m["spot"] is True and m["active"] is True
+        assert m["swap"] is False and m["contract"] is False
+
+
+def test_ws_exchange_injects_fabricated_markets():
+    """نسخة ccxt.pro تُحقن بأسواق مصغّرة — فلا load_markets عند أول اشتراك."""
+    if not vnz._HAS_CCXT_PRO:
+        import pytest
+        pytest.skip("ccxt.pro غير متوفر")
+    with vnz._ws_lock:
+        vnz._ws_exchanges.clear()
+    ex = vnz._ws_exchange("binance")
+    assert ex.markets and "BTC/USDT" in ex.markets
+    assert ex.markets["BTC/USDT"]["id"] == "BTCUSDT"
+    assert ex.markets_by_id["BTCUSDT"]["symbol"] == "BTC/USDT"
+    # لا اتصالات حية أُنشئت (المثال وحده) — ونظّف بعدها
+    with vnz._ws_lock:
+        vnz._ws_exchanges.clear()

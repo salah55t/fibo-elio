@@ -80,6 +80,6 @@ services:
       - key: MALLOC_ARENA_MAX
         value: "2"
       - key: MEM_GC_THRESHOLD_MB
-        value: "380"
+        value: "360"
       - key: MEM_CRITICAL_MB
-        value: "450"
+        value: "440"

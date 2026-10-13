@@ -66,6 +66,19 @@
  • القواعد لم تُنسَ: نفس فلاتر باينانس (دقة/أدنى كمية/أدنى قيمة) وسقف الأمر و
    TESTNET — لا تغيير على أي منطق تداول، فقط مصدر القواعد أرحم ذاكرةً.
 
+ FE1.4.2: إغلاق بقية ثغرات load_markets التي أسقطت النشر الأول لـ FE1.4.1:
+ • المسح REST (أول نشاط عند الإقلاع): fetch_ohlcv الموحدة تحمّل كون الأسواق
+   داخليًا ← استُبدلت لباينانس بـ publicGetKlines الخام (بلا أسواق نهائيًا).
+   البدائل (Bybit/OKX/Gate) تبقى موحدة — لا تُستخدم إلا عند فشل باينانس.
+ • الويب سوكت: watch_ohlcv/watch_ticker داخليا يطلبان market() ← تُحقن نسخ
+   ccxt.pro بأسواق مصنوعة مصغّرة (قائمة المراقبة فقط، بمعرفات صيغة كل منصة)
+   فلا load_markets عند أول اشتراك بأي صفقة نشطة.
+ • دقة الورقي: amount_to_precision كانت عبر market() تحمّل الأسواق عند أول
+   إشارة ورقية ← لباينانس تمر عبر exchangeInfo الخام والخطوة اليدوية.
+ • render.yaml: عتبتا الذاكرة حُدّثتا 380←360 و450←440 (البيئة تتجاوز الافتراضيات).
+ • النتيجة: لا يوجد في المشروع بأكمله أي مسار ساخن يستدعي load_markets —
+   كون الأسواق (~+150-300MB) لم يعد يُلمس إطلاقًا في التشغيل الطبيعي.
+
  FE1.0.1: طبقة مزودي بيانات متعددة — باينانس أولًا كما في الأصل، ثم Bybit → OKX
  → Gate.io تلقائيًا عند الحظر/الفشل. الدرس المستفاد من المشروع السابق: عنوان
  الخروج المشترك لخدمات Render يتعرض لحظر وزن باينانس (-1003) المتجدد بسبب
@@ -155,7 +168,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.4.1"  # FE1.4.1: طبقة تداول بلا أسواق (implicit API) — علاج جذري لأعطال OOM على خطة 512MB
+BOT_VERSION = "FE1.4.2"  # FE1.4.2: إغلاق بقية ثغرات load_markets (مسح REST + ويب سوكت + دقة الورقي) — عزل كامل لكون الأسواق
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -589,11 +602,21 @@ def current_exchange():
 
 
 def amount_prec(symbol: str, qty: float) -> float:
-    """تقريب الكمية حسب قواعد المزود الفعّال — بأمان تام بلا استثناءات."""
-    ex = current_exchange()
-    if ex is None:
-        return qty
+    """تقريب الكمية حسب قواعد المزود الفعّال — بأمان تام بلا استثناءات.
+    [FE1.4.2] بلا load_markets: لباينانس عبر exchangeInfo?symbol= الخام (نفس
+    فلسفة طبقة التداول بلا أسواق) — amount_to_precision الموحدة كانت تستدعي
+    market() التي تحمّل كون الأسواق عند أول إشارة ورقية (نتوء OOM)."""
     try:
+        ex = current_exchange()
+        if ex is None:
+            return qty
+        name = active_source.get("name") or "binance"
+        if name == "binance" and not getattr(ex, "markets", None):
+            r = real_market_rules(symbol, ex=_binance_public_probe())
+            if r:
+                v = _floor_step(float(qty), r.get("step") or 0.0)
+                return v if v > 0 else 0.0
+            return qty
         return float(ex.amount_to_precision(symbol, qty))
     except Exception:
         return qty
@@ -651,6 +674,17 @@ def load_watchlist() -> List[str]:
 watchlist: List[str] = load_watchlist()
 
 
+def _binance_raw_klines(ex, symbol: str, timeframe: str, limit: int) -> list:
+    """[FE1.4.2] شموع باينانس الخام عبر publicGetKlines — بلا load_markets نهائيًا.
+    أول مسح عند الإقلاع كان عبر fetch_ohlcv الموحدة التي تحمّل كون الأسواق داخليًا
+    (نتوء +100-250MB) فيقتل الخدمة فوق سقف 512MB مباشرة بعد الإقلاع — وهو ما
+    فجّر النشر الأول لـ FE1.4.1. الصيغة الخام: [openTime, o, h, l, c, v, ...]."""
+    raw = ex.publicGetKlines({"symbol": _bin_sym(symbol), "interval": timeframe,
+                              "limit": int(limit)})
+    return [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])]
+            for k in (raw or [])]
+
+
 def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[list], Optional[str]]:
     """تجربة المزودين بالترتيب: باينانس أولًا (الأصل) ثم البدائل عند الحظر/الفشل.
     المزود الفاشل يدخل تبريدًا مؤقتًا حتى لا تُهدر زمن كل دورة عليه."""
@@ -660,7 +694,16 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
     errors: List[str] = []
     for name in order:
         try:
-            raw = EXCHANGES[name].fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+            if name == "binance":
+                # [FE1.4.2] نقاط خام بلا أسواق — المسح هو أول نشاط عند الإقلاع
+                # وكان أكبر مصدر نتوء ذاكرة (fetch_ohlcv الموحدة تحمّل كون الأسواق).
+                # غياب publicGetKlines (نسخ قديمة/بدائل اختبار) ← سقوط آمن للموحدة.
+                try:
+                    raw = _binance_raw_klines(EXCHANGES[name], symbol, timeframe, limit)
+                except AttributeError:
+                    raw = EXCHANGES[name].fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+            else:
+                raw = EXCHANGES[name].fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
             if not raw:
                 raise ValueError("قائمة شموع فارغة")
             with provider_lock:
@@ -1327,14 +1370,49 @@ def get_recent_candles(symbol: str, timeframe: str, limit: int,
     return fetch_ohlcv_df(symbol, timeframe, limit=limit, min_candles=min_candles)
 
 
+def _fabricate_ws_markets(name: str, symbols: List[str]) -> Dict[str, Any]:
+    """[FE1.4.2] أسواق مصغّرة مصنوعة يدويًا لنسخة الويب سوكت — حتى لا يستدعي
+    watch_ohlcv/watch_ticker الداخليان load_markets (كون الأسواق = نتوء OOM).
+    معرف السوق بصيغة كل منصة: باينانس/بايبيت BTCUSDT · OKX BTC-USDT · Gate BTC_USDT.
+    أي حقل إضافي يطلبه المزود يُدار بتعاقب المزودين + REST الخام احتياطًا."""
+    def mk(sym: str) -> Dict[str, Any]:
+        b, q = sym.split("/", 1)
+        if name == "okx":
+            mid = f"{b}-{q}"
+        elif name == "gate":
+            mid = f"{b}_{q}"
+        else:  # binance/bybit وغيرهما: ملتصق
+            mid = f"{b}{q}"
+        return {"id": mid, "lowercaseId": mid.lower(), "symbol": sym,
+                "base": b, "quote": q, "baseId": b, "quoteId": q,
+                "type": "spot", "spot": True, "active": True,
+                "swap": False, "future": False, "contract": False, "option": False,
+                "linear": False, "inverse": False,
+                "precision": {}, "limits": {}}
+    markets: Dict[str, Any] = {}
+    for s in symbols:
+        if "/" in s:
+            m = mk(s)
+            markets[s] = m
+            markets[m["id"]] = m  # بالمعرف أيضًا لـ safe_symbol على بيانات التيار
+    return markets
+
+
 def _ws_exchange(name: str):
-    """نسخة ccxt.pro للمزود — اتصالات عامة بلا مفاتيح (الشموع العامة تكفي للورقي)."""
+    """نسخة ccxt.pro للمزود — اتصالات عامة بلا مفاتيح (الشموع العامة تكفي للورقي).
+    [FE1.4.2] الأسواق تُحقن مصنوعة مصغّرة (قائمة المراقبة فقط) — لا load_markets
+    إطلاقًا على نسخ الويب سوكت (أول اشتراك كان يحمّل كون الأسواق = نتوء OOM)."""
     ex = _ws_exchanges.get(name)
     if ex is None:
         cls = getattr(ccxt.pro, name, None)
         if cls is None:
             raise ValueError(f"المزود {name} غير مدعوم في ccxt.pro")
         ex = cls({"enableRateLimit": False, "options": {"defaultType": "spot", "fetchMarkets": ["spot"]}})  # [FE1.3.2]
+        if not getattr(ex, "markets", None):
+            fab = _fabricate_ws_markets(name, watchlist)
+            ex.markets = fab
+            ex.markets_by_id = fab  # نفس المعجم يغطي الرموز الموحدة والمعرفات
+            logger.info("أسواق مصنوعة مصغّرة لويب سوكت %s — %d رمز (بلا load_markets)", name, len(watchlist))
         _ws_exchanges[name] = ex
     return ex
 
@@ -1350,12 +1428,7 @@ async def _ws_watch_stream(symbol: str, stream: str) -> None:
         idx += 1
         try:
             ex = _ws_exchange(name)
-            if not ex.markets:
-                await ex.load_markets()
-                # [FE1.3.1] تقليم فوري — نسخ pro تحمّل الأسواق كاملة أيضًا (الرمز نفسه مشمول أمانًا)
-                n = prune_markets(ex, list(dict.fromkeys(list(watchlist) + [symbol])))
-                if n >= 0:
-                    logger.info("تقليم أسواق ويب سوكت %s — بقي %d زوج فقط (حمية الذاكرة)", name, n)
+            # [FE1.4.2] الأسواق مصنوعة مصغّرة داخل _ws_exchange — لا load_markets إطلاقًا
             _ws_mark(symbol, name, "connecting")
             if stream == "ohlcv":
                 # بذرة REST واحدة عند بدء الاشتراك: التيار قد يبدأ بالشمعة الجارية

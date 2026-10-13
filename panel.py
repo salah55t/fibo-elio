@@ -10,7 +10,7 @@ panel.py — لوحة تحكم Fibo-Elio السبرانية (عربية RTL، ن
 الإشعارات، شارة مصدر كل سعر حي (⚡WS/REST)، البقاء الحي والذاكرة.
 """
 
-BOT_VERSION = "FE1.4.1"
+BOT_VERSION = "FE1.4.2"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
