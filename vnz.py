@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.6.1"  # FE1.6.1: إصلاح انفجار WS KeyError:0 — فهرس markets_by_id باصطلاح ccxt 4.4+ (معرف → [قائمة]) فتعاد حيوية باينانس مباشرة بدل دوامة التعاقب إلى gate + تثبيت ccxt==4.5.87
+BOT_VERSION = "FE1.6.2"  # FE1.6.2: بوابة حيوية الفرضية — لا إشارات من محاور تاريخية ماتت فرضيتها (الإغلاق دون P0) — قتل حلقة DOA (إنشاء/إبطال خلال 60ث) التي أبطلت 5 من 7 إشارات فور ولادتها
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -380,6 +380,7 @@ scan_stats: Dict[str, Any] = {
     "cycles": 0, "scanned": 0, "setups_valid": 0, "setups_bull_traded": 0,
     "setups_bear_seen": 0, "rejected_active_limit": 0, "rejected_symbol_busy": 0,
     "rejected_htf_bias": 0,  # [FE1.6.0] إشارات صاعدة مرفوضة لانحياز هابط قوي على الفريم الأعلى
+    "rejected_stale_premise": 0,  # [FE1.6.2] إشارات من محاور تاريخية: الإغلاق الحالي دون P0 (فرضية ماتت)
     "last_scan_at": "", "last_scan_fetched": 0,  # [FE1.0.1] تشخيص دورة المسح
 }
 
@@ -2532,6 +2533,21 @@ def htf_bias(symbol: str) -> Optional[bool]:
     return bias
 
 
+def premise_alive(setup: DetectedSetup, last_close: float) -> bool:
+    """[FE1.6.2] بوابة حيوية الفرضية لحظة الإنشاء (اقتباس روح is_wave_invalidated):
+    الإعداد الصاعد صالح فقط إذا كان الإغلاق الحالي فوق أصل الموجة 1 (P0) —
+    نفس شرط الإبطال البنيوي الذي يطبّقه monitor_step على المعلق بعد دقيقة.
+    بدونها يولّد الماسح إشارات من نوافذ P0-P5 تاريخية انهار السعر تحتها بعيدًا،
+    فيُبطلها المراقب خلال 60 ثانية (حلقة إنشاء/إلغاء DOA كل دورة مسح 15 دقيقة
+    — سبب «لم تقبل ولا صفقة»: 5 من 7 إشارات أُبطلت خلال 60-70 ثانية من ولادتها).
+    فشل قراءة المحاور = تساهل (fail-open) — بوابة جودة لا نقطة فشل."""
+    try:
+        p0 = float(setup.pivot_prices[0])
+        return float(last_close) >= p0
+    except (TypeError, ValueError, IndexError, AttributeError):
+        return True
+
+
 def scan_cycle() -> None:
     """دورة كشف كاملة على القائمة — الكشف الصاعد يُنفذ ورقيًا والهابط يُعرض فقط."""
     db.ensure()
@@ -2574,6 +2590,15 @@ def scan_cycle() -> None:
                             scan_stats["rejected_active_limit"] += 1
                     elif not trading_on:
                         logger.info("[%s] إعداد صاعد صالح لكن توليد الإشارات معطل (ورقي متوقف)", symbol)
+                    elif not premise_alive(best, float(df.iloc[-1]["close"])):
+                        # [FE1.6.2] الفرضية ماتت قبل الولادة — لا تخلق أمرًا سيُبطل خلال دقيقة
+                        with scan_stats_lock:
+                            scan_stats["rejected_stale_premise"] += 1
+                        logger.info(
+                            "[%s] إعداد صاعد متقادم: الإغلاق %s دون أصل الموجة "
+                            "P0=%s — لا إشارة",
+                            symbol, fmt_price(float(df.iloc[-1]["close"])),
+                            fmt_price(float(best.pivot_prices[0])))
                     elif HTF_BIAS_ENABLED and htf_bias(symbol) is False:
                         # [FE1.6.0] حقبة هابطة واضحة على الفريم الأعلى — لا دخولات عكس التدفق
                         with scan_stats_lock:
