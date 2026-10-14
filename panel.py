@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.6.2"
+BOT_VERSION = "FE1.7.0"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -563,10 +563,12 @@ async function cancelOrder(id, symbol){
 }
 
 async function resetStats(){
-  if(!confirm('تصفير كل الإحصائيات والصفقات وإرجاع الرصيد الورقي للبداية؟')) return;
+  if(!confirm('تصفير كل الإحصائيات والصفقات وإرجاع الرصيد الورقي للبداية؟\n(تُأرشف الصفقات تلقائيًا — آخر 3 أرشيفات)')) return;
+  const word = (prompt('للتأكيد اكتب RESET ثم اضغط موافق:') || '').trim().toUpperCase();
+  if(word !== 'RESET'){ toast('لم يُؤكد التصفير — أُلغي'); return; }
   try {
-    const d = await api('/api/stats/reset', {method:'POST'});
-    toast(d.message); refresh();
+    const d = await api('/api/stats/reset', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({confirm:'RESET'})});
+    toast(d.message || d.error || 'تم'); refresh();
   } catch(e){ toast('فشل التصفير: '+e.message); }
 }
 

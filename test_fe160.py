@@ -467,6 +467,9 @@ class TestScanCycleHTFGate:
         monkeypatch.setattr(vnz, "watchlist", ["TEST/USDT"])
         monkeypatch.setattr(vnz, "fetch_ohlcv_df",
                             lambda *a, **k: impulse_df())
+        # [FE1.7.0] بوابة المطاردة معطلة هنا — دافع الاختبار المصطنع ينتهي عند P5
+        # (الإغلاق 135 فوق منطقة الدخول 128.54 بـ5%) وهي بوابة تُختبر في test_fe170
+        monkeypatch.setattr(vnz, "MAX_ENTRY_DISTANCE_PCT", 0.0)
         with vnz.scan_stats_lock:
             vnz.scan_stats["rejected_htf_bias"] = 0
         yield

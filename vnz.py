@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.6.2"  # FE1.6.2: بوابة حيوية الفرضية — لا إشارات من محاور تاريخية ماتت فرضيتها (الإغلاق دون P0) — قتل حلقة DOA (إنشاء/إبطال خلال 60ث) التي أبطلت 5 من 7 إشارات فور ولادتها
+BOT_VERSION = "FE1.7.0"  # FE1.7.0: بوابات جودة القبول (مطاردة/هدف محقق/عمر بنية/تبريد/عنقود/سقوف تعرض ورقي) + إلغاء الأمر الحقيقي فعليًا على المنصة + حارس انقطاع التغذية للمواضع المفتوحة + حراسات تصفير ثلاثية (تأكيد/منع/أرشفة)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -256,6 +256,23 @@ TP_MIN_RR = float(os.getenv("TP_MIN_RR", "0.5"))          # أدنى مخاطر�
 HTF_BIAS_ENABLED = os.getenv("HTF_BIAS_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 HTF_BIAS_TIMEFRAME = os.getenv("HTF_BIAS_TIMEFRAME", "1d")  # فريم التحيز الأعلى (يوجّه فريم الكشف 15m)
 HTF_BIAS_CACHE_SEC = float(os.getenv("HTF_BIAS_CACHE_SEC", "14400"))  # كاش التحيز 4 ساعات (وزن REST مهمل)
+
+# [FE1.7.0] بوابات جودة القبول — دروس أول صفقات حية: 8/9 إشارات كانت مطاردة فوق منطقة
+# الدخول (+1.1% إلى +4.3%) و5 منها انتهت دون لمس، 3/9 إعادة حرفية لنفس المحاور،
+# وإشارة UNI بهدف أقل من السعر الحي (نمط حقق هدفه والبوت يشتري بعده).
+MAX_ENTRY_DISTANCE_PCT = float(os.getenv("MAX_ENTRY_DISTANCE_PCT", "1.5"))      # أقصى ارتفاع للسوق فوق منطقة الدخول % — لا مطاردة (0 يعطل)
+MAX_STRUCTURE_AGE_BARS = int(os.getenv("MAX_STRUCTURE_AGE_BARS", "12"))        # أقصى عمر بنية P5 بالشموع — لا بنى أتمت قبل ساعات (0 يعطل)
+SYMBOL_COOLDOWN_SEC = float(os.getenv("SYMBOL_COOLDOWN_SEC", "5400"))          # تبريد الرمز بعد انتهاء/إلغاء أمر معلق — لا إعادة إنشاء حرفية (0 يعطل)
+CLUSTER_MAX_SAME_DIRECTION = int(os.getenv("CLUSTER_MAX_SAME_DIRECTION", "3")) # سقف الإشارات الصاعدة النشطة معًا — لا 5 لونجات مترابطة (0 يعطل)
+# [FE1.7.0] سقوف التعرض الورقي — كانت الورقي يفتح مركزًا بقيمة 2.5× الرصيد (مخاطرة 1%
+# على وقف ضيق = رافعة ضمنية) بينما الحقيقي مقيد بـ REAL_MAX_NOTIONAL_USDT — الإحصاءات
+# الورقية لن تكون تنبؤية للحقيقي دون سقوف مماثلة.
+PAPER_MAX_POSITION_PCT = float(os.getenv("PAPER_MAX_POSITION_PCT", "30"))      # سقف قيمة المركز الواحد % من الرصيد الورقي (0 يعطل)
+PAPER_MAX_TOTAL_PCT = float(os.getenv("PAPER_MAX_TOTAL_PCT", "100"))           # سقف مجموع قيم المراكز الورقية النشطة % من الرصيد (0 يعطل)
+# [FE1.7.0] حارس انقطاع التغذية مع مواضع مفتوحة — كان فشل الجلب يُتخطى صامتًا
+# فيمضي الوقف/الهدف بلا فحص طوال الانقطاع (إعادة نشر/حظر 418/سقوط المزودين)
+OUTAGE_ALERT_AFTER_CYCLES = int(os.getenv("OUTAGE_ALERT_AFTER_CYCLES", "3"))   # تنبيه بعد N دورات مراقبة فاشلة متتالية (60ث لكل دورة)
+OUTAGE_RENOTIFY_SEC = float(os.getenv("OUTAGE_RENOTIFY_SEC", "900"))           # تكرار التنبيه كل 15 دقيقة طوال الانقطاع
 
 # [FE1.3.0] البقاء الحي — نبضة ذاتية إلى /health العام (بلا مصادقة) تمنع نوم Render المجاني
 # (الخطة المجانية تُخمد الخدمة بعد 15 دقيقة بلا طلبات خارجية، والاستيقاظ يأخذ نحو دقيقة)
@@ -381,6 +398,12 @@ scan_stats: Dict[str, Any] = {
     "setups_bear_seen": 0, "rejected_active_limit": 0, "rejected_symbol_busy": 0,
     "rejected_htf_bias": 0,  # [FE1.6.0] إشارات صاعدة مرفوضة لانحياز هابط قوي على الفريم الأعلى
     "rejected_stale_premise": 0,  # [FE1.6.2] إشارات من محاور تاريخية: الإغلاق الحالي دون P0 (فرضية ماتت)
+    "rejected_far_entry": 0,      # [FE1.7.0] مطاردة: السوق أعلى من منطقة الدخول بفارق كبير
+    "rejected_target_invalid": 0, # [FE1.7.0] الهدف تحت السعر الحي أو تحت P5 — نمط حقق هدفه بالفعل
+    "rejected_old_structure": 0,  # [FE1.7.0] بنية P0-P5 تجاوزت سقف العمر
+    "rejected_cooldown": 0,       # [FE1.7.0] تبريد الرمز بعد انتهاء/إلغاء حديث
+    "rejected_cluster": 0,        # [FE1.7.0] سقف العنقود الاتجاهي
+    "rejected_exposure_cap": 0,   # [FE1.7.0] سقوف التعرض الورقي (مركز/إجمالي)
     "last_scan_at": "", "last_scan_fetched": 0,  # [FE1.0.1] تشخيص دورة المسح
 }
 
@@ -1261,6 +1284,39 @@ def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
         else:
             logger.info("[%s] رفض الحجم: مسافة الوقف واسعة جدًا لأدنى حجم (%.2f USDT مخاطرة)", symbol, qty_min * risk_per_coin)
             return None
+    # [FE1.7.0] سقف المركز الواحد — كبح الرافعة الضمنية للورقي (القيمة فوق السقف تُقلّص لا تُرفض)
+    if PAPER_MAX_POSITION_PCT > 0:
+        max_pos = balance * (PAPER_MAX_POSITION_PCT / 100.0)
+        if notional > max_pos:
+            qty = amount_prec(symbol, max_pos / entry)
+            if qty <= 0:
+                qty = math.floor(max_pos / entry * 1e6) / 1e6
+            notional = qty * entry
+            logger.info("[%s] قُلّص الحجم بسقف المركز الورقي (%.0f%% من الرصيد = %.2f$)",
+                        symbol, PAPER_MAX_POSITION_PCT, notional)
+    # [FE1.7.0] سقف التعرض الإجمالي للمراكز النشطة — الباقي من السقف هو الأقصى المسموح
+    if PAPER_MAX_TOTAL_PCT > 0:
+        max_total = balance * (PAPER_MAX_TOTAL_PCT / 100.0)
+        remaining = max_total - active_paper_notional()
+        if remaining < MIN_NOTIONAL_USDT:
+            with scan_stats_lock:
+                scan_stats["rejected_exposure_cap"] += 1
+            logger.info("[%s] رفض: التعرض الورقي النشط بلغ سقف %.0f%% من الرصيد (%.2f$/%.2f$)",
+                        symbol, PAPER_MAX_TOTAL_PCT, max_total - remaining, max_total)
+            return None
+        if notional > remaining:
+            qty = amount_prec(symbol, remaining / entry)
+            if qty <= 0:
+                qty = math.floor(remaining / entry * 1e6) / 1e6
+            notional = qty * entry
+            logger.info("[%s] قُلّص الحجم بسقف التعرض الإجمالي إلى %.2f$ (المتبقي %.2f$)",
+                        symbol, notional, remaining)
+    if notional < MIN_NOTIONAL_USDT:
+        # [FE1.7.0] بعد التقليص صار أدنى من قيمة التداول — لا صفقة
+        with scan_stats_lock:
+            scan_stats["rejected_exposure_cap"] += 1
+        logger.info("[%s] رفض: الحجم بعد سقوف التعرض دون أدنى قيمة (%.2f$)", symbol, notional)
+        return None
     return qty
 
 
@@ -1269,6 +1325,20 @@ def active_trade_count() -> int:
         "SELECT COUNT(*) AS n FROM signals WHERE status IN ('pending', 'open')"
     )
     return int(rows[0]["n"]) if rows else 0
+
+
+def active_paper_notional() -> float:
+    """[FE1.7.0] مجموع قيمة المراكز الورقية النشطة (معلقة + مفتوحة) — لسقف التعرض الإجمالي.
+    كانت الورقي يفتح مركزًا بقيمة 2.5× الرصيد (AVAX: وقف 0.4% × مخاطرة 1% = 24,920$)
+    فيصبح سقف 5 صفقات رافعة ضمنية 12×+ لا تمثل اقتصاد الحقيقي المقيّد بـ 50$/أمر."""
+    rows = db.query(
+        "SELECT COALESCE(SUM(notional_usdt), 0) AS s FROM signals"
+        " WHERE status IN ('pending', 'open') AND COALESCE(is_real, 0) = 0"
+    )
+    try:
+        return float(rows[0]["s"] or 0.0) if rows else 0.0
+    except Exception:
+        return 0.0
 
 
 def symbol_has_active(symbol: str) -> bool:
@@ -1739,11 +1809,14 @@ def register_detection(symbol: str, setup: DetectedSetup, traded: bool) -> None:
         del recent_detections[DETECTIONS_MAX:]
 
 
-def create_pending_signal(symbol: str, setup: DetectedSetup) -> bool:
+def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float = 0.0) -> bool:
     """أمر معلّق عند 0.382 لتراجع الموجة 3 — كما ينفذ الأصل _determine_entry_price.
     [FE1.4.0] وضع التداول الحقيقي: أمر LIMIT BUY فعلي على باينانس بنفس السعر
     وبقواعد المنصة الكاملة (دقة السعر/الكمية، أدنى قيمة، كفاية الرصيد).
-    فشل الأمر الحقيقي = لا إشارة (لا سقوط صامت للورقي)."""
+    فشل الأمر الحقيقي = لا إشارة (لا سقوط صامت للورقي).
+    [FE1.7.0] بوابتا المطاردة وصلاحية الهدف لحظة الإنشاء (last_close=0 يُعطّلهما
+    — توافق نداءات الاختبارات القديمة): لا أمر معلق بعيدًا عن السوق (زومبي يقطس
+    خانة 45 دقيقة ثم يُعاد حرفيًا)، ولا شراء نمطٍ حقق هدفه بالفعل."""
     entry = float(setup.entry_zone_low)
     sl = float(setup.stop_loss_price)
     tp = compute_take_profit(setup)
@@ -1759,6 +1832,34 @@ def create_pending_signal(symbol: str, setup: DetectedSetup) -> bool:
         logger.info("[%s] أسعار الإعداد غير منطقية (entry=%s sl=%s tp=%s) — تجاهل",
                     symbol, fmt_price(entry), fmt_price(sl), fmt_price(tp))
         return False
+    # [FE1.7.0] بوابة المطاردة: من بيانات أول صفقات حية — 8/9 إشارات مُنشأة كانت
+    # بسعر سوق أعلى من منطقة الدخول (+1.1% إلى +4.3%) و5 منها انتهت دون لمس:
+    # المعلق البعيد يقطس خانة 45 دقيقة ثم يُعاد حرفيًا كل دورة. الشراء فقط حين
+    # يكون السعر قرب منطقة الدخول فعلًا (تراجع W4 بدأ) — عندها الملء له معنى.
+    if last_close > 0 and MAX_ENTRY_DISTANCE_PCT > 0:
+        distance_pct = (float(last_close) / entry - 1.0) * 100.0
+        if distance_pct > MAX_ENTRY_DISTANCE_PCT:
+            with scan_stats_lock:
+                scan_stats["rejected_far_entry"] += 1
+            logger.info("[%s] رفض مطاردة: السعر الحي %s أعلى من منطقة الدخول %s بـ%.2f%% (السقف %.1f%%) — لا إشارة",
+                        symbol, fmt_price(float(last_close)), fmt_price(entry),
+                        distance_pct, MAX_ENTRY_DISTANCE_PCT)
+            return False
+    # [FE1.7.0] صلاحية الهدف: هدف تحت السعر الحي أو تحت P5 = الموجة 5 وصلت السقف
+    # (حالة حية UNI: TP=7.592 والإغلاق 7.6 وP5=7.713 — الشراء بعد تحقق الهدف)
+    if last_close > 0 and setup.direction == "BULLISH":
+        try:
+            p5 = float(setup.pivot_prices[5])
+        except (TypeError, ValueError, IndexError):
+            p5 = 0.0
+        ceiling = max(float(last_close), p5) if p5 > 0 else float(last_close)
+        if tp <= ceiling:
+            with scan_stats_lock:
+                scan_stats["rejected_target_invalid"] += 1
+            logger.info("[%s] رفض هدف مُحقق: TP %s ≤ max(الإغلاق %s, P5 %s) — لا إشارة",
+                        symbol, fmt_price(tp), fmt_price(float(last_close)),
+                        fmt_price(p5) if p5 > 0 else "—")
+            return False
     real = is_real_mode
     order_id: Optional[str] = None
     if real:
@@ -2019,9 +2120,12 @@ def monitor_step() -> None:
             df = get_recent_candles(symbol, ENTRY_TIMEFRAME, limit=2, min_candles=2)  # [FE1.2.0] ويب سوكت أولًا
         except Exception as exc:
             logger.warning("[مراقبة] فشل جلب %s: %s", symbol, exc)
+            _open_outage_step(symbol, True)   # [FE1.7.0] موضع حي بلا تغذية — لا صمت
             continue
         if df is None or df.empty:
+            _open_outage_step(symbol, True)   # [FE1.7.0]
             continue
+        _open_outage_step(symbol, False)      # [FE1.7.0] نجاح — صفّر عداد الانقطاع
         last = df.iloc[-1]
         high_now, low_now = float(last["high"]), float(last["low"])
         # تتبع القمة لعرضه في اللوحة
@@ -2105,6 +2209,41 @@ def maybe_notify_outage() -> None:
         "تعذّر جلب الشموع من كل مزودي البيانات (باينانس والبدائل) — البوت يراقب وسيحاول مع الدورة القادمة تلقائيًا",
         "DATA_OUTAGE",
     )
+
+
+# [FE1.7.0] حارس انقطاع التغذية مع مواضع مفتوحة — كان فشل الجلب يُتخطى صامتًا
+# (df=None → continue) فيمضي الوقف/الهدف بلا فحص طوال الانقطاع: إعادة نشر،
+# حظر 418 على العنوان المشترك مع تبريد مزودين متتالين، أو سقوط السلسلة كلها.
+_open_outage_lock = threading.Lock()
+_open_outage: Dict[str, Dict[str, Any]] = {}   # symbol → {n: دورات فاشلة متتالية, last: آخر تنبيه}
+
+
+def _open_outage_step(symbol: str, failed: bool) -> None:
+    """تتبع فشل جلب الشموع لرمز عليه موضع مفتوح: تنبيه بعد OUTAGE_ALERT_AFTER_CYCLES
+    دورات فاشلة متتالية (≈3 دقائق) ثم تكرار كل OUTAGE_RENOTIFY_SEC طوال الانقطاع.
+    النجاح يصفّر العداد. صفر حلقات جديدة — يركب حلقة المراقبة القائمة."""
+    if not failed:
+        with _open_outage_lock:
+            _open_outage.pop(symbol, None)
+        return
+    notify = False
+    n = 0
+    with _open_outage_lock:
+        st = _open_outage.setdefault(symbol, {"n": 0, "last": 0.0})
+        st["n"] += 1
+        n = st["n"]
+        if n == OUTAGE_ALERT_AFTER_CYCLES or (
+            n > OUTAGE_ALERT_AFTER_CYCLES and time.time() - st["last"] >= OUTAGE_RENOTIFY_SEC
+        ):
+            st["last"] = time.time()
+            notify = True
+    if notify:
+        log_and_notify(
+            "error",
+            f"⚠ انقطاع تغذية أسعار {symbol} وعليه موضع مفتوح — فشل الجلب {n} دورة متتالية، "
+            f"الوقف/الهدف لا يُفحصان طوال الانقطاع. راقب المركز يدويًا إن استمر.",
+            "DATA_OUTAGE_OPEN",
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2548,6 +2687,57 @@ def premise_alive(setup: DetectedSetup, last_close: float) -> bool:
         return True
 
 
+def structure_fresh(setup: DetectedSetup, df) -> bool:
+    """[FE1.7.0] سقف عمر البنية: كم شمعة مرّت منذ نهاية النافذة (P5)؟
+    النوافذ تُعاد كل دورة — بنية اكتملت قبل ساعات والسعر متمهل بعدها = مطاردة
+    أو إعادة إنشاء حرفية (إثبات حي: محاور UNI/BAT/WLD متطابقة عبر ساعتين).
+    فشل القراءة = تساهل (fail-open) — بوابة جودة لا نقطة فشل."""
+    if MAX_STRUCTURE_AGE_BARS <= 0:
+        return True
+    try:
+        p5_idx = int(setup.pivot_indices[5])
+        age = (len(df) - 1) - p5_idx
+        return age <= MAX_STRUCTURE_AGE_BARS
+    except (TypeError, ValueError, IndexError, AttributeError):
+        return True
+
+
+def on_symbol_cooldown(symbol: str) -> bool:
+    """[FE1.7.0] تبريد الرمز بعد انتهاء/إلغاء أمر معلق حديث — يقتل إعادة الإنشاء
+    الحرفية كل دورة (إثبات حي: BAT انتهت 21:45 ← أُعيدت 22:00 بنفس المحاور).
+    فشل الاستعلام = تساهل (fail-open)."""
+    if SYMBOL_COOLDOWN_SEC <= 0:
+        return False
+    try:
+        cutoff = datetime.fromtimestamp(
+            time.time() - SYMBOL_COOLDOWN_SEC, tz=timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = db.query(
+            "SELECT COUNT(*) AS n FROM signals WHERE symbol = %s AND status IN ('expired', 'cancelled')"
+            " AND COALESCE(closed_at, created_at) >= %s",
+            (symbol, cutoff),
+        )
+        return bool(rows and int(rows[0]["n"]) > 0)
+    except Exception as exc:
+        logger.debug("[%s] فحص التبريد فشل (تساهل): %s", symbol, exc)
+        return False
+
+
+def same_direction_active(direction: str = "BULLISH") -> int:
+    """[FE1.7.0] عدد المراكز النشطة بنفس الاتجاه — لسقف العنقود الاتجاهي:
+    5 ألتكوین لونجة تُضرب بشمعة BTC واحدة كأنها رهان بيتا واحد ×5.
+    فشل الاستعلام = 0 (تساهل) — بوابة جودة لا نقطة فشل، كبقية البوابات."""
+    try:
+        rows = db.query(
+            "SELECT COUNT(*) AS n FROM signals WHERE status IN ('pending', 'open') AND direction = %s",
+            (direction,),
+        )
+        return int(rows[0]["n"]) if rows else 0
+    except Exception as exc:
+        logger.debug("فحص العنقود الاتجاهي فشل (تساهل): %s", exc)
+        return 0
+
+
 def scan_cycle() -> None:
     """دورة كشف كاملة على القائمة — الكشف الصاعد يُنفذ ورقيًا والهابط يُعرض فقط."""
     db.ensure()
@@ -2579,32 +2769,53 @@ def scan_cycle() -> None:
             if bulls:
                 best = select_best_setup(bulls)
                 if best is not None:
-                    already = symbol_has_active(symbol)
-                    full = active_trade_count() >= MAX_OPEN_TRADES
+                    last_close = float(df.iloc[-1]["close"])
                     traded = False
-                    if already:
-                        with scan_stats_lock:
-                            scan_stats["rejected_symbol_busy"] += 1
-                    elif full:
-                        with scan_stats_lock:
-                            scan_stats["rejected_active_limit"] += 1
-                    elif not trading_on:
+                    # [FE1.7.0] إعادة ترتيب البوابات: الحيوية والتقادم أولًا — فرضية ميتة
+                    # أو بنية أثرية يجب ألا تُحسب «مشغول» أو «ممتلئ» (كانت تلوث عدادات
+                    # الاحتلال: 55% منها أعراض زومبي لا تشدد حقيقي، فتُخفي السبب الحقيقي)
+                    if not trading_on:
                         logger.info("[%s] إعداد صاعد صالح لكن توليد الإشارات معطل (ورقي متوقف)", symbol)
-                    elif not premise_alive(best, float(df.iloc[-1]["close"])):
+                    elif not premise_alive(best, last_close):
                         # [FE1.6.2] الفرضية ماتت قبل الولادة — لا تخلق أمرًا سيُبطل خلال دقيقة
                         with scan_stats_lock:
                             scan_stats["rejected_stale_premise"] += 1
                         logger.info(
                             "[%s] إعداد صاعد متقادم: الإغلاق %s دون أصل الموجة "
                             "P0=%s — لا إشارة",
-                            symbol, fmt_price(float(df.iloc[-1]["close"])),
+                            symbol, fmt_price(last_close),
                             fmt_price(float(best.pivot_prices[0])))
+                    elif not structure_fresh(best, df):
+                        # [FE1.7.0] بنية أتمت قبل زمن طويل — لا إشارات من محاور أثرية
+                        with scan_stats_lock:
+                            scan_stats["rejected_old_structure"] += 1
+                        logger.info("[%s] بنية متقادمة: نهاية النافذة (P5) تجاوزت سقف العمر %s شمعة — لا إشارة",
+                                    symbol, MAX_STRUCTURE_AGE_BARS)
+                    elif on_symbol_cooldown(symbol):
+                        # [FE1.7.0] تبريد بعد انتهاء/إلغاء حديث — لا إعادة إنشاء حرفية
+                        with scan_stats_lock:
+                            scan_stats["rejected_cooldown"] += 1
+                        logger.info("[%s] رمز في فترة تبريد %.0f ثانية بعد انتهاء/إلغاء أمر معلق — لا إشارة",
+                                    symbol, SYMBOL_COOLDOWN_SEC)
+                    elif symbol_has_active(symbol):
+                        with scan_stats_lock:
+                            scan_stats["rejected_symbol_busy"] += 1
+                    elif CLUSTER_MAX_SAME_DIRECTION > 0 and same_direction_active("BULLISH") >= CLUSTER_MAX_SAME_DIRECTION:
+                        # [FE1.7.0] عنقود اتجاهي — 5 لونجات مترابطة تُضرب بشمعة BTC واحدة
+                        n_cluster = same_direction_active("BULLISH")
+                        with scan_stats_lock:
+                            scan_stats["rejected_cluster"] += 1
+                        logger.info("[%s] سقف العنقود الاتجاهي: %s إشارات صاعدة نشطة (السقف %s) — لا إشارة",
+                                    symbol, n_cluster, CLUSTER_MAX_SAME_DIRECTION)
+                    elif active_trade_count() >= MAX_OPEN_TRADES:
+                        with scan_stats_lock:
+                            scan_stats["rejected_active_limit"] += 1
                     elif HTF_BIAS_ENABLED and htf_bias(symbol) is False:
                         # [FE1.6.0] حقبة هابطة واضحة على الفريم الأعلى — لا دخولات عكس التدفق
                         with scan_stats_lock:
                             scan_stats["rejected_htf_bias"] += 1
                     else:
-                        traded = create_pending_signal(symbol, best)
+                        traded = create_pending_signal(symbol, best, last_close=last_close)
                     register_detection(symbol, best, traded=traded)
         except Exception as exc:
             logger.exception("[%s] استثناء في دورة المسح: %s", symbol, exc)
@@ -2915,6 +3126,30 @@ def api_trades_cancel():
     if not rows:
         return jsonify({"ok": False, "error": "لا يوجد أمر معلق بهذا المعرف"}), 404
     sig = rows[0]
+    # [FE1.7.0] الحقيقية: الإلغاء يجب أن يمس المنصة فعلًا — الكود القديم كان يقلب الـDB فقط
+    # فيبقى LIMIT BUY راكدًا GTC على باينانس (ثغرة مؤكدة: نص اللوحة يعد بـ«إلغاء الأمر
+    # الفعلي» ولا يحدث، وإن ملأ الأمر لاحقًا صار موضعًا حقيقيًا يتيمًا بلا تتبع).
+    if sig.get("is_real"):
+        ex = binance_trade_exchange()
+        if ex is None:
+            log_and_notify("error", f"❌ تعذر إلغاء {sig['symbol']} حقيقيًا: مفاتيح باينانس غائبة", "REAL_TRADE_ERROR")
+            return jsonify({"ok": False, "error": "مفاتيح باينانس غير مضبوطة — لم يُلغَ الأمر الحقيقي على المنصة"}), 503
+        if not sig.get("order_id"):
+            # أمر قديم بلا معرف منصة — محاسبة محلية فقط
+            db.execute(
+                "UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s WHERE id=%s",
+                ("إلغاء يدوي من اللوحة (بلا معرف أمر على المنصة)", utc_now_iso(), sig_id),
+            )
+            return jsonify({"ok": True, "message": f"أُلغي أمر {sig['symbol']} محاسبيًا (بلا معرف أمر على المنصة)"})
+        if not cancel_real_order(ex, sig["symbol"], sig["order_id"]):
+            # فشل الإلغاء: لا نصفي الـDB — أمر حي على المنصة وإعادة المحاولة آلية في المراقبة
+            log_and_notify("warning", f"⚠ فشل إلغاء الأمر الحقيقي {sig['symbol']} — يبقى حيًا على المنصة وإعادة المحاولة آلية في دورة المراقبة", "REAL_TRADE_ERROR")
+            return jsonify({"ok": False, "error": "فشل إلغاء الأمر على باينانس — ستُعاد المحاولة آليًا في دورة المراقبة القادمة"}), 502
+        _resync_after_cancel_attempt(_parse_sig_row(sig), ex, "إلغاء يدوي من اللوحة")
+        fresh = db.query("SELECT status FROM signals WHERE id = %s", (sig_id,))
+        new_status = fresh[0]["status"] if fresh else "?"
+        log_and_notify("info", f"🚫 [حقيقي] أُرسل إلغاء الأمر لـ {sig['symbol']} — الحالة من المنصة: {new_status}", "ORDER_CANCELLED")
+        return jsonify({"ok": True, "message": f"أُلغي الأمر الحقيقي لـ {sig['symbol']} (حالة المنصة الآن: {new_status})"})
     db.execute(
         "UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s WHERE id=%s",
         ("إلغاء يدوي من اللوحة", utc_now_iso(), sig_id),
@@ -3054,6 +3289,30 @@ def api_stats_reset():
     resp = require_dashboard_auth()
     if resp:
         return resp
+    body = request.get_json(silent=True) or {}
+    confirm = str(body.get("confirm") or request.args.get("confirm") or "").strip().upper()
+    # [FE1.7.0] حارس 1: تأكيد صريح — استدعاء POST عابر لا يمحو سجل القياس كله
+    if confirm != "RESET":
+        return jsonify({"ok": False, "error": "التصفير يتطلب تأكيدًا صريحًا: أرسل confirm=RESET"}), 400
+    # [FE1.7.0] حارس 2: لا تصفير فوق صفقات حقيقية نشطة — كان DELETE يمحو تتبع موضع حي فيصير يتيمًا
+    active_real = db.query(
+        "SELECT COUNT(*) AS n FROM signals WHERE COALESCE(is_real, 0) = 1 AND status IN ('pending', 'open')"
+    )
+    n_active_real = int(active_real[0]["n"]) if active_real else 0
+    if n_active_real > 0:
+        return jsonify({"ok": False, "error": f"توجد {n_active_real} صفقة حقيقية نشطة — أغلقها أو ألغها قبل التصفير"}), 409
+    # [FE1.7.0] حارس 3: أرشفة قبل الحذف — سجل الصفقات هو أصل التعلم والمعايرة
+    # (درس V9: ضغط المستخدم التصفير فعليًا ففقد كل التاريخ)
+    all_rows = db.query("SELECT * FROM signals")
+    arch_key = "stats_archive_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    try:
+        db_set_state(arch_key, json.dumps(all_rows, default=str))
+        old_arch = db.query("SELECT key FROM bot_state WHERE key LIKE 'stats_archive_%' ORDER BY key DESC")
+        for r in (old_arch or [])[3:]:  # احتفظ بآخر 3 أرشيفات فقط
+            db.execute("DELETE FROM bot_state WHERE key = %s", (r["key"],))
+    except Exception as exc:
+        logger.warning("فشل أرشفة التصفير — أُلغي التصفير كليًا: %s", exc)
+        return jsonify({"ok": False, "error": "فشل حفظ الأرشفة — لم يُصفّر شيء"}), 500
     db.execute("DELETE FROM signals")
     db.execute("DELETE FROM notifications")
     set_paper_balance(PAPER_BALANCE_START)
@@ -3062,7 +3321,7 @@ def api_stats_reset():
     with scan_stats_lock:
         for k in scan_stats:
             scan_stats[k] = 0
-    msg = "🧹 تم تصفير الإحصائيات والصفقات وإرجاع الرصيد الورقي إلى البداية"
+    msg = f"🧹 صُفّرت الإحصائيات ({len(all_rows)} صفقة أُرشفت في {arch_key}) وعاد الرصيد الورقي للبداية"
     log_and_notify("info", msg, "STATS_RESET")
     return jsonify({"ok": True, "message": msg})
 

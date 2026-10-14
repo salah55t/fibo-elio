@@ -329,7 +329,7 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "FE1.6.2"
+        assert body["version"] == "FE1.7.0"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 
@@ -363,7 +363,10 @@ class TestDashboardAPI:
         s = [x for x in DET.scan(impulse_df()) if x.direction == "BULLISH"][-1]
         vnz.create_pending_signal("TEST/USDT", s)
         client = vnz.app.test_client()
+        # [FE1.7.0] التصفير يتطلب تأكيدًا صريحًا confirm=RESET
         r = client.post("/api/stats/reset")
+        assert r.status_code == 400  # بلا تأكيد — لا تصفير
+        r = client.post("/api/stats/reset", json={"confirm": "RESET"})
         assert r.status_code == 200
         assert vnz.get_paper_balance() == vnz.PAPER_BALANCE_START
         assert vnz.active_trade_count() == 0
@@ -860,7 +863,7 @@ class TestWebSocketPriceFeedFE120:
         r = client.get("/api/ws/status")
         assert r.status_code == 200
         data = r.get_json()
-        assert data["version"] == "FE1.6.2"
+        assert data["version"] == "FE1.7.0"
         assert data["enabled"] is True
         assert "prices" in data and "subscriptions" in data and "candles" in data
 
@@ -878,7 +881,7 @@ class TestWebSocketPriceFeedFE120:
         client = vnz.app.test_client()
         data = client.get("/health").get_json()
         assert data["live_feed"] in ("websocket", "rest")
-        assert data["version"] == "FE1.6.2"
+        assert data["version"] == "FE1.7.0"
 
     def test_ws_exchange_unknown_provider_raises(self):
         with pytest.raises(ValueError):
