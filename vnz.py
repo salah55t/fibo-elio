@@ -192,7 +192,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.8.7"  # FE1.8.7: اقتباس طبقة الاتصال وجلب المعلومات من بوت V9 — الشموع عبر طلبات خام مباشرة (requests بلا ccxt وبلا أسواق): bybit→okx→gate أولًا (حدود سخية) وباينانس احتياطًا أخيرًا خلف حارس وزن تكيفي (نافذة دقيقة منزلقة + ميزانية تنخفض 40% عند الحظر وتتعافى 8%/3د + تبريد استئناف وتدرج فاصل ×4) — نفس معمارية V9.9/V9.20 التي عاشت شهورًا على IP مشترك بلا حظر 418 متكرر. (FE1.8.6: تبديل المزود يصل السجل/اللوحة) (FE1.8.5: شفافية فشل اتصال باينانس + سقف 36)
+BOT_VERSION = "FE1.8.8"  # FE1.8.8: إصلاح موت إشارات أول دورة إقلاع — علم التوليد على قاعدة حالة فارغة/غير جاهزة يبدأ مفعّلًا (ورقي آمن) بدل «معطل» صامتة + تفعيل التوليد من اللوحة يوقظ فحص كشف فوري بدل انتظار إغلاق الشمعة القادمة. (FE1.8.7: طبقة اتصال V9 الخام + حارس وزن باينانس)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -3445,6 +3445,7 @@ _scanner_state: Dict[str, Any] = {
 }
 _scanner_results: List[Dict[str, Any]] = []   # أعلى النتائج (قواميس صغيرة)
 _scan_kick = threading.Event()  # [FE1.8.4] دورة كشف ميتة توقظ الماسح لفحص مبكر بدل انتظار SCAN_INTERVAL_SEC
+_detect_kick = threading.Event()  # [FE1.8.8] تفعيل التوليد من اللوحة يوقظ دورة كشف فورية بدل انتظار إغلاق الشمعة القادمة
 _scanner_boot_restored = False
 
 # أصول أساس مستقرة/ورقية — بلا موجات إليوت ذات معنى (بيزوج USDT شبه ثابت أو ورقي)
@@ -4081,7 +4082,10 @@ def scan_loop() -> None:
         mem_check("بعد دورة مسح")  # [FE1.3.1] حمية الذاكرة
         nap = seconds_until_next_candle(SIGNAL_TIMEFRAME)
         logger.info("الدورة اكتملت — النوم %.0f ثانية حتى إغلاق شمعة %s القادمة", nap, SIGNAL_TIMEFRAME)
-        time.sleep(nap)
+        # [FE1.8.8] نوم قابل للتوقظ — تفعيل التوليد من اللوحة يطلق دورة كشف فورية
+        if _detect_kick.wait(timeout=nap):
+            _detect_kick.clear()
+            logger.info("⚡ دورة كشف فورية بطلب اللوحة (تفعيل التوليد)")
 
 
 def monitor_loop() -> None:
@@ -4523,6 +4527,13 @@ def toggle_trading_status():
     with trading_status_lock:
         is_trading_enabled = not is_trading_enabled
         db_set_state("trading_enabled", "1" if is_trading_enabled else "0")
+    if is_trading_enabled:
+        # [FE1.8.8] التفعيل يوقظ فحص الكون وفحص الكشف فورًا — أول توصية خلال ثوانٍ لا بعد 15 دقيقة
+        try:
+            _scan_kick.set()
+            _detect_kick.set()
+        except Exception:
+            pass
     msg = "🌊 توليد الإشارات الورقية: مفعّل" if is_trading_enabled else "⏸ توليد الإشارات الورقية: معطّل (المراقبة مستمرة)"
     log_and_notify("info", msg, "TRADING_STATUS_CHANGE")
     return jsonify({"trading_enabled": is_trading_enabled, "message": msg})
@@ -4682,9 +4693,29 @@ def get_dashboard_html():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def restore_trading_flag() -> None:
+    """[FE1.8.8] استعادة علم توليد الإشارات الورقية — معالجة حالتَي الإقلاع الحرجتين اللتين
+    كانت تقتلان إشارات أول دورة (الأخصوب):
+    (1) قاعدة حالة فارغة (خدمة جديدة/PG جديد): المفتاح غائب ← كان يُفسر «معطل» صامتة،
+        والآن يبدأ التوليد الورقي مفعّلًا (الورقي آمن بطبيعته وهدف البوت الأول التوصيات).
+    (2) فشل قراءة عابر (PG لم يجهز بعد): 3 محاولات على 2 ثوانٍ ثم البدء مفعّلًا مع تحذير.
+    القيمة الصريحة «0» (اختيار المستخدم المحفوظ) تُحترم دائمًا وتظل معطلة."""
     global is_trading_enabled
-    flag = db_get_state("trading_enabled", "0")
-    is_trading_enabled = (flag == "1")
+    raw: Optional[str] = None
+    for attempt in range(3):
+        try:
+            raw = _state_get_raw("trading_enabled")
+            break
+        except Exception as exc:
+            logger.warning("restore_trading_flag: محاولة %d/3 فشلت: %s", attempt + 1, exc)
+            if attempt < 2:
+                time.sleep(2.0)
+    if raw is None:
+        # المفتاح غائب (قاعدة جديدة) أو فشلت كل المحاولات ← البدء مفعّلًا (ورقي آمن)
+        is_trading_enabled = True
+        db_set_state("trading_enabled", "1")
+        logger.warning("trading_enabled غائب/غير مقروء في قاعدة الحالة — البدء مفعّلًا (ورقي آمن) [FE1.8.8]")
+        return
+    is_trading_enabled = (raw == "1")
     logger.info("حالة توليد الإشارات الورقية المستعادة: %s", "مفعّلة" if is_trading_enabled else "معطلة")
 
 
