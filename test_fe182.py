@@ -208,8 +208,8 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.8.3"
-        assert panel.BOT_VERSION == "FE1.8.3"
+        assert vnz.BOT_VERSION == "FE1.8.4"
+        assert panel.BOT_VERSION == "FE1.8.4"
         assert vnz.STRATEGY_NAME == "Elliott_Fibonacci"
 
     def test_panel_html_has_reset_button(self):

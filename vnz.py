@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.8.3"  # FE1.8.3: مضاد النوم كل دقيقة (60ث بدل 600ث) + تخفيف مدروس لفتح الترشيح: عمر البنية 20 شمعة بدل 12 (كان يرفض كل الالتقاطات «بنية متقادمة») وصلاحية المعلق 6 شموع بدل 3 — premise-alive والمطاردة وrr_net ما زالتا حراسًا. (FE1.8.2: إصلاح انسداد التصفير على PG)
+BOT_VERSION = "FE1.8.4"  # FE1.8.4: فتح الترشيح مدروس بإثبات حي — قائمة مراقبة 30 زوجًا بدل 20 + عمر البنية 30 شمعة (7.5س) بدل 20 + إعادة فحص كون معجّلة عند موت القائمة (بلا بنيات حية ولا صفقات) بدل الجلوس 6 ساعات — premise-alive والمطاردة وrr_net وHTF ما زالتا حراسًا. (FE1.8.3: نبضة 60ث)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -239,13 +239,14 @@ WS_RECV_TIMEOUT_SEC = float(os.getenv("WS_RECV_TIMEOUT_SEC", "60"))  # مهلة 
 # لا load_markets إطلاقًا — نقاط خام فقط (ticker/24hr + klines) بوزن منخفض جدًا.
 SCAN_UNIVERSE_ENABLED = os.getenv("SCAN_UNIVERSE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 SCAN_INTERVAL_SEC = float(os.getenv("SCAN_INTERVAL_SEC", "21600"))    # فحص كامل كل 6 ساعات
-SCAN_TOP_N = int(os.getenv("SCAN_TOP_N", "20"))                       # عدد الأزواج المطبقة على قائمة المراقبة
+SCAN_TOP_N = int(os.getenv("SCAN_TOP_N", "30"))                       # [FE1.8.4] 30 زوجًا بدل 20 — قائمة أوسع ترفع فرص بنيات صاعدة حية (إثبات حي: 120 زوج-مسح صفر بنية حية)؛ الحمل الزائد مهمل (شموع تُحرر بعد كل رمز)
 SCAN_CANDIDATES = int(os.getenv("SCAN_CANDIDATES", "40"))             # كم مرشحًا يُحلَّل بشموع 15m
 SCAN_MIN_VOLUME_USDT = float(os.getenv("SCAN_MIN_VOLUME_USDT", "5000000"))  # سيولة 24h أدنى (5 مليون $)
 SCAN_MAX_SPREAD_PCT = float(os.getenv("SCAN_MAX_SPREAD_PCT", "0.15"))  # أقصى فرق bid/ask %
 SCAN_MIN_RANGE_PCT = float(os.getenv("SCAN_MIN_RANGE_PCT", "2.0"))     # أدنى مدى 24h % — الموجات تحتاج حركة
 SCAN_KLINES_LIMIT = int(os.getenv("SCAN_KLINES_LIMIT", "200"))         # شموع 15m لكل مرشح (وزن 2 فقط)
 SCANNER_BAN_RETRY_SEC = float(os.getenv("SCANNER_BAN_RETRY_SEC", "1800"))  # [FE1.5.1] إعادة محاولة بعد إجهاض 418/429 (30 دقيقة)
+IDLE_RESCAN_MIN_GAP_SEC = float(os.getenv("IDLE_RESCAN_MIN_GAP_SEC", "2700"))  # [FE1.8.4] أدنى فجوة بين إعجالات الفحص عند موت قائمة الكشف (45 دقيقة) — يمنع عواصف إعادة الفحص
 
 # [FE1.6.0] اقتباسات ElliottWavesEngine (github.com/SmarterSystems/ElliottWavesEngine)
 # فحص ذيل شامل للقواعد + أرضية تناسبية للأمواج الدافعة + سلّم أهداف احتمالي
@@ -261,7 +262,7 @@ HTF_BIAS_CACHE_SEC = float(os.getenv("HTF_BIAS_CACHE_SEC", "14400"))  # كاش �
 # الدخول (+1.1% إلى +4.3%) و5 منها انتهت دون لمس، 3/9 إعادة حرفية لنفس المحاور،
 # وإشارة UNI بهدف أقل من السعر الحي (نمط حقق هدفه والبوت يشتري بعده).
 MAX_ENTRY_DISTANCE_PCT = float(os.getenv("MAX_ENTRY_DISTANCE_PCT", "1.5"))      # أقصى ارتفاع للسوق فوق منطقة الدخول % — لا مطاردة (0 يعطل)
-MAX_STRUCTURE_AGE_BARS = int(os.getenv("MAX_STRUCTURE_AGE_BARS", "20"))        # [FE1.8.3] 20 شمعة (5س على 15m) بدل 12 — كانت تمنع كل الترشيحات (إثبات حي: كل الالتقاطات «بنية متقادمة»)؛ premise-alive وبوابة المطاردة ما زالتا تحميان الجودة
+MAX_STRUCTURE_AGE_BARS = int(os.getenv("MAX_STRUCTURE_AGE_BARS", "30"))        # [FE1.8.4] 30 شمعة (7.5س على 15m) بدل 20 — إثبات حي FE1.8.3: 23 رفض «بنية متقادمة» مقابل صفر رفض في بوابات الجودة الأخرى؛ premise-alive (P0) والمطاردة 1.5% وrr_net ما زالتا تحميان الجودة
 SYMBOL_COOLDOWN_SEC = float(os.getenv("SYMBOL_COOLDOWN_SEC", "5400"))          # تبريد الرمز بعد انتهاء/إلغاء أمر معلق — لا إعادة إنشاء حرفية (0 يعطل)
 CLUSTER_MAX_SAME_DIRECTION = int(os.getenv("CLUSTER_MAX_SAME_DIRECTION", "3")) # سقف الإشارات الصاعدة النشطة معًا — لا 5 لونجات مترابطة (0 يعطل)
 # [FE1.7.0] سقوف التعرض الورقي — كانت الورقي يفتح مركزًا بقيمة 2.5× الرصيد (مخاطرة 1%
@@ -2777,7 +2778,8 @@ _scanner_state: Dict[str, Any] = {
     "next_scan_at": None, "duration_ms": None, "universe": None, "passed": None,
     "candidates": None, "applied": False, "error": None, "retry_after_sec": None,
 }
-_scanner_results: List[Dict[str, Any]] = []   # أعلى النتائج (قواميس صغيرة — ≤ 20 صفًا)
+_scanner_results: List[Dict[str, Any]] = []   # أعلى النتائج (قواميس صغيرة)
+_scan_kick = threading.Event()  # [FE1.8.4] دورة كشف ميتة توقظ الماسح لفحص مبكر بدل انتظار SCAN_INTERVAL_SEC
 _scanner_boot_restored = False
 
 # أصول أساس مستقرة/ورقية — بلا موجات إليوت ذات معنى (بيزوج USDT شبه ثابت أو ورقي)
@@ -3104,12 +3106,13 @@ def universe_scan_loop() -> None:
     [FE1.5.1] بعد إجهاض 418/429 (حظر IP مشترك Render مؤقت): إعادة محاولة بعد
     SCANNER_BAN_RETRY_SEC (30 دقيقة) لاقتطاف نافذة انتهاء الحظر بدل انتظار 6 ساعات."""
     time.sleep(90.0)
+    _kicked = False  # [FE1.8.4] علم إعجال من دورة كشف ميتة
     while True:
         nap = SCAN_INTERVAL_SEC
         try:
             db.ensure()
             if SCAN_UNIVERSE_ENABLED:
-                run_universe_scan(trigger="auto")
+                run_universe_scan(trigger="idle" if _kicked else "auto")
         except Exception as exc:
             logger.warning("ماسح الكون: فشل دورة: %s", exc)
             with _scanner_lock:
@@ -3127,10 +3130,16 @@ def universe_scan_loop() -> None:
                 _scanner_state["next_scan_at"] = _dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         except Exception:
             pass
-        # نوم مجزأ (60 ثانية) — يسمح بمستقبل مرن للإيقاف ويبقى الخيط خفيفًا
+        # نوم مجزأ قابل للإعجال [FE1.8.4] — دورة كشف ميتة (بلا بنيات حية ولا صفقات)
+        # توقظ الفحص فورًا عبر _scan_kick بدل انتظار SCAN_INTERVAL_SEC كاملًا
+        _kicked = False
         slept = 0.0
         while slept < nap:
-            time.sleep(min(60.0, nap - slept))
+            if _scan_kick.wait(timeout=min(60.0, nap - slept)):
+                _scan_kick.clear()
+                _kicked = True
+                logger.info("ماسح الكون: إعجال فحص مبكر — دورة كشف بلا بنيات حية ولا صفقات")
+                break
             slept += 60.0
 
 
@@ -3249,6 +3258,37 @@ def same_direction_active(direction: str = "BULLISH") -> int:
         return 0
 
 
+def _idle_rescan_maybe(cycle_bull_live: int) -> bool:
+    """[FE1.8.4] إعادة فحص كون معجّلة عندما تكون قائمة الكشف ميتة تمامًا:
+    دورة كاملة بلا أي بنية صاعدة حية (كلها فرضية ميتة/متقادمة) وبلا معلق أو
+    مفتوح — بدل الجلوس حتى الفحص الدوري كل SCAN_INTERVAL_SEC (6 ساعات) على
+    نفس الأزواج الجافة. الحدود: فجوة أدنى IDLE_RESCAN_MIN_GAP_SEC بين
+    الإعجالات، ولا إعجال أثناء فحص جارٍ أو عقوبة حظر (retry_after_sec) أو
+    تعطيل الماسح. يعيد True فقط إذا طُلب الإعجال."""
+    if not SCAN_UNIVERSE_ENABLED or cycle_bull_live > 0:
+        return False
+    try:
+        if active_trade_count() > 0:
+            return False
+    except Exception:
+        return False
+    with _scanner_lock:
+        if _scanner_state.get("running") or _scanner_state.get("retry_after_sec"):
+            return False
+        last = _scanner_state.get("last_scan_at")
+    if not last:
+        return False
+    try:
+        last_dt = datetime.strptime(last, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        if (datetime.now(timezone.utc) - last_dt).total_seconds() < IDLE_RESCAN_MIN_GAP_SEC:
+            return False
+    except (ValueError, TypeError):
+        return False
+    _scan_kick.set()
+    log_and_notify("info", "🔄 قائمة الكشف بلا بنيات حية ولا صفقات — إعادة فحص كون معجّلة لتجديد الأزواج", "IDLE_RESCAN")
+    return True
+
+
 def scan_cycle() -> None:
     """دورة كشف كاملة على القائمة — الكشف الصاعد يُنفذ ورقيًا والهابط يُعرض فقط."""
     db.ensure()
@@ -3256,6 +3296,7 @@ def scan_cycle() -> None:
         scan_stats["cycles"] += 1
         scan_stats["last_scan_at"] = utc_now_iso()
     scanned_before = scan_stats["scanned"]
+    cycle_bull_live = 0  # [FE1.8.4] بنيات صاعدة تجاوزت الحيوية والتقادم في هذه الدورة
     trading_on = is_trading_enabled
     for i_sym, symbol in enumerate(watchlist):
         try:
@@ -3334,6 +3375,7 @@ def scan_cycle() -> None:
                         with scan_stats_lock:
                             scan_stats["rejected_htf_bias"] += 1
                     else:
+                        cycle_bull_live += 1  # [FE1.8.4] بنية حية — القائمة ليست ميتة، لا إعجال
                         _clear_reject_reason(symbol)  # [FE1.8.1] البوابات الهيكلية مرت — الحكم يصير لبواتق الإنشاء
                         traded = create_pending_signal(symbol, best, last_close=last_close)
                     register_detection(symbol, best, traded=traded)
@@ -3343,6 +3385,7 @@ def scan_cycle() -> None:
             if i_sym % 5 == 4:  # [FE1.3.2] فحص ذاكرة خفيف كل 5 أزواج — gc فوق العتبة فقط
                 mem_check("أثناء دورة المسح")
             time.sleep(INTER_SYMBOL_SLEEP)
+    _idle_rescan_maybe(cycle_bull_live)  # [FE1.8.4] قائمة ميتة بلا صفقات → فحص كون معجّل
     with scan_stats_lock:
         scan_stats["last_scan_fetched"] = scan_stats["scanned"] - scanned_before
     if scan_stats["last_scan_fetched"] == 0:

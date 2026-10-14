@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# test_fe183.py — اختبارات FE1.8.3:
+# test_fe183.py — اختبارات FE1.8.4:
 #   1) مضاد النوم كل دقيقة: KEEP_ALIVE_INTERVAL_SEC 60ث بدل 600ث (طلب المستخدم)
 #      — والقيمة تنتقل لحالة البقاء الحي التي تراها اللوحة
 #   2) فتح الترشيح المدروس: عمر البنية 20 شمعة بدل 12 (كان يرفض كل الالتقاطات
 #      «بنية متقادمة») + صلاحية المعلق 6 شموع بدل 3 — والحدود المحمية
 #      (premise-alive/المطاردة/rr_net) لم تُمس
-# العقد: 350+2 سابقة لا تنكسر (تأكيدات الإصدار حُدثت FE1.8.3).
+# العقد: 350+2 سابقة لا تنكسر (تأكيدات الإصدار حُدثت FE1.8.4).
 import threading
 import time
 
@@ -22,7 +22,7 @@ vnz.DASHBOARD_PROTECTED = False  # بيئة الاختبار: بلا مصادق�
 class TestKeepAliveMinute:
 
     def test_default_interval_is_60s(self):
-        # [FE1.8.3] طلب المستخدم: نبضة كل دقيقة بدل 10 دقائق
+        # [FE1.8.4] طلب المستخدم: نبضة كل دقيقة بدل 10 دقائق
         assert vnz.KEEP_ALIVE_INTERVAL_SEC == 60.0
 
     def test_interval_propagates_to_live_state(self, monkeypatch):
@@ -62,15 +62,15 @@ class _StubSetup:
 class TestRelaxedGates:
 
     def test_new_defaults(self):
-        assert vnz.MAX_STRUCTURE_AGE_BARS == 20      # بدل 12 — كانت ترفض كل الالتقاطات
+        assert vnz.MAX_STRUCTURE_AGE_BARS == 30      # [FE1.8.4] بدل 20 — إثبات حي: 23 رفض تقادم مقابل صفر في بوابات الجودة
         assert vnz.PENDING_MAX_CANDLES == 6          # بدل 3 — صلاحية أطول للانتظار
 
-    def test_structure_fresh_boundary_at_20(self, monkeypatch):
-        # عمر 20 شمعة (5س على 15m) = صالح | عمر 21 = رفض — الحد الجديد بالضبط
-        monkeypatch.setattr(vnz, "MAX_STRUCTURE_AGE_BARS", 20)
+    def test_structure_fresh_boundary_at_30(self, monkeypatch):
+        # عمر 30 شمعة (7.5س على 15m) = صالح | عمر 31 = رفض — الحد FE1.8.4 بالضبط
+        monkeypatch.setattr(vnz, "MAX_STRUCTURE_AGE_BARS", 30)
         df = [{"close": 1.0}] * 121
-        assert vnz.structure_fresh(_StubSetup(100), df) is True    # (120)-100 = 20
-        assert vnz.structure_fresh(_StubSetup(99), df) is False    # (120)-99 = 21
+        assert vnz.structure_fresh(_StubSetup(90), df) is True    # (120)-90 = 30
+        assert vnz.structure_fresh(_StubSetup(89), df) is False   # (120)-89 = 31
 
     def test_structure_fresh_disabled_still_works(self, monkeypatch):
         # 0 يعطل البوابة — عقد FE1.7.0 باقٍ
@@ -94,15 +94,16 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.8.3"
-        assert panel.BOT_VERSION == "FE1.8.3"
+        assert vnz.BOT_VERSION == "FE1.8.4"
+        assert panel.BOT_VERSION == "FE1.8.4"
 
     def test_render_yaml_carries_new_values(self):
         # مصدر الحقيقة على Render — يجب أن يحمل القيم الجديدة لا الافتراضيات القديمة
         import pathlib
         y = pathlib.Path("render.yaml").read_text(encoding="utf-8")
         assert 'value: "60"' in y          # KEEP_ALIVE_INTERVAL_SEC
-        assert 'value: "20"' in y          # MAX_STRUCTURE_AGE_BARS
+        assert 'value: "30"' in y          # MAX_STRUCTURE_AGE_BARS [FE1.8.4]
+        assert 'value: "2700"' in y        # IDLE_RESCAN_MIN_GAP_SEC [FE1.8.4]
         assert 'value: "6"' in y           # PENDING_MAX_CANDLES
         assert 'value: "600"' not in y     # القديم أزيل كليًا
 
