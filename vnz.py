@@ -192,7 +192,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.8.9"  # FE1.8.9: تبديل فريم الكشف/التنفيذ حيًا من اللوحة (5m/15m/1h/4h) — POST /api/config/timeframe + أزرار الفريم، تبديل نظيف (إلغاء الورقي المعلق مستثنى من التبريد + إعادة بناء الكاشف + مسح أسباب الرفض) + حفظ قاعدة الحالة يصمد عبر النشر + env SIGNAL/ENTRY_TIMEFRAME يبقى الجواب دون أي كود. (FE1.8.8: إصلاح موت إشارات أول دورة إقلاع — علم التوليد على قاعدة حالة فارغة/غير جاهزة يبدأ مفعّلًا بدل «معطل» صامتة)
+BOT_VERSION = "FE1.9.0"  # FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -280,6 +280,14 @@ HTF_BIAS_CACHE_SEC = float(os.getenv("HTF_BIAS_CACHE_SEC", "14400"))  # كاش �
 MAX_ENTRY_DISTANCE_PCT = float(os.getenv("MAX_ENTRY_DISTANCE_PCT", "1.5"))      # أقصى ارتفاع للسوق فوق منطقة الدخول % — لا مطاردة (0 يعطل)
 MAX_STRUCTURE_AGE_BARS = int(os.getenv("MAX_STRUCTURE_AGE_BARS", "36"))        # [FE1.8.5] 36 شمعة (9س على 15m) بدل 30 — إثبات حي FE1.8.4: 43 رفض تقادم مرت جميعها بوابة الفرضية الحية أولًا (الأمر الوحيد الذي يمنعها)؛ premise-alive (P0) والمطاردة 1.5% وrr_net ما زالتا تحميان — وحكم الرفض يعرض العمر الفعلي للمعايرة
 SYMBOL_COOLDOWN_SEC = float(os.getenv("SYMBOL_COOLDOWN_SEC", "5400"))          # تبريد الرمز بعد انتهاء/إلغاء أمر معلق — لا إعادة إنشاء حرفية (0 يعطل)
+# [FE1.9.0] قاتل تأخر الكشف: نبض الحركة يوقظ الكشف عند تحرك أي رمز بعتبة الزيجزاج
+# منذ آخر تقييم (تأكيد محور محتمل) — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها
+# بدل انتظار إغلاق الشمعة القادمة (حتى 15 دقيقة يتأكل فيها التصحيح نافذة الدخول)
+MOMENTUM_LOOP_SEC = float(os.getenv("MOMENTUM_LOOP_SEC", "5"))                 # دورة فحص أسعار الحارس (بلا REST — ويب سوكت فقط)
+KICK_MIN_GAP_SEC = float(os.getenv("KICK_MIN_GAP_SEC", "90"))                  # فجوة أدنى بين إيقاظات النبض — لا إغراق بالدورات
+# [FE1.9.0] بوابة عمق التصحيح: التراجع الذي يبتلع ≥78.6% من الموجة يقترب من P0 —
+# أمر معلق عنده يموت بأول شمعة غالبًا (زومبي يقطس الخانة). رفض مبكر مصنّف (0 يعطل)
+DEEP_RETRACE_BLOCK_PCT = float(os.getenv("DEEP_RETRACE_BLOCK_PCT", "0.786"))
 CLUSTER_MAX_SAME_DIRECTION = int(os.getenv("CLUSTER_MAX_SAME_DIRECTION", "3")) # سقف الإشارات الصاعدة النشطة معًا — لا 5 لونجات مترابطة (0 يعطل)
 # [FE1.7.0] سقوف التعرض الورقي — كانت الورقي يفتح مركزًا بقيمة 2.5× الرصيد (مخاطرة 1%
 # على وقف ضيق = رافعة ضمنية) بينما الحقيقي مقيد بـ REAL_MAX_NOTIONAL_USDT — الإحصاءات
@@ -444,6 +452,8 @@ scan_stats: Dict[str, Any] = {
     "setups_bear_seen": 0, "rejected_active_limit": 0, "rejected_symbol_busy": 0,
     "rejected_htf_bias": 0,  # [FE1.6.0] إشارات صاعدة مرفوضة لانحياز هابط قوي على الفريم الأعلى
     "rejected_stale_premise": 0,  # [FE1.6.2] إشارات من محاور تاريخية: الإغلاق الحالي دون P0 (فرضية ماتت)
+    "rejected_deep_retrace": 0,   # [FE1.9.0] تصحيح عميق يبتلع ≥78.6% من الموجة — أمر عنده يموت بأول شمعة
+    "momentum_kicks": 0,          # [FE1.9.0] إيقاظات نبض الحركة — كشف لحظي بدل انتظار إغلاق الشمعة
     "rejected_far_entry": 0,      # [FE1.7.0] مطاردة: السوق أعلى من منطقة الدخول بفارق كبير
     "rejected_target_invalid": 0, # [FE1.7.0] الهدف تحت السعر الحي أو تحت P5 — نمط حقق هدفه بالفعل
     "rejected_old_structure": 0,  # [FE1.7.0] بنية P0-P5 تجاوزت سقف العمر
@@ -3920,6 +3930,122 @@ def structure_fresh(setup: DetectedSetup, df) -> bool:
         return True
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# [FE1.9.0] قاتل تأخر الكشف — نبض الحركة + بوابة عمق التصحيح
+# الجذر المؤكد بالأرقام (204 بنية / 55 «فرضية ميتة» / 13 تقادم): تأكيد محور الزيجزاج
+# (حركة ≥ العتبة) يقع بين دورتي كشف، ودورة الكشف القادمة (حتى 15 دقيقة) تجد التصحيح
+# قد أكل نافذة الدخول أو كسر P0. النبض يجعل التقييم لحظيًا، والبوابات الجديدة تجعل
+# كل رفض مصنّفًا صادقًا ولا أمرًا يولد ميتًا.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_last_scan_prices_lock = threading.Lock()
+_last_scan_prices: Dict[str, float] = {}      # symbol → آخر إغلاق قُيّم في دورة كشف
+_momentum_state = {"last_kick_at": 0.0, "started": False}
+
+
+def _record_scan_price(symbol: str, close: float) -> None:
+    """[FE1.9.0] تسجيل إغلاق آخر تقييم لكل رمز — مرجع نبض الحركة."""
+    try:
+        p = float(close)
+    except (TypeError, ValueError):
+        return
+    if p <= 0:
+        return
+    with _last_scan_prices_lock:
+        _last_scan_prices[symbol] = p
+
+
+def _live_price(symbol: str) -> Optional[float]:
+    """[FE1.9.0] آخر سعر حي من ويب سوكت فقط — النبض بلا REST إطلاقًا (صفر وزن)."""
+    cur = _ws_price.get(symbol)
+    if not cur:
+        return None
+    try:
+        p = float(cur.get("price"))
+    except (TypeError, ValueError):
+        return None
+    return p if p > 0 else None
+
+
+def momentum_should_kick(ref_price: float, live_price: float,
+                         last_kick_at: float, now: Optional[float] = None) -> bool:
+    """شرط النبض النقي (قابل للاختبار): حركة ≥ عتبة الزيجزاج منذ آخر تقييم
+    + احترام فجوة KICK_MIN_GAP_SEC بين الإيقاظات."""
+    if ref_price <= 0 or live_price <= 0:
+        return False
+    move = abs(float(live_price) / float(ref_price) - 1.0)
+    if move < DEVIATION_THRESHOLD:
+        return False
+    now = time.time() if now is None else float(now)
+    return (now - float(last_kick_at)) >= KICK_MIN_GAP_SEC
+
+
+def momentum_loop() -> None:
+    """[FE1.9.0] خيط نبض الحركة — قلب إصلاح تأخر الكشف:
+    يراقب أسعار ويب سوكت الحية لقائمة الكشف كل MOMENTUM_LOOP_SEC، وأي رمز تحرك
+    بعتبة الزيجزاج نفسها (DEVIATION_THRESHOLD) منذ آخر تقييم يوقظ دورة كشف فورية
+    (_detect_kick) — البنية تُلتقط خلال ثوانٍ من اكتمال توقيعها، وأوامر الدخول
+    تُولد داخل نافذتها الحية بدل بعد ربع ساعة.
+    الحدود: بلا أسعار حية = صمت كامل (سلوك القديم يبقى)؛ فجوة KICK_MIN_GAP_SEC
+    بين الإيقاظات؛ بلا عمل أثناء فحص جارٍ أو حظر (retry_after_sec)؛ الرمز الذي
+    أطلق كيك يُحذف من المرجع حتى يعيد دورة الكشف تسجيله — لا كيك مكرر لنفس الحركة."""
+    if _momentum_state.get("started"):
+        return
+    _momentum_state["started"] = True
+    logger.info("نبض الحركة بدأ — عتبة التوقظ = عتبة الزيجزاج %.2f%% | فجوة أدنى %.0fث | دورة فحص %.0fث",
+                DEVIATION_THRESHOLD * 100, KICK_MIN_GAP_SEC, MOMENTUM_LOOP_SEC)
+    while True:
+        time.sleep(MOMENTUM_LOOP_SEC)
+        try:
+            if not SCAN_UNIVERSE_ENABLED:
+                continue
+            st_snap = dict(_scanner_state) if isinstance(_scanner_state, dict) else {}
+            if st_snap.get("running") or st_snap.get("retry_after_sec"):
+                continue
+            with _last_scan_prices_lock:
+                ref = dict(_last_scan_prices)
+            if not ref:
+                continue
+            now = time.time()
+            for sym, ref_price in ref.items():
+                lp = _live_price(sym)
+                if lp is None:
+                    continue
+                if not momentum_should_kick(ref_price, lp, _momentum_state["last_kick_at"], now):
+                    continue
+                with _last_scan_prices_lock:
+                    _last_scan_prices.pop(sym, None)  # التقييم الجديد سيعيد التسجيل
+                    _momentum_state["last_kick_at"] = now
+                with scan_stats_lock:
+                    scan_stats["momentum_kicks"] += 1
+                _scan_kick.set()
+                logger.info("⚡ نبض الحركة: %s تحرك %.2f%% منذ آخر تقييم (عتبة %.2f%%) — دورة كشف فورية",
+                            sym, abs(lp / ref_price - 1.0) * 100, DEVIATION_THRESHOLD * 100)
+                break  # كيك واحد كل فجوة — الدورة القادمة تلتقط بقية الرموز المتحركة
+        except Exception as exc:
+            logger.debug("نبض الحركة: دورة تجاوزت استثناء (صمت): %s", exc)
+
+
+def deep_retrace_ok(setup: DetectedSetup, last_close: float) -> bool:
+    """[FE1.9.0] بوابة عمق التصحيح: البنية الصاعدة المكتملة (P5 قمة) تنتظر تراجعًا
+    إلى منطقة الفيبو — لكن التراجع الذي يبتلع ≥ DEEP_RETRACE_BLOCK_PCT (78.6%)
+    من الموجة يقترب من الإبطال (P0) وأمر معلق عنده يموت بأول شمعة غالبًا
+    (نمط DOA التاريخي: أوامر زومبي تحتل الخانة وتُبطل خلال دقيقة).
+    رفض مبكر مصنّف بدل ولادة محكوم عليها. فشل القراءة = تساهل (fail-open)."""
+    if DEEP_RETRACE_BLOCK_PCT <= 0:
+        return True
+    try:
+        p0 = float(setup.pivot_prices[0])
+        p5 = float(setup.pivot_prices[5])
+        rng = p5 - p0
+        if rng <= 0:
+            return True
+        retrace = (p5 - float(last_close)) / rng
+        return retrace < DEEP_RETRACE_BLOCK_PCT
+    except (TypeError, ValueError, IndexError, AttributeError):
+        return True
+
+
 def on_symbol_cooldown(symbol: str) -> bool:
     """[FE1.7.0] تبريد الرمز بعد انتهاء/إلغاء أمر معلق حديث — يقتل إعادة الإنشاء
     الحرفية كل دورة (إثبات حي: BAT انتهت 21:45 ← أُعيدت 22:00 بنفس المحاور).
@@ -4006,6 +4132,10 @@ def scan_cycle() -> None:
                 continue
             with scan_stats_lock:
                 scan_stats["scanned"] += 1
+            try:
+                _record_scan_price(symbol, df.iloc[-1]["close"])  # [FE1.9.0] مرجع نبض الحركة
+            except (KeyError, IndexError, TypeError, ValueError):
+                pass
             setups = detector.scan(df)
             if not setups:
                 time.sleep(INTER_SYMBOL_SLEEP)
@@ -4024,22 +4154,12 @@ def scan_cycle() -> None:
                 if best is not None:
                     last_close = float(df.iloc[-1]["close"])
                     traded = False
-                    # [FE1.7.0] إعادة ترتيب البوابات: الحيوية والتقادم أولًا — فرضية ميتة
-                    # أو بنية أثرية يجب ألا تُحسب «مشغول» أو «ممتلئ» (كانت تلوث عدادات
-                    # الاحتلال: 55% منها أعراض زومبي لا تشدد حقيقي، فتُخفي السبب الحقيقي)
+                    # [FE1.9.0] إعادة ترتيب تصنيفي: التقادم قبل الحيوية — كل «فرضية ميتة»
+                    # متبقية حية العمر فعلاً (تأخر كشف حقيقي) والأثرية تُحسب تقادمًا صادقًا؛
+                    # وكل الطرفات تسبق بوابات الاحتلال كما في FE1.7.0 (لا تلوث عداداتها)
                     if not trading_on:
                         _set_reject_reason(symbol, "توليد الإشارات معطل")
                         logger.info("[%s] إعداد صاعد صالح لكن توليد الإشارات معطل (ورقي متوقف)", symbol)
-                    elif not premise_alive(best, last_close):
-                        # [FE1.6.2] الفرضية ماتت قبل الولادة — لا تخلق أمرًا سيُبطل خلال دقيقة
-                        _set_reject_reason(symbol, "الفرضية ماتت — الإغلاق تحت أصل الموجة 1 (P0)")
-                        with scan_stats_lock:
-                            scan_stats["rejected_stale_premise"] += 1
-                        logger.info(
-                            "[%s] إعداد صاعد متقادم: الإغلاق %s دون أصل الموجة "
-                            "P0=%s — لا إشارة",
-                            symbol, fmt_price(last_close),
-                            fmt_price(float(best.pivot_prices[0])))
                     elif not structure_fresh(best, df):
                         # [FE1.7.0] بنية أتمت قبل زمن طويل — لا إشارات من محاور أثرية
                         # [FE1.8.5] العمر الفعلي في الحكم — معايرة حية بدل تخمين
@@ -4052,6 +4172,36 @@ def scan_cycle() -> None:
                             scan_stats["rejected_old_structure"] += 1
                         logger.info("[%s] بنية متقادمة: عمر P5 %s شمعة > سقف العمر %s شمعة — لا إشارة",
                                     symbol, _age, MAX_STRUCTURE_AGE_BARS)
+                    elif not premise_alive(best, last_close):
+                        # [FE1.6.2] الفرضية ماتت قبل الولادة — لا تخلق أمرًا سيُبطل خلال دقيقة
+                        # [FE1.9.0] العمر في الحكم — بعد إعادة الترتيب هذا عداد «تأخر كشف حقيقي» خالص:
+                        # بنية حية العمر ماتت بين دورتين (النبض الجديد يعالج جذرها)
+                        try:
+                            _age = (len(df) - 1) - int(best.pivot_indices[5])
+                        except (TypeError, ValueError, IndexError, AttributeError):
+                            _age = -1
+                        _set_reject_reason(symbol, "الفرضية ماتت — الإغلاق تحت أصل الموجة 1 (P0)")
+                        with scan_stats_lock:
+                            scan_stats["rejected_stale_premise"] += 1
+                        logger.info(
+                            "[%s] فرضية ميتة حية العمر (P5 عمره %s شمعة): الإغلاق %s دون أصل الموجة "
+                            "P0=%s — لا إشارة (النبض اللحظي يجسد جذرها)",
+                            symbol, _age, fmt_price(last_close),
+                            fmt_price(float(best.pivot_prices[0])))
+                    elif not deep_retrace_ok(best, last_close):
+                        # [FE1.9.0] تصحيح عميق — أمر معلق عنده محكوم عليه بالموت بأول شمعة
+                        try:
+                            _p0, _p5 = float(best.pivot_prices[0]), float(best.pivot_prices[5])
+                            _retr = (_p5 - last_close) / (_p5 - _p0) * 100.0 if _p5 > _p0 else -1.0
+                        except (TypeError, ValueError, IndexError, AttributeError):
+                            _retr = -1.0
+                        _set_reject_reason(symbol, f"تصحيح عميق — أكل {_retr:.0f}% من الموجة (حد الرفض {DEEP_RETRACE_BLOCK_PCT * 100:.1f}%)")
+                        with scan_stats_lock:
+                            scan_stats["rejected_deep_retrace"] += 1
+                        logger.info("[%s] رفض تصحيح عميق: الإغلاق %s ابتلع %.0f%% من الموجة P0=%s→P5=%s (الحد %.1f%%) — لا أمر زومبي",
+                                    symbol, fmt_price(last_close), _retr,
+                                    fmt_price(float(best.pivot_prices[0])), fmt_price(float(best.pivot_prices[5])),
+                                    DEEP_RETRACE_BLOCK_PCT * 100)
                     elif on_symbol_cooldown(symbol):
                         # [FE1.7.0] تبريد بعد انتهاء/إلغاء حديث — لا إعادة إنشاء حرفية
                         _set_reject_reason(symbol, f"تبريد الرمز {int(SYMBOL_COOLDOWN_SEC) // 60} دقائق بعد انتهاء/إلغاء حديث")
@@ -4914,6 +5064,7 @@ def initialize_bot_services() -> None:
     restore_scan_results()  # [FE1.5.0] قبل إقلاع WS — الأسواق المصنوعة تُبنى من القائمة المحدثة
     load_markets_async()
     start_ws_price_feed()  # [FE1.2.0] الأسعار الحية من ويب سوكت — REST احتياطًا فقط
+    threading.Thread(target=momentum_loop, daemon=True, name="momentum-kicker").start()  # [FE1.9.0] قاتل تأخر الكشف
     threading.Thread(target=scan_loop, daemon=True, name="scan-loop").start()
     threading.Thread(target=monitor_loop, daemon=True, name="monitor-loop").start()
     threading.Thread(target=keep_alive_loop, daemon=True, name="keep-alive").start()

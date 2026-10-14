@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_fe188.py — اختبارات إصلاح موت إشارات أول دورة إقلاع (FE1.8.8)
+test_fe188.py — اختبارات إصلاح موت إشارات أول دورة إقلاع (FE1.9.0)
 
 الجذر الحي (دليل من الخدمة الجديدة fibo-elio-4s5z): 7 إعدادات صاعدة صالحة (PEPE/APT/
 SUI/ARB/NEAR/LTC/AVAX) قُتلت جميعها بحكم «توليد الإشارات معطل» في أول دورة كشف
@@ -155,4 +155,4 @@ class TestProtectedBoundaries:
         assert vnz.KEEP_ALIVE_INTERVAL_SEC == 60.0
 
     def test_version_bumped(self):
-        assert vnz.BOT_VERSION == "FE1.8.8"
+        assert vnz.BOT_VERSION == "FE1.9.0"

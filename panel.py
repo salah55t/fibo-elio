@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.8.8"
+BOT_VERSION = "FE1.9.0"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -514,13 +514,14 @@ function renderGates(st){
   if(!el) return;
   st = st || {};
   const gates = [['rejected_stale_premise','فرضية ميتة'],['rejected_old_structure','بنية قديمة'],
-    ['rejected_cooldown','تبريد رمز'],['rejected_symbol_busy','رمز مشغول'],['rejected_cluster','عنقود'],
-    ['rejected_active_limit','خانات ممتلئة'],['rejected_htf_bias','HTF هابط'],
+    ['rejected_deep_retrace','تصحيح عميق'],['rejected_cooldown','تبريد رمز'],['rejected_symbol_busy','رمز مشغول'],
+    ['rejected_cluster','عنقود'],['rejected_active_limit','خانات ممتلئة'],['rejected_htf_bias','HTF هابط'],
     ['rejected_far_entry','مطاردة'],['rejected_target_invalid','هدف محقق'],
     ['rejected_rr_net','R:R صافٍ منخفض'],['rejected_daily_loss','حد يومي'],['rejected_risk_pause','تبريد مخاطر']];
   const parts = gates.filter(g=>st[g[0]]).map(g=>g[1]+' <b>'+st[g[0]]+'</b>');
   el.innerHTML = '🚦 بوابات هذه الفترة: ' + (parts.length? parts.join(' · ') : 'لا رفضات بعد') +
-    ' — دورات المسح: <b>'+(st.cycles||0)+'</b> · رموز ممسوحة: <b>'+(st.scanned||0)+'</b>';
+    ' — دورات المسح: <b>'+(st.cycles||0)+'</b> · رموز ممسوحة: <b>'+(st.scanned||0)+'</b>' +
+    ' · ⚡ نبض الحركة (كشف لحظي): <b>'+(st.momentum_kicks||0)+'</b>';
 }
 
 // لوحة الأداء — اقتباس من V9.34.0 (اقتباسات OctoBot: /api/stats + pnl_history):
