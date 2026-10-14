@@ -69,6 +69,10 @@ services:
         value: "bybit,okx,gate"
       - key: DATA_FEED_TIMEOUT_SEC
         value: "8"
+      - key: DATA_FEED_FAIL_THRESHOLD
+        value: "4"
+      - key: DATA_FEED_COOLDOWN_SEC
+        value: "300"
       - key: RATE_LIMIT_BUDGET_PER_MIN
         value: "500"
       - key: API_MIN_SPACING_SEC

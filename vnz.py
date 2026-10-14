@@ -236,6 +236,8 @@ PROVIDER_COOLDOWN_SEC = float(os.getenv("PROVIDER_COOLDOWN_SEC", "900"))  # تب
 DATA_FEED_RAW = os.getenv("DATA_FEED_RAW", "1").strip().lower() not in ("0", "false", "no", "off")  # قاطع الطبقة الخام — 0 يعيد مسار ccxt القديم كاملًا
 DATA_FEED_ORDER = [p.strip().lower() for p in os.getenv("DATA_FEED_ORDER", "bybit,okx,gate").split(",") if p.strip()]
 DATA_FEED_TIMEOUT_SEC = float(os.getenv("DATA_FEED_TIMEOUT_SEC", "8"))       # مهلة كل طلب خام (V9 افتراضي 8ث)
+DATA_FEED_FAIL_THRESHOLD = int(os.getenv("DATA_FEED_FAIL_THRESHOLD", "4"))   # [V9] عتبة الفشل المتتالي قبل تبريد مزود خام — رمز غير مدعوم لا يحبس المزود كله
+DATA_FEED_COOLDOWN_SEC = float(os.getenv("DATA_FEED_COOLDOWN_SEC", "300"))   # [V9] مدة التبريد بعد العتبة (5د بدل 15د)
 RATE_LIMIT_BUDGET_PER_MIN = int(os.getenv("RATE_LIMIT_BUDGET_PER_MIN", "500"))  # ميزانية وزن باينانس/دقيقة (V9.22.0: 500)
 API_MIN_SPACING_SEC = float(os.getenv("API_MIN_SPACING_SEC", "0.15"))        # أدنى فاصل بين طلبات باينانس (V9)
 BAN_RESUME_COOLDOWN_SEC = int(os.getenv("BAN_RESUME_COOLDOWN_SEC", "90"))    # تبريد استئناف بعد انتهاء الحظر (V9.9)
@@ -1288,6 +1290,7 @@ def _mark_provider_ok(name: str) -> None:
                                               "last_ok_at": None, "cooldown_until": 0.0})
         st["ok"] += 1
         st["last_ok_at"] = utc_now_iso()
+        st["consec_fail"] = 0  # نجاح يقطع سلسلة الفشل المتتالي (عقد V9)
         if active_source["name"] != name:
             # [FE1.8.6] الانتقال يصل السجل/اللوحة — كان logger.info فقط
             # (بطاقة «مزود البيانات» تتغير واللوج صامت — نفس شكوى المستخدم
@@ -1322,13 +1325,32 @@ def _mark_provider_ok(name: str) -> None:
 
 
 def _mark_provider_fail(name: str, exc: Exception) -> None:
-    """[FE1.8.7] توثيق فشل مزود + تبريد مؤقت — نفس سياسة PROVIDER_COOLDOWN_SEC القائمة."""
+    """[FE1.8.7] توثيق فشل مزود + تبريد فوري — للمسار القديم وللباينانس الطارئ فقط."""
     with provider_lock:
         st = provider_state.setdefault(name, {"ok": 0, "fail": 0, "last_error": "",
                                               "last_ok_at": None, "cooldown_until": 0.0})
         st["fail"] += 1
         st["last_error"] = str(exc)[:280]
         st["cooldown_until"] = time.time() + PROVIDER_COOLDOWN_SEC
+    return st
+
+
+def _mark_provider_soft_fail(name: str, err: str) -> Dict[str, Any]:
+    """[FE1.8.7][V9] فشل عابر لمزود خام: عدّاد متتالٍ فقط — التبريد بعد
+    DATA_FEED_FAIL_THRESHOLD فشلًا متتاليًا وبمدة DATA_FEED_COOLDOWN_SEC.
+    الدرس الحي (14:16Z): رمز واحد غير مدعوم (WAL على okx / ZEC على bybit)
+    كان يبرّد المزود كله 15د ويترك فجوة شموع حين تتراكب التبريدات —
+    عتبة V9 (4 متتالية) تُبقي المزود يخدم رموزه الـ29 الأخرى وترفضه فقط
+    حين تنهار شبكته فعلًا. النجاح الواحد يقطع السلسلة (_mark_provider_ok)."""
+    with provider_lock:
+        st = provider_state.setdefault(name, {"ok": 0, "fail": 0, "last_error": "",
+                                              "last_ok_at": None, "cooldown_until": 0.0})
+        st["fail"] += 1
+        st["last_error"] = str(err)[:280]
+        st["consec_fail"] = int(st.get("consec_fail") or 0) + 1
+        if st["consec_fail"] >= max(1, int(DATA_FEED_FAIL_THRESHOLD)):
+            st["cooldown_until"] = time.time() + max(30.0, float(DATA_FEED_COOLDOWN_SEC))
+            st["consec_fail"] = 0
     return st
 
 
@@ -1397,19 +1419,14 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
         try:
             rows = prov.fetch_klines(symbol, timeframe, limit)
         except Exception as exc:
-            _mark_provider_fail(prov.name, exc)
+            _mark_provider_soft_fail(prov.name, f"استثناء: {exc}")
             errors.append(f"{prov.name}: استثناء {str(exc)[:120]}")
             continue
         if rows:
             _mark_provider_ok(prov.name)
             return rows, prov.name
-        # None = فشل المنصة نفسها (HTTP غير 200/استجابة فارغة) — يُحتسب فشلًا مع تبريد
-        with provider_lock:
-            st = provider_state.setdefault(prov.name, {"ok": 0, "fail": 0, "last_error": "",
-                                                       "last_ok_at": None, "cooldown_until": 0.0})
-            st["fail"] += 1
-            st["last_error"] = f"{symbol} {timeframe} فارغة/غير متاحة"
-            st["cooldown_until"] = time.time() + PROVIDER_COOLDOWN_SEC
+        # None = فشل المنصة نفسها (HTTP غير 200/استجابة فارغة) — عدّاد متتالٍ بلا تبريد فوري [V9]
+        _mark_provider_soft_fail(prov.name, f"{symbol} {timeframe} فارغة/غير متاحة")
         errors.append(f"{prov.name}: فارغة/غير متاحة")
     # 2) باينانس أخيرًا — خلف حارس الوزن (فلسفة V9.20.0: وزن يقارب الصفر)
     if rate_guard.is_banned():

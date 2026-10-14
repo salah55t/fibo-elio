@@ -404,13 +404,12 @@ class TestFetchRouting:
         assert raw_world["binance"].calls == 0
 
     def test_transition_notification(self, raw_world):
-        # نفس عقد FE1.8.6: الانتقال يصل السجل بنص السبب
+        # نفس عقد FE1.8.6: الانتقال يصل السجل بنص السبب (الاستثناء يُسبق بـ«استثناء:»)
         vnz.active_source["name"] = "bybit"
-        vnz.provider_state["bybit"]["last_error"] = "bybit down hard"
         raw_world["bybit"].exc = RuntimeError("bybit down hard")
         vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 200)
         assert _notif_n("فشل مزود البيانات BYBIT — الانتقال إلى OKX") == 1
-        assert _notif_n("السبب: bybit down hard") == 1
+        assert _notif_n("السبب: استثناء: bybit down hard") == 1
 
     def test_cooled_provider_skipped(self, raw_world):
         # المزود المبرد يُتخطى بلا نداء
@@ -420,14 +419,40 @@ class TestFetchRouting:
         assert raw_world["bybit"].calls == 0
 
     def test_empty_rows_count_as_fail_and_move_on(self, raw_world):
-        # استجابة فارغة = فشل مع تبريد ثم المزود التالي
+        # استجابة فارغة = عدّاد متتالٍ بلا تبريد فوري [V9] — ثم المزود التالي
         raw_world["bybit"].empty = True
         raw, src = vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 200)
         assert src == "okx"
         st = vnz.provider_state["bybit"]
         assert st["fail"] == 1
         assert "فارغة/غير متاحة" in st["last_error"]
-        assert st["cooldown_until"] > time.time()
+        assert st["consec_fail"] == 1
+        assert st["cooldown_until"] <= time.time(), "رمز غير مدعوم لا يحبس المزود كله"
+
+    def test_soft_fail_threshold_cooldowns_after_4(self, raw_world):
+        # [V9] عتبة الفشل المتتالي: 4 فشلات متتالية (بلا نجاح يقطعها) ← تبريد 5د
+        raw_world["bybit"].empty = True
+        for _ in range(4):
+            vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 200)  # bybit يفشل، okx يخدم
+        st = vnz.provider_state["bybit"]
+        assert st["fail"] == 4
+        assert st["cooldown_until"] > time.time(), "العتبة (4) تفعّل التبريد"
+        # المحاولة الخامسة تتخطى bybit المبرد — بلا نداء خامس
+        vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 200)
+        assert raw_world["bybit"].calls == 4
+
+    def test_success_resets_consec_fail_chain(self, raw_world):
+        # نجاح واحد يقطع سلسلة الفشل — لا تتراكم فشلات متباعدة على التبريد
+        raw_world["bybit"].empty = True
+        for _ in range(3):
+            vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 200)
+        raw_world["bybit"].empty = False  # رمز مدعوم مرة أخرى
+        vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 200)
+        assert vnz.provider_state["bybit"]["consec_fail"] == 0
+        raw_world["bybit"].empty = True
+        vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 200)
+        st = vnz.provider_state["bybit"]
+        assert st["consec_fail"] == 1 and st["cooldown_until"] <= time.time()  # سلسلة جديدة من الصفر
 
     def test_all_alternates_fail_binance_serves_rate_guarded(self, raw_world):
         # فشل الجميع ← باينانس أخيرًا عبر حارس الوزن (وزن الشموع محسوب مسبقًا)
@@ -559,6 +584,8 @@ class TestDeploymentAndBoundaries:
         for key, val in (("DATA_FEED_RAW", '"1"'),
                          ("DATA_FEED_ORDER", '"bybit,okx,gate"'),
                          ("DATA_FEED_TIMEOUT_SEC", '"8"'),
+                         ("DATA_FEED_FAIL_THRESHOLD", '"4"'),
+                         ("DATA_FEED_COOLDOWN_SEC", '"300"'),
                          ("RATE_LIMIT_BUDGET_PER_MIN", '"500"'),
                          ("API_MIN_SPACING_SEC", '"0.15"'),
                          ("BAN_RESUME_COOLDOWN_SEC", '"90"'),
@@ -570,6 +597,8 @@ class TestDeploymentAndBoundaries:
     def test_v9_layer_defaults(self):
         assert vnz.DATA_FEED_RAW is True
         assert vnz.DATA_FEED_TIMEOUT_SEC == 8.0
+        assert vnz.DATA_FEED_FAIL_THRESHOLD == 4
+        assert vnz.DATA_FEED_COOLDOWN_SEC == 300.0
         assert vnz.RATE_LIMIT_BUDGET_PER_MIN == 500
         assert vnz.API_MIN_SPACING_SEC == 0.15
         assert vnz.BAN_RESUME_COOLDOWN_SEC == 90
