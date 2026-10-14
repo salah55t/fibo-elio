@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.7.0"  # FE1.7.0: بوابات جودة القبول (مطاردة/هدف محقق/عمر بنية/تبريد/عنقود/سقوف تعرض ورقي) + إلغاء الأمر الحقيقي فعليًا على المنصة + حارس انقطاع التغذية للمواضع المفتوحة + حراسات تصفير ثلاثية (تأكيد/منع/أرشفة)
+BOT_VERSION = "FE1.8.0"  # FE1.8.0: حماية الموضع — وقف راكن STOP_LOSS_LIMIT على المنصة + مصالقة دورية، BE@1R (وقف عند التعادل)، إغلاق جزئي 50% عند +1R، حد خسارة يومي + قاطع متتاليات الخسارة، بوابة R:R صافية بعد الرسوم
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -273,6 +273,21 @@ PAPER_MAX_TOTAL_PCT = float(os.getenv("PAPER_MAX_TOTAL_PCT", "100"))           #
 # فيمضي الوقف/الهدف بلا فحص طوال الانقطاع (إعادة نشر/حظر 418/سقوط المزودين)
 OUTAGE_ALERT_AFTER_CYCLES = int(os.getenv("OUTAGE_ALERT_AFTER_CYCLES", "3"))   # تنبيه بعد N دورات مراقبة فاشلة متتالية (60ث لكل دورة)
 OUTAGE_RENOTIFY_SEC = float(os.getenv("OUTAGE_RENOTIFY_SEC", "900"))           # تكرار التنبيه كل 15 دقيقة طوال الانقطاع
+
+# [FE1.8.0] حماية الموضع — درس التشغيل الحي: الوقف كان في الذاكرة فقط (لا أمر STOP راكن
+# على المنصة) فأي انقطاع/نشر يترك الموضع مكشوفًا، ولا توجد آلية لقفل الربح أو تقليص
+# التعرض بعد تحقق جزء من الفرضية.
+REAL_STANDING_STOP = os.getenv("REAL_STANDING_STOP", "1").strip().lower() not in ("0", "false", "no", "off")
+STOP_LIMIT_OFFSET_PCT = float(os.getenv("STOP_LIMIT_OFFSET_PCT", "0.5"))       # سعر LIMIT لأمر الوقف الراكن أسفل التريغر % — ضمان الملء في الومضة (0 = LIMIT عند التريغر نفسه)
+RECONCILE_REAL_SEC = float(os.getenv("RECONCILE_REAL_SEC", "600"))             # مصالقة حماية المواضع الحقيقية كل N ثانية (منصة هي مصدر الحقيقة)
+BE_AT_R_ENABLED = os.getenv("BE_AT_R_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+BE_TRIGGER_R = float(os.getenv("BE_TRIGGER_R", "1.0"))                         # نقل الوقف إلى الدخول عند +N×R (الورقي والحقيقي) — 0 يعطل عبر BE_AT_R_ENABLED
+PARTIAL_AT_R_ENABLED = os.getenv("PARTIAL_AT_R_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+PARTIAL_CLOSE_PCT = float(os.getenv("PARTIAL_CLOSE_PCT", "50.0"))              # نسبة الإغلاق الجزئي عند +N×R — تحقيق ربح جزئي وتقليص التعرض (1-99)
+DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "5.0"))         # إيقاف الإشارات الجديدة بعد خسارة يومية % من أساس اليوم (0 يعطل)
+MAX_CONSEC_LOSSES = int(os.getenv("MAX_CONSEC_LOSSES", "3"))                   # قاطع المتتاليات: N خسائر متتالية → تبريد تداول (0 يعطل)
+LOSS_STREAK_COOLDOWN_SEC = float(os.getenv("LOSS_STREAK_COOLDOWN_SEC", "14400"))  # تبريد 4 ساعات بعد المتتالية — المراقبة تستمر بلا انقطاع
+RR_NET_MIN = float(os.getenv("RR_NET_MIN", "0.3"))                             # أرضية R:R صافية بعد رسوم الاتجاهين — الإشارات تحت الأرضية تُرفض (0 يعطل)
 
 # [FE1.3.0] البقاء الحي — نبضة ذاتية إلى /health العام (بلا مصادقة) تمنع نوم Render المجاني
 # (الخطة المجانية تُخمد الخدمة بعد 15 دقيقة بلا طلبات خارجية، والاستيقاظ يأخذ نحو دقيقة)
@@ -404,6 +419,9 @@ scan_stats: Dict[str, Any] = {
     "rejected_cooldown": 0,       # [FE1.7.0] تبريد الرمز بعد انتهاء/إلغاء حديث
     "rejected_cluster": 0,        # [FE1.7.0] سقف العنقود الاتجاهي
     "rejected_exposure_cap": 0,   # [FE1.7.0] سقوف التعرض الورقي (مركز/إجمالي)
+    "rejected_rr_net": 0,         # [FE1.8.0] R:R صافي بعد الرسوم تحت الأرضية
+    "rejected_risk_pause": 0,     # [FE1.8.0] تبريد متتاليات الخسارة جارٍ
+    "rejected_daily_loss": 0,     # [FE1.8.0] حد الخسارة اليومي ملامس
     "last_scan_at": "", "last_scan_fetched": 0,  # [FE1.0.1] تشخيص دورة المسح
 }
 
@@ -530,7 +548,9 @@ CREATE TABLE IF NOT EXISTS signals (
   is_real INTEGER DEFAULT 0,
   order_id TEXT,
   exit_order_id TEXT,
-  meta_json TEXT
+  meta_json TEXT,
+  initial_quantity NUMERIC,
+  realized_pnl_usdt NUMERIC DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS notifications (
   id BIGSERIAL PRIMARY KEY,
@@ -546,7 +566,8 @@ _SIGNALS_DDL_SQLITE = _SIGNALS_DDL_PG.replace("BIGSERIAL PRIMARY KEY", "INTEGER 
 
 def migrate_db() -> None:
     """[FE1.4.0] أعمدة التداول الحقيقي لقواعد بيانات قديمة (ALTER بلا أذى إن وُجدت)."""
-    for col, ddl in (("is_real", "INTEGER DEFAULT 0"), ("order_id", "TEXT"), ("exit_order_id", "TEXT")):
+    for col, ddl in (("is_real", "INTEGER DEFAULT 0"), ("order_id", "TEXT"), ("exit_order_id", "TEXT"),
+                     ("initial_quantity", "NUMERIC"), ("realized_pnl_usdt", "NUMERIC DEFAULT 0")):  # [FE1.8.0] محاسبة الجزئي
         try:
             db.execute(f"ALTER TABLE signals ADD COLUMN {col} {ddl}")
         except Exception:
@@ -1775,6 +1796,19 @@ def enrich_live_signal(sig: Dict[str, Any]) -> Dict[str, Any]:
                 out["dist_sl_pct"] = round((sl - price) / price * 100.0, 3)
             if peak > 0:
                 out["peak_price"] = peak  # القمة المتتبعة من حلقة المراقبة
+            # [FE1.8.0] حالة الحماية للوحة: BE/جزئي/الوقف الراكن + محاسبة الجزئي
+            meta = sig.get("meta") if isinstance(sig.get("meta"), dict) else None
+            if meta is None and sig.get("meta_json"):
+                try:
+                    meta = json.loads(sig["meta_json"])
+                except Exception:
+                    meta = {}
+            meta = meta if isinstance(meta, dict) else {}
+            out["be_done"] = bool(meta.get("be_done"))
+            out["partial_done"] = bool(meta.get("partial_done"))
+            out["stop_order_id"] = meta.get("stop_order_id") or None
+            out["realized_pnl_usdt"] = round(float(sig.get("realized_pnl_usdt") or 0), 6)
+            out["initial_quantity"] = float(sig.get("initial_quantity") or qty)
         elif status == "pending":
             entry = float(sig.get("entry_price") or 0)
             if price and entry > 0:
@@ -1814,9 +1848,19 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
     [FE1.4.0] وضع التداول الحقيقي: أمر LIMIT BUY فعلي على باينانس بنفس السعر
     وبقواعد المنصة الكاملة (دقة السعر/الكمية، أدنى قيمة، كفاية الرصيد).
     فشل الأمر الحقيقي = لا إشارة (لا سقوط صامت للورقي).
-    [FE1.7.0] بوابتا المطاردة وصلاحية الهدف لحظة الإنشاء (last_close=0 يُعطّلهما
+    [FE1.7.0] بوابتا المطاردة وصلاحية الهدف لحظة الإنشاء (last_close=0 يعطّلهما
     — توافق نداءات الاختبارات القديمة): لا أمر معلق بعيدًا عن السوق (زومبي يقطس
-    خانة 45 دقيقة ثم يُعاد حرفيًا)، ولا شراء نمطٍ حقق هدفه بالفعل."""
+    خانة 45 دقيقة ثم يُعاد حرفيًا)، ولا شراء نمطٍ حقق هدفه بالفعل.
+    [FE1.8.0] قاطع المخاطر قبل أي أمر (تبريد متتاليات الخسارة/حد الخسارة اليومي
+    — الإشارات تتوقف والمراقبة مستمرة) + أرضية R:R صافية بعد رسوم الاتجاهين."""
+    # [FE1.8.0] قاطع المخاطر — قبل أي حساب أو أمر (ورقي أو حقيقي)
+    block = risk_entry_block_reason()
+    if block:
+        key = "rejected_risk_pause" if "تبريد" in block else "rejected_daily_loss"
+        with scan_stats_lock:
+            scan_stats[key] += 1
+        logger.info("[%s] رفض قاطع المخاطر: %s — لا إشارة جديدة", symbol, block)
+        return False
     entry = float(setup.entry_zone_low)
     sl = float(setup.stop_loss_price)
     tp = compute_take_profit(setup)
@@ -1860,6 +1904,16 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
                         symbol, fmt_price(tp), fmt_price(float(last_close)),
                         fmt_price(p5) if p5 > 0 else "—")
             return False
+    # [FE1.8.0] أرضية R:R صافية بعد رسوم الاتجاهين — الورقي كان يقبل أهدافًا إجمالية
+    # تأكل الرسوم (0.2% من قيمة الصفقة) نسبة معتبرة من العائد على الأهداف الضيقة
+    rr_net = rr_net_value(entry, sl, tp)
+    if RR_NET_MIN > 0 and risk_per_coin_pre > 0 and rr_net < RR_NET_MIN:
+        with scan_stats_lock:
+            scan_stats["rejected_rr_net"] += 1
+        logger.info("[%s] رفض R:R صافٍ منخفض: %.3f < %.3f (دخول %s → هدف %s، وقف %s، رسوم الاتجاهين %.2f%%)",
+                    symbol, rr_net, RR_NET_MIN, fmt_price(entry), fmt_price(tp), fmt_price(sl),
+                    FEE_RATE * 200.0)
+        return False
     real = is_real_mode
     order_id: Optional[str] = None
     if real:
@@ -1912,6 +1966,7 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
         "tp_note": "سلّم أهداف FE1.6.0 (W5=W1، 0.618×W3، امتداد 1.618) — الأصل 1.618 احتياطًا",
         "tp_basis": tp_basis,
         "tp_ladder": [round(c, 8) for c, _ in compute_tp_ladder(setup)] if TP_LADDER_ENABLED else [],
+        "rr_net": round(rr_net, 4),  # [FE1.8.0] R:R صافي بعد رسوم الاتجاهين
     })
     db.execute(
         "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price, stop_loss,"
@@ -1930,7 +1985,7 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
         signal_msg = (
             f"🌊 إشارة إليوت+فيبو جديدة ({mode_tag}): {symbol}\n"
             f"دخول معلّق: {fmt_price(entry)} | وقف بنيوي: {fmt_price(sl)} | هدف {basis_txt}: {fmt_price(tp)}\n"
-            f"R:R = {rr:.2f} | W2={fib.wave2_retrace_pct*100:.1f}% W4={fib.wave4_retrace_pct*100:.1f}%"
+            f"R:R = {rr:.2f} (صافٍ بعد الرسوم {rr_net:.2f}) | W2={fib.wave2_retrace_pct*100:.1f}% W4={fib.wave4_retrace_pct*100:.1f}%"
         )
     else:
         signal_msg = f"🌊 إشارة إليوت+فيبو جديدة ({mode_tag}): {symbol} — دخول {fmt_price(entry)}"
@@ -1942,19 +1997,24 @@ def close_signal_row(sig: Dict[str, Any], exit_price: float, reason: str,
                      exit_order_id: Optional[str] = None) -> None:
     """محاسبة الإغلاق: رسوم 0.1% × اتجاهين — نفس عقد المشروع السابق.
     [FE1.4.0] الصفقة الحقيقية: نفس المحاسبة للعرض والإحصاء لكن دون أي مساس
-    بالرصيد الورقي (الأرباح/الخسائر الحقيقية على الحساب الفعلي في باينانس)."""
+    بالرصيد الورقي (الأرباح/الخسائر الحقيقية على الحساب الفعلي في باينانس).
+    [FE1.8.0] تدخل أرباح الأرجل الجزئية المحققة (realized_pnl_usdt) في الإجمالي
+    مرة واحدة عند الإغلاق النهائي — ونسبة الربح على الحجم الأصلي لا المتبقي."""
     entry = float(sig["fill_price"])
     qty = float(sig["quantity"])
+    realized_prev = float(sig.get("realized_pnl_usdt") or 0)   # [FE1.8.0] أرباح الجزئي السابقة
+    base_qty = float(sig.get("initial_quantity") or qty)       # [FE1.8.0] الأساس الأصلي للنسبة
     gross = qty * (exit_price - entry)
     fees = (qty * entry + qty * exit_price) * FEE_RATE
-    pnl_usdt = gross - fees
-    pnl_pct = (pnl_usdt / (qty * entry)) * 100.0 if qty * entry > 0 else 0.0
+    pnl_usdt = gross - fees + realized_prev
+    pnl_pct = (pnl_usdt / (base_qty * entry)) * 100.0 if base_qty * entry > 0 else 0.0
     is_real = bool(sig.get("is_real"))
     db.execute(
         "UPDATE signals SET status='closed', close_price=%s, close_reason=%s, closed_at=%s,"
         " pnl_usdt=%s, pnl_pct=%s, exit_order_id=%s WHERE id=%s",
         (exit_price, reason, utc_now_iso(), round(pnl_usdt, 6), round(pnl_pct, 4), exit_order_id, sig["id"]),
     )
+    _risk_on_close(pnl_usdt)  # [FE1.8.0] قاطع المخاطر: حد يومي + متتاليات
     tag = "حقيقية 🔴" if is_real else "ورقية"
     if not is_real:
         set_paper_balance(get_paper_balance() + pnl_usdt)
@@ -1981,6 +2041,25 @@ def close_real_trade(sig: Dict[str, Any], trigger_price: float, reason: str) -> 
     if ex is None:
         log_and_notify("error", f"❌ تعذر إغلاق {symbol} حقيقيًا: مفاتيح باينانس غائبة", "REAL_TRADE_ERROR")
         return
+    # [FE1.8.0] ألغِ الوقف الراكن أولًا — وإلا بقي أمر STOP حي يبيع رصيدًا لا نملك بعده.
+    # إن تبيّن أنه نُفذ على المنصة (ملء قبل الإلغاء) فالمحاسبة من سعر تنفيذه بلا بيع مزدوج.
+    stop_oid = _sig_meta(sig).get("stop_order_id")
+    if stop_oid:
+        if not cancel_real_order(ex, symbol, stop_oid):
+            so = fetch_real_order(ex, symbol, stop_oid)
+            st = (so or {}).get("status")
+            if st == "closed":
+                close_signal_row(sig, float(so.get("average") or trigger_price),
+                                 reason + " — الوقف الراكن نُفذ على المنصة أثناء الإغلاق",
+                                 exit_order_id=str(so.get("id") or "") or None)
+                return
+            if st in ("open", None):
+                # حي ولا يُلغى (أو الحالة غير قابلة للقراءة) — لا نبيع خوفًا من ازدواج
+                log_and_notify("warning",
+                               f"⚠ تعذر إلغاء الوقف الراكن لـ{symbol} — أُجّل الإغلاق للدورة القادمة تفاديًا لازدواج البيع",
+                               "REAL_TRADE_ERROR")
+                return
+            # canceled/expired/rejected → الأمر ميت على المنصة — أمضِ للبيع عادي
     try:
         base = symbol.split("/")[0]
         free = fetch_free_base(ex, base)
@@ -2000,6 +2079,377 @@ def close_real_trade(sig: Dict[str, Any], trigger_price: float, reason: str) -> 
         log_and_notify("error", f"❌ استثناء إغلاق حقيقي {symbol}: {exc}", "REAL_TRADE_ERROR")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# [FE1.8.0] حماية الموضع — الوقف الراكن على المنصة + BE@1R + جزئي أول درج + قاطع مخاطر
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _sig_meta(sig: Dict[str, Any]) -> Dict[str, Any]:
+    """قراءة meta_json كقاموس — يقبل الصف الخام (meta_json نص) أو صف اللوحة المُحلل (meta)."""
+    if isinstance(sig.get("meta"), dict):
+        return dict(sig["meta"])
+    raw = sig.get("meta_json")
+    if raw:
+        try:
+            m = json.loads(raw)
+            return m if isinstance(m, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_sig_meta(sig_id: Any, meta: Dict[str, Any]) -> None:
+    """كتابة meta_json — حالة الحماية (stop_order_id/be_done/partial_done) تعيش مع الصف فتعبر النشر."""
+    try:
+        db.execute("UPDATE signals SET meta_json=%s WHERE id=%s",
+                   (json.dumps(meta, ensure_ascii=False), sig_id))
+    except Exception as exc:
+        logger.warning("كتابة meta_json للصف %s فشلت: %s", sig_id, exc)
+
+
+def rr_net_value(entry: float, sl: float, tp: float) -> float:
+    """[FE1.8.0] R:R صافي بعد رسوم الاتجاهين: الرسوم تُدفع على الدخول والخروج
+    (FEE_RATE × القيمة في كل اتجاه) فتُخصم من العائد قبل القسمة على المخاطرة.
+    الورقي كان يعرض أرقامًا إجمالية تتحول حقيقية أضعف — الصافي هو الحاكم الآن."""
+    risk = float(entry) - float(sl)
+    if risk <= 0 or entry <= 0:
+        return 0.0
+    reward = (float(tp) - entry) - FEE_RATE * (entry + float(tp))
+    return reward / risk
+
+
+# ── قاطع المخاطر — حد خسارة يومي + تبريد متتاليات الخسارة (bot_state يعبر النشر) ──
+
+def _utc_day() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _risk_base_now() -> float:
+    """أساس نسبة الخسارة اليومية: رصيد الورقي — وفي الحقيقي رصيد USDT الحر من لقطة الاتصال."""
+    if is_real_mode:
+        try:
+            v = float(binance_status_snapshot().get("usdt_free") or 0)
+            if v > 0:
+                return v
+        except Exception:
+            pass
+    return get_paper_balance()
+
+
+def _risk_on_close(pnl_usdt: float) -> None:
+    """تحديث عدادات المخاطر بعد كل إغلاق: ترحيل اليوم، تراكم الخسارة اليومية، عدّ
+    المتتاليات، وتفعيل تبريد الإشارات الجديدة عند N خسائر متتالية (المراقبة مستمرة)."""
+    try:
+        today = _utc_day()
+        if db_get_state("risk_day") != today:
+            db_set_state("risk_day", today)
+            db_set_state("risk_realized", "0.0")
+            db_set_state("risk_day_base", repr(_risk_base_now()))
+            db_set_state("risk_streak", "0")
+        realized = float(db_get_state("risk_realized", "0.0") or 0) + float(pnl_usdt or 0)
+        db_set_state("risk_realized", repr(realized))
+        if pnl_usdt < 0:
+            streak = int(float(db_get_state("risk_streak", "0") or 0)) + 1
+            db_set_state("risk_streak", str(streak))
+            prev_pause = db_get_state("risk_pause_until")
+            paused_now = bool(prev_pause and utc_now_iso() < prev_pause)
+            if MAX_CONSEC_LOSSES > 0 and streak >= MAX_CONSEC_LOSSES and not paused_now:
+                until = datetime.fromtimestamp(
+                    time.time() + LOSS_STREAK_COOLDOWN_SEC, tz=timezone.utc
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                db_set_state("risk_pause_until", until)
+                log_and_notify(
+                    "warning",
+                    f"⛔ قاطع المخاطر: {streak} خسائر متتالية — إيقاف الإشارات الجديدة حتى {until} "
+                    f"(المراقبة وإدارة المواضع القائمة تستمران بلا انقطاع)",
+                    "RISK_PAUSE",
+                )
+        else:
+            db_set_state("risk_streak", "0")
+    except Exception as exc:
+        logger.warning("تحديث عدادات المخاطر فشل: %s", exc)
+
+
+def risk_snapshot() -> Dict[str, Any]:
+    """بطاقة المخاطر للوحة (/api/all → risk): خسارة اليوم، الأساس، المتتالية، التبريد."""
+    today = _utc_day()
+    same_day = (db_get_state("risk_day") or today) == today
+    realized = float(db_get_state("risk_realized", "0.0") or 0) if same_day else 0.0
+    base = float(db_get_state("risk_day_base", "0") or 0) if same_day else 0.0
+    streak = int(float(db_get_state("risk_streak", "0") or 0)) if same_day else 0
+    pause_until = db_get_state("risk_pause_until") or ""
+    paused = bool(pause_until and utc_now_iso() < pause_until)
+    return {
+        "daily_realized": round(realized, 4),
+        "daily_base": round(base, 2),
+        "daily_limit_pct": DAILY_LOSS_LIMIT_PCT,
+        "daily_hit": bool(DAILY_LOSS_LIMIT_PCT > 0 and base > 0
+                          and realized <= -base * DAILY_LOSS_LIMIT_PCT / 100.0),
+        "loss_streak": streak,
+        "max_consec_losses": MAX_CONSEC_LOSSES,
+        "pause_until": pause_until if paused else "",
+    }
+
+
+def risk_entry_block_reason() -> Optional[str]:
+    """سبب حجب الإشارات الجديدة إن وُجد — None يعني القبول مسموح.
+    يُستدعى من create_pending_signal قبل أي أمر (ورقي أو حقيقي)."""
+    snap = risk_snapshot()
+    if snap["pause_until"]:
+        return f"تبريد متتاليات الخسارة جارٍ حتى {snap['pause_until']}"
+    if snap["daily_hit"]:
+        return (f"حد الخسارة اليومي ملامس: {snap['daily_realized']:+.2f}$ من أساس "
+                f"{snap['daily_base']:.2f}$ بسقف {DAILY_LOSS_LIMIT_PCT}%")
+    return None
+
+
+# ── الوقف الراكن على المنصة (STOP_LOSS_LIMIT) + المصالقة الدورية ──
+
+def place_real_stop_loss(symbol: str, qty: float, stop_price: float,
+                         ex=None) -> Optional[Dict[str, Any]]:
+    """[FE1.8.0] وقف راكن STOP_LOSS_LIMIT SELL على باينانس — الحماية تعيش على المنصة
+    لا في ذاكرة البوت: انقطاع/نشر/سقوط لا يترك الموضع مكشوفًا (ثغرة FE1.4–1.7).
+    سعر LIMIT أسفل التريغر بـ STOP_LIMIT_OFFSET_PCT لضمان الملء في الومضة الهابطة.
+    الغبار (تحت حدود باينانس) لا يرفع أمرًا — المراقبة المحلية تبقى خط الدفاع."""
+    ex = ex or binance_trade_exchange()
+    if ex is None or qty <= 0 or stop_price <= 0:
+        return None
+    try:
+        limit_price = real_adjust_price(ex, symbol,
+                                        stop_price * (1.0 - max(STOP_LIMIT_OFFSET_PCT, 0.0) / 100.0))
+        qty = real_adjust_amount(ex, symbol, qty)
+        mkt = real_market(ex, symbol)
+        if qty <= 0 or qty < real_min_amount(mkt) or qty * stop_price < real_min_cost(mkt):
+            logger.info("[%s] كمية الوقف الراكن غبار تحت حدود باينانس (%s) — بلا أمر راكن والمراقبة المحلية خط الدفاع",
+                        symbol, qty)
+            return None
+        raw = ex.privatePostOrder({
+            "symbol": _bin_sym(symbol), "side": "SELL", "type": "STOP_LOSS_LIMIT",
+            "quantity": _fmt_dec(qty), "stopPrice": _fmt_dec(stop_price),
+            "price": _fmt_dec(limit_price), "timeInForce": "GTC", "newOrderRespType": "FULL",
+        })
+        order = _norm_real_order(raw)
+        log_and_notify("info",
+                       f"🛡 وقف راكن على المنصة: {symbol} — بيع STOP_LOSS_LIMIT كمية {qty} "
+                       f"تريغر {fmt_price(stop_price)} / حد {fmt_price(limit_price)} (id={order.get('id')})",
+                       "REAL_STOP_PLACED")
+        return order
+    except Exception as exc:
+        log_and_notify("error", f"❌ فشل وضع الوقف الراكن {symbol}: {exc}", "REAL_TRADE_ERROR")
+        return None
+
+
+def _ensure_real_stop(sig: Dict[str, Any], ex=None) -> None:
+    """ضمان وجود وقف راكن لموضع حقيقي مفتوح — بعد الملء مباشرة ومن المصالقة الدورية.
+    المعرف في meta_json (stop_order_id) — غيابه = ضعه (فشل سابق/غبار عابر)."""
+    if not REAL_STANDING_STOP or not sig.get("is_real"):
+        return
+    meta = _sig_meta(sig)
+    if meta.get("stop_order_id"):
+        return
+    ex = ex or binance_trade_exchange()
+    if ex is None:
+        return
+    try:
+        order = place_real_stop_loss(sig["symbol"], float(sig["quantity"]),
+                                     float(sig["stop_loss"]), ex)
+    except Exception as exc:
+        logger.warning("وضع الوقف الراكن %s استثناء: %s", sig.get("symbol"), exc)
+        return
+    if order:
+        meta.update({"stop_order_id": str(order.get("id") or ""),
+                     "stop_price": float(sig["stop_loss"]), "stop_placed_at": utc_now_iso()})
+        _save_sig_meta(sig["id"], meta)
+
+
+def _replace_real_stop(sig: Dict[str, Any], new_stop: float, ex=None) -> bool:
+    """استبدال الوقف الراكن (BE@1R أو كمية جديدة بعد جزئي): إلغاء القديم ثم وضع الجديد.
+    إن تبيّن أن القديم نُفذ على المنصة → المحاسبة تغلق الموضع وتُعيد False."""
+    ex = ex or binance_trade_exchange()
+    if ex is None:
+        return False
+    meta = _sig_meta(sig)
+    old_id = meta.get("stop_order_id")
+    if old_id:
+        if not cancel_real_order(ex, sig["symbol"], old_id):
+            so = fetch_real_order(ex, sig["symbol"], old_id)
+            st = (so or {}).get("status")
+            if st == "closed":
+                close_signal_row(sig, float(so.get("average") or new_stop),
+                                 "الوقف الراكن نُفذ على المنصة أثناء تحديث الوقف",
+                                 exit_order_id=str(so.get("id") or "") or None)
+                return False
+            if st in ("open", None):
+                logger.warning("[%s] الوقف الراكن ما زال حيًا — إعادة محاولة الاستبدال في الدورة القادمة",
+                               sig["symbol"])
+                return False
+        # ملغى فعليًا → أزل المعرف القديم وضع الجديد
+    order = place_real_stop_loss(sig["symbol"], float(sig["quantity"]), new_stop, ex)
+    if not order:
+        return False
+    meta.update({"stop_order_id": str(order.get("id") or ""),
+                 "stop_price": float(new_stop), "stop_placed_at": utc_now_iso()})
+    _save_sig_meta(sig["id"], meta)
+    return True
+
+
+def reconcile_real_protection() -> None:
+    """[FE1.8.0] المصالقة الدورية — المنصة مصدر الحقيقة (مصالقة openOrders الخفيفة):
+      • موضع حقيقي بلا وقف راكن (فشل وضع سابق) ← ضعه الآن.
+      • الوقف الراكن نُفذ على المنصة (البوت كان ساقطًا لحظة التريغر) ← أغلق المحاسبة من سعر التنفيذ.
+      • الوقف ملغى/مات على المنصة ← أعده فورًا.
+      • الوقف المحلي تحرك (BE) دون الراكن ← استبدله.
+    الوزن: صفقة مفتوحة = 1–2 نداء خام فقط، كل RECONCILE_REAL_SEC — لا أسواق إطلاقًا."""
+    if not (is_real_mode and REAL_STANDING_STOP):
+        return
+    try:
+        rows = db.query("SELECT * FROM signals WHERE status='open' AND is_real=1 ORDER BY id ASC")
+    except Exception as exc:
+        logger.warning("مصالقة الحماية: فشل قراءة المواضع: %s", exc)
+        return
+    ex = binance_trade_exchange()
+    if ex is None:
+        return
+    for sig in rows:
+        try:
+            meta = _sig_meta(sig)
+            stop_oid = meta.get("stop_order_id")
+            if not stop_oid:
+                _ensure_real_stop(sig, ex)
+                continue
+            so = fetch_real_order(ex, sig["symbol"], stop_oid)
+            if so is None:
+                continue  # فشل عابر — الدورة القادمة
+            st = so.get("status")
+            if st == "closed":
+                exit_price = float(so.get("average") or meta.get("stop_price") or sig["stop_loss"])
+                close_signal_row(sig, exit_price,
+                                 "الوقف الراكن نُفذ على المنصة (مصالقة) — الحماية صمدت رغم غياب البوت",
+                                 exit_order_id=str(so.get("id") or "") or None)
+            elif st in ("canceled", "expired", "rejected"):
+                meta.pop("stop_order_id", None)
+                _save_sig_meta(sig["id"], meta)
+                _ensure_real_stop({**sig, "meta_json": None}, ex)
+            elif st == "open" and abs(float(meta.get("stop_price") or 0) - float(sig["stop_loss"] or 0)) > 1e-12:
+                _replace_real_stop(sig, float(sig["stop_loss"]), ex)
+        except Exception as exc:
+            logger.warning("مصالقة حماية %s فشلت: %s", sig.get("symbol"), exc)
+
+
+_last_reconcile_at = {"at": 0.0}
+
+
+def _reconcile_maybe() -> None:
+    """مصالقة الحماية كل RECONCILE_REAL_SEC داخل حلقة المراقبة — لا حلقة جديدة ولا ذاكرة إضافية."""
+    if not (is_real_mode and REAL_STANDING_STOP):
+        return
+    if time.time() - _last_reconcile_at["at"] < max(RECONCILE_REAL_SEC, 60):
+        return
+    _last_reconcile_at["at"] = time.time()
+    reconcile_real_protection()
+
+
+# ── محاسبة الرجل الجزئية + خطوة الحماية عند +1R ──
+
+def _account_partial_close(sig: Dict[str, Any], leg_qty: float, leg_price: float, reason: str) -> float:
+    """[FE1.8.0] محاسبة رجل جزئية: تحقيق ربحها، تخفيض الكمية، تثبيت initial_quantity.
+    الورقي: الرصيد يتحدث فورًا بالرجل — الإغلاق النهائي يجمع realized_pnl_usdt مرة
+    واحدة فلا ازدواج. الحقيقي: البيع الفعلي تم قبل الاستدعاء وهذه المحاسبة العرضية.
+    تُحدّث نسخة الصفقة في الذاكرة كي لا يغلق ما بعدها بكمية قديمة."""
+    entry = float(sig.get("fill_price") or 0)
+    qty_before = float(sig.get("quantity") or 0)
+    leg_qty = min(float(leg_qty), qty_before)
+    if leg_qty <= 0 or entry <= 0 or leg_price <= 0:
+        return 0.0
+    gross = leg_qty * (leg_price - entry)
+    fees = (leg_qty * entry + leg_qty * leg_price) * FEE_RATE
+    leg_pnl = gross - fees
+    realized_new = float(sig.get("realized_pnl_usdt") or 0) + leg_pnl
+    qty_after = qty_before - leg_qty
+    init_qty = float(sig.get("initial_quantity") or qty_before)  # صفوف ما قبل FE1.8.0
+    is_real = bool(sig.get("is_real"))
+    db.execute(
+        "UPDATE signals SET quantity=%s, notional_usdt=%s, realized_pnl_usdt=%s, initial_quantity=%s WHERE id=%s",
+        (qty_after, qty_after * entry, round(realized_new, 6), init_qty, sig["id"]),
+    )
+    if not is_real:
+        set_paper_balance(get_paper_balance() + leg_pnl)
+    sig["quantity"] = qty_after
+    sig["realized_pnl_usdt"] = realized_new
+    sig["initial_quantity"] = init_qty
+    tag = "حقيقية 🔴" if is_real else "ورقية"
+    log_and_notify("info",
+                   f"💰 إغلاق جزئي {tag}: {sig['symbol']} — بيع {leg_qty} عند {fmt_price(leg_price)} "
+                   f"({reason}) | ربح الرجل {leg_pnl:+.4f}$ | المتبقي {qty_after}",
+                   "PARTIAL_CLOSE")
+    return leg_pnl
+
+
+def _protection_step(sig: Dict[str, Any], high_now: float) -> None:
+    """[FE1.8.0] خطوة حماية الموضع عند بلوغ +BE_TRIGGER_R×R (البوت شرائي BULLISH):
+      1) جزئي أول درج: إغلاق PARTIAL_CLOSE_PCT% من الكمية — ربح مُحقق وتعرض أقل.
+      2) BE@1R: الوقف ينتقل إلى الدخول — الموضع صار بلا مخاطرة.
+    الورقي: تعديل وقف ومحاسبة. الحقيقي: بيع سوق جزئي + استبدال أمر الوقف الراكن
+    بالكمية المتبقية وعند سعر الدخول. كل حدث مرة واحدة (أعلام meta_json تعبر النشر).
+    monitor_step يستدعيها بعد حارس الوقف-أولًا داخل الشمعة — إن لمست الشمعة الوقف
+    الأصلي فالحماية تُتخطى (لا نفترض ترتيبًا داخل الشمعة لم نره)."""
+    if not (BE_AT_R_ENABLED or PARTIAL_AT_R_ENABLED):
+        return
+    try:
+        entry = float(sig.get("fill_price") or 0)
+        sl = float(sig.get("stop_loss") or 0)
+        qty = float(sig.get("quantity") or 0)
+    except (TypeError, ValueError):
+        return
+    if entry <= 0 or sl <= 0 or qty <= 0 or entry <= sl:
+        return
+    if BE_TRIGGER_R <= 0:
+        return
+    trigger = entry + (entry - sl) * BE_TRIGGER_R
+    if high_now < trigger:
+        return
+    meta = _sig_meta(sig)
+    is_real = bool(sig.get("is_real"))
+    ex = binance_trade_exchange() if is_real else None
+    if is_real and ex is None:
+        return
+    # 1) الإغلاق الجزئي أولًا — الكمية تقل قبل إعادة ضبط الوقف الراكن بالمتبقي
+    if PARTIAL_AT_R_ENABLED and not meta.get("partial_done") and PARTIAL_CLOSE_PCT > 0:
+        leg_qty = qty * min(max(PARTIAL_CLOSE_PCT, 1.0), 99.0) / 100.0
+        if is_real:
+            leg_qty = real_adjust_amount(ex, sig["symbol"], leg_qty)
+            mkt = real_market(ex, sig["symbol"])
+            if leg_qty <= 0 or leg_qty < real_min_amount(mkt) or leg_qty * trigger < real_min_cost(mkt):
+                meta["partial_done"] = True  # غبار — سيُغلق كاملًا مع النهائي بلا تكرار إشعارات
+                logger.info("[%s] الرجل الجزئية غبار تحت حدود باينانس — تخطٍّ نهائي", sig["symbol"])
+            else:
+                order = place_real_market_sell(sig["symbol"], leg_qty)
+                if order:
+                    meta["partial_done"] = True
+                    _account_partial_close(sig, leg_qty,
+                                           float(order.get("average") or trigger), "تحقق +1R")
+                # فشل البيع → بلا علم — تعاد المحاولة في الدورة القادمة
+        else:
+            meta["partial_done"] = True
+            _account_partial_close(sig, leg_qty, trigger, "تحقق +1R")
+    # 2) BE@1R — نقل الوقف إلى الدخول (بعد الجزئي كي يحمل الراكن الكمية المتبقية)
+    if BE_AT_R_ENABLED and not meta.get("be_done") and float(sig["stop_loss"]) < entry:
+        be_msg = (f"🔒 وقف عند التعادل (BE@1R): {sig['symbol']} — الوقف انتقل إلى الدخول "
+                  f"{fmt_price(entry)} والموضع بلا مخاطرة")
+        if is_real and REAL_STANDING_STOP:
+            if _replace_real_stop(sig, entry, ex):
+                db.execute("UPDATE signals SET stop_loss=%s WHERE id=%s", (entry, sig["id"]))
+                sig["stop_loss"] = entry
+                meta["be_done"] = True
+                log_and_notify("info", be_msg, "BREAK_EVEN")
+            # فشل الاستبدال (راكن حي/فشل عابر) → بلا علم — تعاد المحاولة في الدورة القادمة
+        else:
+            db.execute("UPDATE signals SET stop_loss=%s WHERE id=%s", (entry, sig["id"]))
+            sig["stop_loss"] = entry
+            meta["be_done"] = True
+            log_and_notify("info", be_msg, "BREAK_EVEN")
+    _save_sig_meta(sig["id"], meta)
+
+
 def _resync_after_cancel_attempt(sig: Dict[str, Any], ex, reason_terminal: str) -> None:
     """بعد محاولة إلغاء أمر حقيقي: هل ملئ؟ ملئ جزئيًا؟ أُلغي فعلًا؟ — الحكم من المنصة."""
     order = fetch_real_order(ex, sig["symbol"], sig["order_id"])
@@ -2007,8 +2457,9 @@ def _resync_after_cancel_attempt(sig: Dict[str, Any], ex, reason_terminal: str) 
     filled = float((order or {}).get("filled") or 0)
     avg = float((order or {}).get("average") or 0) or float(sig["entry_price"])
     if filled > 0:
-        db.execute("UPDATE signals SET status='open', fill_price=%s, quantity=%s, filled_at=%s WHERE id=%s",
-                   (avg, filled, utc_now_iso(), sig["id"]))
+        db.execute("UPDATE signals SET status='open', fill_price=%s, quantity=%s, filled_at=%s, initial_quantity=%s WHERE id=%s",
+                   (avg, filled, utc_now_iso(), filled, sig["id"]))
+        _ensure_real_stop({**sig, "status": "open", "fill_price": avg, "quantity": filled}, ex)  # [FE1.8.0]
         log_and_notify("info",
                        f"🎯 [حقيقي] مُلئ أمر الشراء (جزئيًا على الأقل): {sig['symbol']} — كمية {filled} عند {fmt_price(avg)}",
                        "REAL_FILLED")
@@ -2037,8 +2488,11 @@ def handle_real_pending(sig: Dict[str, Any], close_now: float, p0: float) -> Non
     qty_target = float(sig["quantity"])
     if status == "closed" or (filled > 0 and filled >= qty_target - 1e-12):
         fill_price = avg or float(sig["entry_price"])
-        db.execute("UPDATE signals SET status='open', fill_price=%s, quantity=%s, filled_at=%s WHERE id=%s",
-                   (fill_price, filled or qty_target, utc_now_iso(), sig["id"]))
+        db.execute("UPDATE signals SET status='open', fill_price=%s, quantity=%s, filled_at=%s, initial_quantity=%s WHERE id=%s",
+                   (fill_price, filled or qty_target, utc_now_iso(), filled or qty_target, sig["id"]))
+        # [FE1.8.0] بعد الملء: ارفع الوقف الراكن على المنصة فورًا — الحماية لا تعيش في الذاكرة
+        _ensure_real_stop({**sig, "status": "open", "fill_price": fill_price,
+                           "quantity": filled or qty_target})
         log_and_notify("info",
                        f"🎯 [حقيقي] مُلئ أمر الشراء: {sig['symbol']} — كمية {filled or qty_target} عند {fmt_price(fill_price)}\n"
                        f"وقف: {fmt_price(sig['stop_loss'])} | هدف 1.618: {fmt_price(sig['take_profit'])}",
@@ -2046,8 +2500,10 @@ def handle_real_pending(sig: Dict[str, Any], close_now: float, p0: float) -> Non
         return
     if status in ("canceled", "expired", "rejected"):
         if filled > 0:
-            db.execute("UPDATE signals SET status='open', fill_price=%s, quantity=%s, filled_at=%s WHERE id=%s",
-                       (avg or float(sig["entry_price"]), filled, utc_now_iso(), sig["id"]))
+            db.execute("UPDATE signals SET status='open', fill_price=%s, quantity=%s, filled_at=%s, initial_quantity=%s WHERE id=%s",
+                       (avg or float(sig["entry_price"]), filled, utc_now_iso(), filled, sig["id"]))
+            _ensure_real_stop({**sig, "status": "open",
+                               "fill_price": avg or float(sig["entry_price"]), "quantity": filled})  # [FE1.8.0]
             log_and_notify("info",
                            f"🎯 [حقيقي] ملء جزئي قبل الإلغاء: {sig['symbol']} — كمية {filled} عند {fmt_price(avg or float(sig['entry_price']))}",
                            "REAL_FILLED")
@@ -2106,8 +2562,8 @@ def monitor_step() -> None:
         low_now = float(last["low"])
         if low_now <= entry:
             fill_price = entry if close_now >= entry else close_now  # ملء بسعر أفضل إن نزل السوق تحته
-            db.execute("UPDATE signals SET status='open', fill_price=%s, filled_at=%s WHERE id=%s",
-                       (fill_price, utc_now_iso(), sig["id"]))
+            db.execute("UPDATE signals SET status='open', fill_price=%s, filled_at=%s, initial_quantity=%s WHERE id=%s",
+                       (fill_price, utc_now_iso(), float(sig["quantity"]), sig["id"]))  # [FE1.8.0] أساس محاسبة الجزئي
             log_and_notify("info",
                            f"🎯 مُلئ الأمر المعلق (ورقي): {symbol} عند {fmt_price(fill_price)}\n"
                            f"وقف: {fmt_price(sig['stop_loss'])} | هدف 1.618: {fmt_price(sig['take_profit'])}",
@@ -2136,14 +2592,20 @@ def monitor_step() -> None:
         if sig.get("is_real"):
             if low_now <= float(sig["stop_loss"]):
                 close_real_trade(sig, float(sig["stop_loss"]), "وقف خسارة بنيوي (خلف أصل الموجة 1)")
-            elif high_now >= float(sig["take_profit"]):
-                close_real_trade(sig, float(sig["take_profit"]), "هدف فيبوناتشي 1.618 تحقق")
+            else:
+                # [FE1.8.0] حماية +1R (جزئي + BE) — لن تُستدعى إن لمست الشمعة الوقف (وقف-أولًا محفوظ)
+                _protection_step(sig, high_now)
+                if high_now >= float(sig["take_profit"]):
+                    close_real_trade(sig, float(sig["take_profit"]), "هدف فيبوناتشي 1.618 تحقق")
             continue
         # الوقف أولًا (متحفظ) — الوقف بنيوي خلف P0، الهدف امتداد 1.618
         if low_now <= float(sig["stop_loss"]):
             close_signal_row(sig, float(sig["stop_loss"]), "وقف خسارة بنيوي (خلف أصل الموجة 1)")
-        elif high_now >= float(sig["take_profit"]):
-            close_signal_row(sig, float(sig["take_profit"]), "هدف فيبوناتشي 1.618 تحقق")
+        else:
+            # [FE1.8.0] BE@1R + جزئي أول درج — بعد حارس الوقف-أولًا داخل الشمعة
+            _protection_step(sig, high_now)
+            if high_now >= float(sig["take_profit"]):
+                close_signal_row(sig, float(sig["take_profit"]), "هدف فيبوناتشي 1.618 تحقق")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2859,6 +3321,7 @@ def monitor_loop() -> None:
         try:
             db.ensure()
             monitor_step()
+            _reconcile_maybe()  # [FE1.8.0] مصالقة الوقف الراكن دوريًا (حقيقي فقط)
             ws_sync_subscriptions()  # [FE1.2.0] احتياط موازٍ للمشرف — مزامنة الاشتراكات كل دقيقة
             mem_check("دورة مراقبة")  # [FE1.3.1] حمية الذاكرة كل دقيقة
         except Exception as exc:
@@ -3065,6 +3528,14 @@ def api_all():
         "trading_enabled": is_trading_enabled,
         "paper_balance": get_paper_balance(),
         "stats": compute_stats(),
+        "risk": risk_snapshot(),  # [FE1.8.0] بطاقة قاطع المخاطر (حد يومي/متتاليات/تبريد)
+        "protection": {  # [FE1.8.0] حالة حماية الموضع
+            "standing_stop": REAL_STANDING_STOP,
+            "be_at_r": BE_AT_R_ENABLED,
+            "partial_at_r": PARTIAL_AT_R_ENABLED,
+            "partial_pct": PARTIAL_CLOSE_PCT,
+            "rr_net_min": RR_NET_MIN,
+        },
         "open_signals": live_rows,
         "closed_signals": [_parse_sig_row(r) for r in closed_rows],
         "detections": dets,
