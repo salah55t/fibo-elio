@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.8.4"
+BOT_VERSION = "FE1.8.5"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -298,8 +298,12 @@ function renderCards(d){
     $('bin-badge').className = 'badge b-bin-ok';
   } else {
     bnTxt = bn.keys_present ? 'فشل الاتصال' : 'بلا مفاتيح API';
+    // [FE1.8.5] نص الخطأ الحقيقي في البطاقة — كانت «فشل الاتصال» بلا أي تفاصيل وبلا أثر في السجل
+    const bnErr = (bn.error || '').replace(/\s+/g,' ').slice(0, 90);
+    if (bn.keys_present && bnErr) bnTxt += ' · ' + bnErr;
     bnCls = bn.keys_present ? 'neg' : '';
     binBadge = 'باينانس: ' + (bn.keys_present ? 'غير متصل ⚠' : 'بلا مفاتيح');
+    if (bn.keys_present && bnErr) binBadge += ' — ' + esc(bnErr);
     $('bin-badge').className = 'badge ' + (bn.keys_present ? 'b-bin-bad' : 'b-off');
   }
   if (bn.testnet) binBadge += ' 🧪TESTNET';

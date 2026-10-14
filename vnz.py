@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.8.4"  # FE1.8.4: فتح الترشيح مدروس بإثبات حي — قائمة مراقبة 30 زوجًا بدل 20 + عمر البنية 30 شمعة (7.5س) بدل 20 + إعادة فحص كون معجّلة عند موت القائمة (بلا بنيات حية ولا صفقات) بدل الجلوس 6 ساعات — premise-alive والمطاردة وrr_net وHTF ما زالتا حراسًا. (FE1.8.3: نبضة 60ث)
+BOT_VERSION = "FE1.8.5"  # FE1.8.5: شفافية فشل اتصال باينانس (شكوى: «فشل الاتصال في اللوحة ولا شيء في اللوج») — إشعار انتقال الحالة للسجل/اللوحة عند الفشل والعودة + نص الخطأ الحقيقي في بطاقة اللوحة + عمر P5 الفعلي في حكم التقادم + سقف 36 شمعة (9س) بدل 30 (إثبات حي: 43 رفض تقادم مرت جميعها بوابة الفرضية الحية أولًا). (FE1.8.4: قائمة 30 + إعجال الفحص)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -262,7 +262,7 @@ HTF_BIAS_CACHE_SEC = float(os.getenv("HTF_BIAS_CACHE_SEC", "14400"))  # كاش �
 # الدخول (+1.1% إلى +4.3%) و5 منها انتهت دون لمس، 3/9 إعادة حرفية لنفس المحاور،
 # وإشارة UNI بهدف أقل من السعر الحي (نمط حقق هدفه والبوت يشتري بعده).
 MAX_ENTRY_DISTANCE_PCT = float(os.getenv("MAX_ENTRY_DISTANCE_PCT", "1.5"))      # أقصى ارتفاع للسوق فوق منطقة الدخول % — لا مطاردة (0 يعطل)
-MAX_STRUCTURE_AGE_BARS = int(os.getenv("MAX_STRUCTURE_AGE_BARS", "30"))        # [FE1.8.4] 30 شمعة (7.5س على 15m) بدل 20 — إثبات حي FE1.8.3: 23 رفض «بنية متقادمة» مقابل صفر رفض في بوابات الجودة الأخرى؛ premise-alive (P0) والمطاردة 1.5% وrr_net ما زالتا تحميان الجودة
+MAX_STRUCTURE_AGE_BARS = int(os.getenv("MAX_STRUCTURE_AGE_BARS", "36"))        # [FE1.8.5] 36 شمعة (9س على 15m) بدل 30 — إثبات حي FE1.8.4: 43 رفض تقادم مرت جميعها بوابة الفرضية الحية أولًا (الأمر الوحيد الذي يمنعها)؛ premise-alive (P0) والمطاردة 1.5% وrr_net ما زالتا تحميان — وحكم الرفض يعرض العمر الفعلي للمعايرة
 SYMBOL_COOLDOWN_SEC = float(os.getenv("SYMBOL_COOLDOWN_SEC", "5400"))          # تبريد الرمز بعد انتهاء/إلغاء أمر معلق — لا إعادة إنشاء حرفية (0 يعطل)
 CLUSTER_MAX_SAME_DIRECTION = int(os.getenv("CLUSTER_MAX_SAME_DIRECTION", "3")) # سقف الإشارات الصاعدة النشطة معًا — لا 5 لونجات مترابطة (0 يعطل)
 # [FE1.7.0] سقوف التعرض الورقي — كانت الورقي يفتح مركزًا بقيمة 2.5× الرصيد (مخاطرة 1%
@@ -311,6 +311,7 @@ MEM_CRITICAL_MB = float(os.getenv("MEM_CRITICAL_MB", "440"))          # سجل �
 BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "0").strip().lower() in ("1", "true", "yes", "on")
 REAL_MAX_NOTIONAL_USDT = float(os.getenv("REAL_MAX_NOTIONAL_USDT", "50.0"))  # سقف قيمة أمر الشراء الحقيقي الواحد (حماية)
 BIN_STATUS_TTL_SEC = float(os.getenv("BIN_STATUS_TTL_SEC", "60"))  # كاش بطاقة اتصال باينانس
+BIN_CONN_RENOTIFY_SEC = float(os.getenv("BIN_CONN_RENOTIFY_SEC", "600"))  # [FE1.8.5] تكرار إشعار فشل الاتصال كل 10 دقائق أثناء استمراره
 REAL_RULES_TTL_SEC = float(os.getenv("REAL_RULES_TTL_SEC", "21600"))  # [FE1.4.1] كاش قواعد السوق الواحد (6 ساعات)
 
 DASHBOARD_PROTECTED = bool(DASHBOARD_USERNAME and DASHBOARD_PASSWORD)
@@ -912,7 +913,7 @@ _trade_ex_lock = threading.Lock()
 _trade_ex: Any = None            # نسخة التداول (مفاتيح خاصة) — تُبنى مرة واحدة كسولًا
 _bin_probe: Any = None           # نسخة عامة بلا مفاتيح لفحص الاتصال عندما لا توجد مفاتيح
 _bin_status_lock = threading.Lock()
-_bin_status_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
+_bin_status_cache: Dict[str, Any] = {"ts": 0.0, "data": None, "last_connected": None, "last_notify": 0.0}
 
 
 def binance_trade_exchange():
@@ -946,6 +947,32 @@ def _binance_public_probe():
     return _bin_probe
 
 
+def _binance_conn_notify(connected: bool, error: str = "") -> None:
+    """[FE1.8.5] إشعار انتقال حالة اتصال باينانس إلى السجل/اللوحة — كان الفشل
+    يظهر في بطاقة اللوحة («فشل الاتصال») بلا أي أثر في السجل (شكوى المستخدم:
+    «فشل الاتصال يظهر في اللوحة ولا يظهر أي شيء في اللوج») لأن مسار الاستثناء
+    كان يبتلع الخطأ بصمت. الإشعار عند الانتقال فقط (نزول/عودة) + تذكير كل
+    BIN_CONN_RENOTIFY_SEC أثناء استمرار الفشل — بلا إغراق عند التحديث المتكرر."""
+    now = time.time()
+    last = _bin_status_cache.get("last_connected")
+    last_notify = float(_bin_status_cache.get("last_notify") or 0.0)
+    try:
+        if connected:
+            if last is False:
+                # عودة بعد انقطاع — تُسجل دائمًا (الكاش 60ث يجعل الرفرفة غير واقعية)
+                log_and_notify("info", "✅ اتصال باينانس عاد إلى العمل", "BINANCE_CONN")
+                _bin_status_cache["last_notify"] = now
+            _bin_status_cache["last_connected"] = True
+            return
+        # فشل: إشعار عند الانتقال إلى الفشل + تذكير دوري أثناء الاستمرار
+        if last is not False or now - last_notify >= BIN_CONN_RENOTIFY_SEC:
+            log_and_notify("warning", f"⚠ فشل اتصال باينانس — {error[:180]}", "BINANCE_CONN")
+            _bin_status_cache["last_notify"] = now
+        _bin_status_cache["last_connected"] = False
+    except Exception:
+        pass  # إشعار الاتصال لا يجب أن يُسقط اللوحة أبدًا
+
+
 def binance_status_snapshot(force: bool = False) -> Dict[str, Any]:
     """[FE1.4.0] حالة اتصال باينانس للوحة: ping حي + زمن استجابة + (بمفاتيح)
     رصيد USDT وصلاحية التداول. كاش BIN_STATUS_TTL_SEC — لا ضغط على باينانس
@@ -968,6 +995,7 @@ def binance_status_snapshot(force: bool = False) -> Dict[str, Any]:
         ex.fetch_time()  # نقطة عامة خفيفة — مقياس الاتصال وزمن الاستجابة
         data["connected"] = True
         data["latency_ms"] = round((time.time() - t0) * 1000.0)
+        _binance_conn_notify(True)  # [FE1.8.5] إشعار العودة بعد انقطاع
         if keys_ok:
             # [FE1.4.1] privateGetAccount بدل fetch_balance — fetch_balance كانت
             # تستدعي load_markets داخليًا فتحمّل كون أسواق باينانس كاملًا (سبب OOM)!
@@ -980,6 +1008,7 @@ def binance_status_snapshot(force: bool = False) -> Dict[str, Any]:
             data["can_trade"] = bool(ct) if ct is not None else None
     except Exception as exc:
         data["error"] = str(exc)[:220]
+        _binance_conn_notify(False, str(exc))  # [FE1.8.5] الفشل يصل السجل/اللوحة — لا صمت بعد اليوم
     with _bin_status_lock:
         _bin_status_cache["ts"] = now
         _bin_status_cache["data"] = dict(data)
@@ -3341,11 +3370,16 @@ def scan_cycle() -> None:
                             fmt_price(float(best.pivot_prices[0])))
                     elif not structure_fresh(best, df):
                         # [FE1.7.0] بنية أتمت قبل زمن طويل — لا إشارات من محاور أثرية
-                        _set_reject_reason(symbol, f"بنية متقادمة — P5 تجاوز سقف العمر {MAX_STRUCTURE_AGE_BARS} شمعة")
+                        # [FE1.8.5] العمر الفعلي في الحكم — معايرة حية بدل تخمين
+                        try:
+                            _age = (len(df) - 1) - int(best.pivot_indices[5])
+                        except (TypeError, ValueError, IndexError, AttributeError):
+                            _age = -1
+                        _set_reject_reason(symbol, f"بنية متقادمة — عمر P5 {_age} شمعة (السقف {MAX_STRUCTURE_AGE_BARS})")
                         with scan_stats_lock:
                             scan_stats["rejected_old_structure"] += 1
-                        logger.info("[%s] بنية متقادمة: نهاية النافذة (P5) تجاوزت سقف العمر %s شمعة — لا إشارة",
-                                    symbol, MAX_STRUCTURE_AGE_BARS)
+                        logger.info("[%s] بنية متقادمة: عمر P5 %s شمعة > سقف العمر %s شمعة — لا إشارة",
+                                    symbol, _age, MAX_STRUCTURE_AGE_BARS)
                     elif on_symbol_cooldown(symbol):
                         # [FE1.7.0] تبريد بعد انتهاء/إلغاء حديث — لا إعادة إنشاء حرفية
                         _set_reject_reason(symbol, f"تبريد الرمز {int(SYMBOL_COOLDOWN_SEC) // 60} دقائق بعد انتهاء/إلغاء حديث")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_fe184.py — اختبارات FE1.8.4: فتح الترشيح بإثبات حي + إعادة فحص معجّلة عند موت القائمة
+test_fe184.py — اختبارات FE1.8.5: فتح الترشيح بإثبات حي + إعادة فحص معجّلة عند موت القائمة
 
 الخلفية الحية (FE1.8.3 بعد التصفير، 6 دورات كشف على 20 زوجًا):
   • scanned=120، setups_valid=203، setups_bear_seen=108 — وصفر توصية معلقة.
@@ -124,18 +124,18 @@ def scanner_clean():
 class TestNewDefaults:
 
     def test_wider_watchlist(self):
-        assert vnz.SCAN_TOP_N == 30       # [FE1.8.4] بدل 20 — قائمة أوسع
+        assert vnz.SCAN_TOP_N == 30       # [FE1.8.5] بدل 20 — قائمة أوسع
 
     def test_structure_age_ceiling(self):
-        assert vnz.MAX_STRUCTURE_AGE_BARS == 30   # [FE1.8.4] بدل 20 (7.5س على 15m)
+        assert vnz.MAX_STRUCTURE_AGE_BARS == 36   # [FE1.8.5] بدل 30 (9س على 15m)
 
     def test_idle_rescan_gap(self):
         assert vnz.IDLE_RESCAN_MIN_GAP_SEC == 2700.0  # 45 دقيقة بين الإعجالات
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.8.4"
-        assert panel.BOT_VERSION == "FE1.8.4"
+        assert vnz.BOT_VERSION == "FE1.8.5"
+        assert panel.BOT_VERSION == "FE1.8.5"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -236,12 +236,12 @@ class TestScanCycleIdleRescan:
                     make_setup(prices=[150.0, 165.0, 154.5, 177.0, 159.0, 168.0]))
         vnz.scan_cycle()
         assert vnz.scan_stats["rejected_stale_premise"] == 1
-        assert vnz._scan_kick.is_set()   # [FE1.8.4] القائمة ميتة — الفحص يُوقظ
+        assert vnz._scan_kick.is_set()   # [FE1.8.5] القائمة ميتة — الفحص يُوقظ
 
     def test_old_structure_also_kicks(self, scan_env, monkeypatch, scanner_clean):
         # بنية أثرية (عمر 35 > 30) + بلا صفقات + فحص قديم → توقظ أيضًا
         scanner_clean["last_scan_at"] = iso_ago(7200)
-        _patch_scan(monkeypatch, make_setup(p5_idx=65))
+        _patch_scan(monkeypatch, make_setup(p5_idx=60))  # [FE1.8.5] العمر 39 > السقف 36
         vnz.scan_cycle()
         assert vnz.scan_stats["rejected_old_structure"] == 1
         assert vnz._scan_kick.is_set()
@@ -289,12 +289,12 @@ class TestScanCycleIdleRescan:
 class TestDeploymentAndBoundaries:
 
     def test_render_yaml_carries_values(self):
-        # مصدر الحقيقة على Render — يجب أن يحمل قيم FE1.8.4
+        # مصدر الحقيقة على Render — يجب أن يحمل قيم FE1.8.5
         import pathlib
         y = pathlib.Path("render.yaml").read_text(encoding="utf-8")
         assert 'value: "30"' in y          # SCAN_TOP_N + MAX_STRUCTURE_AGE_BARS
         assert 'value: "2700"' in y        # IDLE_RESCAN_MIN_GAP_SEC
-        assert vnz.SCAN_TOP_N == 30 and vnz.MAX_STRUCTURE_AGE_BARS == 30
+        assert vnz.SCAN_TOP_N == 30 and vnz.MAX_STRUCTURE_AGE_BARS == 36
 
     def test_premise_gate_untouched(self):
         # البوابة الجوهرية FE1.6.2: إغلاق تحت P0 = فرضية ميتة — بلا تساهل
