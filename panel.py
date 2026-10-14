@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.8.0"
+BOT_VERSION = "FE1.8.1"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -220,7 +220,15 @@ PANEL_HTML = r"""<!DOCTYPE html>
   </section>
 
   <section>
+    <h2>📊 لوحة الأداء <span class="mut small">— مقتبسة من لوحة أداء V9.34.0 (اقتباسات OctoBot): صافي الربح · معدل الربح · عامل الربح · منحنى تراكمي بأعمدة الربح/الخسارة لكل صفقة</span></h2>
+    <div class="grid" id="perf-cards"></div>
+    <div id="pnl-chart-meta" class="mut small" style="margin:8px 0 4px"></div>
+    <div id="pnl-chart"></div>
+  </section>
+
+  <section>
     <h2>🔍 آخر التقاطات الموجات (صاعدة تُنفَّذ — هابطة للاطلاع فقط في السبوت)</h2>
+    <div id="gates-strip" class="mut small" style="margin-bottom:8px">—</div>
     <div id="det-box"></div>
   </section>
 
@@ -457,6 +465,96 @@ function renderClosed(list){
   </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+// ================= [FE1.8.1] حكم الالتقاط + شريط البوابات + لوحة الأداء =================
+// الحكم: لماذا لم تصبح التقاطة توصية معلقة — من _reject_reason في الخادم
+// (نسخة خفيفة من بطاقة «لماذا لا يتداول؟» المخطط لها في FE1.9.0)
+function verdictCell(x){
+  if(x.traded) return '<span class="pill p-open">أمر معلق بانتظار الدخول</span>';
+  if(x.direction==='BEARISH') return '<span class="mut small">متابعة فقط — لا بيع في السبوت</span>';
+  const v = x.verdict || 'مرفوض';
+  return '<span class="small gld" title="بوابة الرفض الأخيرة">'+esc(v)+'</span>';
+}
+
+function renderGates(st){
+  const el = $('gates-strip');
+  if(!el) return;
+  st = st || {};
+  const gates = [['rejected_stale_premise','فرضية ميتة'],['rejected_old_structure','بنية قديمة'],
+    ['rejected_cooldown','تبريد رمز'],['rejected_symbol_busy','رمز مشغول'],['rejected_cluster','عنقود'],
+    ['rejected_active_limit','خانات ممتلئة'],['rejected_htf_bias','HTF هابط'],
+    ['rejected_far_entry','مطاردة'],['rejected_target_invalid','هدف محقق'],
+    ['rejected_rr_net','R:R صافٍ منخفض'],['rejected_daily_loss','حد يومي'],['rejected_risk_pause','تبريد مخاطر']];
+  const parts = gates.filter(g=>st[g[0]]).map(g=>g[1]+' <b>'+st[g[0]]+'</b>');
+  el.innerHTML = '🚦 بوابات هذه الفترة: ' + (parts.length? parts.join(' · ') : 'لا رفضات بعد') +
+    ' — دورات المسح: <b>'+(st.cycles||0)+'</b> · رموز ممسوحة: <b>'+(st.scanned||0)+'</b>';
+}
+
+// لوحة الأداء — اقتباس من V9.34.0 (اقتباسات OctoBot: /api/stats + pnl_history):
+// بطاقات أساسية + تمديدات، ومنحنى أرباح تراكمي SVG خالص بلا CDN
+// (خط تراكمي + أعمدة خضراء/حمراء لكل صفقة) بألوان هذه اللوحة
+function renderPnlChart(trades){
+  const box = document.getElementById('pnl-chart');
+  if(!box) return;
+  if(!trades || !trades.length){
+    box.innerHTML = '<div class="empty">لا صفقات مغلقة بعد — المنحنى يُبنى من أول إغلاق</div>';
+    return;
+  }
+  const W = 900, H = 260, PAD_L = 52, PAD_R = 12, PAD_T = 14, PAD_B = 26;
+  const cums = trades.map(t => t.cum_usdt);
+  let lo = Math.min(0, ...cums), hi = Math.max(0, ...cums);
+  if(hi - lo < 0.5){ hi += 0.25; lo -= 0.25; }
+  const rng = hi - lo;
+  const x = i => PAD_L + (i / Math.max(1, trades.length - 1)) * (W - PAD_L - PAD_R);
+  const y = v => PAD_T + (1 - (v - lo) / rng) * (H - PAD_T - PAD_B);
+  const barW = Math.max(1.5, (W - PAD_L - PAD_R) / trades.length * 0.6);
+  const bars = trades.map((t, i) => {
+    const cx = x(i), v = t.net_usdt, y0 = y(0), y1 = y(v);
+    const top = Math.min(y0, y1), h = Math.max(1, Math.abs(y0 - y1));
+    const col = v > 0 ? 'rgba(0,255,156,.65)' : v < 0 ? 'rgba(255,51,85,.55)' : 'rgba(120,140,150,.4)';
+    const tip = '#'+t.i+' '+(t.symbol||'')+' · '+(t.net_usdt>=0?'+':'')+t.net_usdt+'$ · تراكمي '+t.cum_usdt+'$';
+    return '<rect x="'+(cx-barW/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+barW.toFixed(1)+'" height="'+h.toFixed(1)+'" fill="'+col+'"><title>'+esc(tip)+'</title></rect>';
+  }).join('');
+  const path = trades.map((t,i)=>(i===0?'M':'L')+x(i).toFixed(1)+','+y(t.cum_usdt).toFixed(1)).join(' ');
+  const last = trades[trades.length-1];
+  const lastCol = last.cum_usdt >= 0 ? '#00ff9c' : '#ff3355';
+  const grid = [hi, (hi+lo)/2, lo].map(v =>
+    '<line x1="'+PAD_L+'" y1="'+y(v).toFixed(1)+'" x2="'+(W-PAD_R)+'" y2="'+y(v).toFixed(1)+'" stroke="rgba(0,255,156,.12)" stroke-dasharray="3,4" stroke-width="1"/>'+
+    '<text x="'+(PAD_L-4)+'" y="'+(y(v)+3).toFixed(1)+'" fill="#5d8f6d" font-size="10" font-family="Share Tech Mono,monospace" text-anchor="end">'+v.toFixed(2)+'</text>').join('');
+  const zero = '<line x1="'+PAD_L+'" y1="'+y(0).toFixed(1)+'" x2="'+(W-PAD_R)+'" y2="'+y(0).toFixed(1)+'" stroke="rgba(120,140,150,.5)" stroke-width="1"/>';
+  box.innerHTML = '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:260px" preserveAspectRatio="none">'+
+    grid+zero+bars+
+    '<path d="'+path+'" fill="none" stroke="'+lastCol+'" stroke-width="2.2" opacity=".95"/>'+
+    '<circle cx="'+x(trades.length-1).toFixed(1)+'" cy="'+y(last.cum_usdt).toFixed(1)+'" r="4" fill="'+lastCol+'"/>'+
+    '<text x="'+(W-PAD_R)+'" y="'+(y(last.cum_usdt)-8).toFixed(1)+'" fill="'+lastCol+'" font-size="12" font-family="Share Tech Mono,monospace" text-anchor="end">'+(last.cum_usdt>=0?'+':'')+last.cum_usdt.toFixed(2)+'$</text>'+
+  '</svg>';
+}
+
+function renderPerformance(d){
+  const p = d.performance || {};
+  const cards = $('perf-cards');
+  if(!cards) return;
+  const pfTxt = (p.profit_factor == null) ? '—' : (p.profit_factor >= 99 ? '∞' : parseFloat(p.profit_factor).toFixed(2));
+  const net = parseFloat(p.net_profit_usdt || 0);
+  const arr = [
+    ['💵 صافي الربح', (net>=0?'+':'') + net.toFixed(2) + '$', net>0?'pos':(net<0?'neg':'')],
+    ['🎯 معدل الربح', (p.win_rate==null?'—':parseFloat(p.win_rate).toFixed(1)+'%'), (p.win_rate!=null&&p.win_rate>=50)?'pos':'gld'],
+    ['⚖️ عامل الربح', pfTxt, (p.profit_factor!=null&&p.profit_factor>=1.15)?'pos':(p.profit_factor!=null&&p.profit_factor<0.85?'neg':'gld')],
+    ['🧾 الصفقات المغلقة', p.total_closed_trades||0, ''],
+    ['📊 متوسط رابح/خاسر', (p.avg_win!=null?'+'+parseFloat(p.avg_win).toFixed(2):'—')+' / '+(p.avg_loss!=null?parseFloat(p.avg_loss).toFixed(2):'—')+'$', 'mut'],
+    ['📉 أقصى تراجع', '-'+parseFloat(p.max_drawdown_usdt||0).toFixed(2)+'$', 'neg'],
+    ['🗓 ربح اليوم', (parseFloat(p.today_pnl||0)>=0?'+':'')+parseFloat(p.today_pnl||0).toFixed(2)+'$', parseFloat(p.today_pnl||0)>=0?'pos':'neg'],
+    ['⏱ متوسط المدة', p.avg_duration_min!=null?parseFloat(p.avg_duration_min).toFixed(0)+' دقيقة':'—', 'mut'],
+  ];
+  cards.innerHTML = arr.map(c =>
+    `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}">${c[1]}</div></div>`).join('');
+  const best = p.best_trade, worst = p.worst_trade;
+  $('pnl-chart-meta').innerHTML =
+    (best?'أفضل صفقة: <b class="pos">'+esc(best.symbol||'—')+' +'+parseFloat(best.pnl).toFixed(2)+'$</b>':'') +
+    (worst?' · أسوأ صفقة: <b class="neg">'+esc(worst.symbol||'—')+' '+parseFloat(worst.pnl).toFixed(2)+'$</b>':'') +
+    (p.expectancy!=null?' · توقع الصفقة: '+parseFloat(p.expectancy).toFixed(2)+'$':'');
+  renderPnlChart(p.trades || []);
+}
+
 function renderDetections(list){
   if(!list.length){ $('det-box').innerHTML = '<div class="empty">لا التقاطات بعد — بانتظار تكوّن موجات دافعة صالحة على فريم الكشف</div>'; return; }
   let rows = list.map(x => {
@@ -468,13 +566,13 @@ function renderDetections(list){
     <td>${x.w2_retrace!==null&&x.w2_retrace!==undefined?(x.w2_retrace*100).toFixed(1)+'%':'—'} <span class="${x.w2_in_zone?'zone-ok':'zone-no'}">${x.w2_in_zone?'✔':''}</span></td>
     <td>${x.w4_retrace!==null&&x.w4_retrace!==undefined?(x.w4_retrace*100).toFixed(1)+'%':'—'} <span class="${x.w4_in_zone?'zone-ok':'zone-no'}">${x.w4_in_zone?'✔':''}</span></td>
     <td>${fmt(x.entry_zone_low)}</td><td class="neg small">${fmt(x.stop_loss)}</td><td class="pos small">${fmt(x.take_profit)}</td>
-    <td>${x.traded?'<span class="pill p-open">نُفذت</span>':'<span class="mut small">للاطلاع</span>'}</td>
+    <td>${verdictCell(x)}</td>
     <td class="mut small">${dt(x.detected_at)}</td>
   </tr>`; }).join('');
   // [FE1.5.0] داخل .tbl-wrap + pivots محمية ضد null (كان خطأ واحد يجمّد اللوحة)
   $('det-box').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
     <th>الزوج</th><th>الاتجاه</th><th>المحاور</th><th>W2</th><th>W4</th>
-    <th>منطقة الدخول</th><th>وقف</th><th>هدف</th><th>التنفيذ</th><th>وقت الالتقاط</th>
+    <th>منطقة الدخول</th><th>وقف</th><th>هدف</th><th>الحكم</th><th>وقت الالتقاط</th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -498,6 +596,7 @@ async function refresh(){
     safe(()=>renderCards(d)); safe(()=>renderScanner(d));
     safe(()=>renderOpen(d.open_signals)); safe(()=>renderClosed(d.closed_signals));
     safe(()=>renderDetections(d.detections)); safe(()=>renderNotifs(d.notifications));
+    safe(()=>renderPerformance(d)); safe(()=>renderGates(d.stats));
   } catch(e){
     console.error(e);
     const eb = $('err-banner');

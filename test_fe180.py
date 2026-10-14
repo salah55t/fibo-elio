@@ -486,8 +486,8 @@ class TestRealPartial:
 
 def test_version_bump():
     import panel
-    assert vnz.BOT_VERSION == "FE1.8.0"
-    assert panel.BOT_VERSION == "FE1.8.0"
+    assert vnz.BOT_VERSION == "FE1.8.1"
+    assert panel.BOT_VERSION == "FE1.8.1"
 
 
 def test_risk_snapshot_shape(clean_db):

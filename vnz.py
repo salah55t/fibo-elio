@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.8.0"  # FE1.8.0: حماية الموضع — وقف راكن STOP_LOSS_LIMIT على المنصة + مصالقة دورية، BE@1R (وقف عند التعادل)، إغلاق جزئي 50% عند +1R، حد خسارة يومي + قاطع متتاليات الخسارة، بوابة R:R صافية بعد الرسوم
+BOT_VERSION = "FE1.8.1"  # FE1.8.1: تصفير شامل (عدادات قاطع المخاطر تُمسح أيضًا — كانت تبقى بعد التصفير) + لوحة أداء مقتبسة من V9.34.0 (اقتباسات OctoBot): صافي/نسبة/عامل ربح + منحنى تراكمي SVG + حكم لكل التقاط (لماذا لم يصبح أمرًا معلقًا)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -429,6 +429,26 @@ scan_stats: Dict[str, Any] = {
 detections_lock = threading.Lock()
 recent_detections: List[Dict[str, Any]] = []
 DETECTIONS_MAX = 60
+
+# [FE1.8.1] حكم آخر بوابة رفضت إعداد كل رمز — يجيب «لماذا لا توصية؟» مباشرة في اللوحة
+# (البوابات ترفض بصمت في السجلات فقط؛ الالتقاط يظهر بلا سبب فلا يعرف المستخدم لماذا لا صفقات)
+_reject_reason_lock = threading.Lock()
+_reject_reason: Dict[str, str] = {}
+
+
+def _set_reject_reason(symbol: str, reason: str) -> None:
+    with _reject_reason_lock:
+        _reject_reason[symbol] = reason
+
+
+def _clear_reject_reason(symbol: str) -> None:
+    with _reject_reason_lock:
+        _reject_reason.pop(symbol, None)
+
+
+def _get_reject_reason(symbol: str) -> str:
+    with _reject_reason_lock:
+        return _reject_reason.get(symbol, "")
 
 
 def utc_now_iso() -> str:
@@ -1838,6 +1858,13 @@ def register_detection(symbol: str, setup: DetectedSetup, traded: bool) -> None:
         "traded": traded,
         "detected_at": utc_now_iso(),
     }
+    # [FE1.8.1] حكم الالتقاط: لماذا صار (أو لم يصبح) أمرًا معلقًا — رؤية مباشرة باللوحة
+    if traded:
+        entry["verdict"] = "أُنشئ أمر معلق بانتظار منطقة الدخول"
+    elif setup.direction == "BEARISH":
+        entry["verdict"] = "متابعة فقط — لا بيع في السبوت"
+    else:
+        entry["verdict"] = _get_reject_reason(symbol) or "مرفوض"
     with detections_lock:
         recent_detections.insert(0, entry)
         del recent_detections[DETECTIONS_MAX:]
@@ -1856,6 +1883,7 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
     # [FE1.8.0] قاطع المخاطر — قبل أي حساب أو أمر (ورقي أو حقيقي)
     block = risk_entry_block_reason()
     if block:
+        _set_reject_reason(symbol, block)  # [FE1.8.1] الحكم يظهر في اللوحة
         key = "rejected_risk_pause" if "تبريد" in block else "rejected_daily_loss"
         with scan_stats_lock:
             scan_stats[key] += 1
@@ -1873,6 +1901,7 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
                 tp, tp_basis = float(cand), basis
                 break
     if not (entry > 0 and sl > 0 and tp > entry > sl):
+        _set_reject_reason(symbol, "أسعار الإعداد غير منطقية (entry/sl/tp)")
         logger.info("[%s] أسعار الإعداد غير منطقية (entry=%s sl=%s tp=%s) — تجاهل",
                     symbol, fmt_price(entry), fmt_price(sl), fmt_price(tp))
         return False
@@ -1883,6 +1912,7 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
     if last_close > 0 and MAX_ENTRY_DISTANCE_PCT > 0:
         distance_pct = (float(last_close) / entry - 1.0) * 100.0
         if distance_pct > MAX_ENTRY_DISTANCE_PCT:
+            _set_reject_reason(symbol, f"مطاردة — السعر أعلى من الدخول بـ{distance_pct:.1f}% (السقف {MAX_ENTRY_DISTANCE_PCT}%)")
             with scan_stats_lock:
                 scan_stats["rejected_far_entry"] += 1
             logger.info("[%s] رفض مطاردة: السعر الحي %s أعلى من منطقة الدخول %s بـ%.2f%% (السقف %.1f%%) — لا إشارة",
@@ -1898,6 +1928,7 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
             p5 = 0.0
         ceiling = max(float(last_close), p5) if p5 > 0 else float(last_close)
         if tp <= ceiling:
+            _set_reject_reason(symbol, "الهدف تحقق فعلًا — TP تحت max(السعر الحي, P5)")
             with scan_stats_lock:
                 scan_stats["rejected_target_invalid"] += 1
             logger.info("[%s] رفض هدف مُحقق: TP %s ≤ max(الإغلاق %s, P5 %s) — لا إشارة",
@@ -1908,6 +1939,7 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
     # تأكل الرسوم (0.2% من قيمة الصفقة) نسبة معتبرة من العائد على الأهداف الضيقة
     rr_net = rr_net_value(entry, sl, tp)
     if RR_NET_MIN > 0 and risk_per_coin_pre > 0 and rr_net < RR_NET_MIN:
+        _set_reject_reason(symbol, f"R:R صافٍ {rr_net:.2f} أقل من الأرضية {RR_NET_MIN}")
         with scan_stats_lock:
             scan_stats["rejected_rr_net"] += 1
         logger.info("[%s] رفض R:R صافٍ منخفض: %.3f < %.3f (دخول %s → هدف %s، وقف %s، رسوم الاتجاهين %.2f%%)",
@@ -1919,10 +1951,12 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
     if real:
         ex = binance_trade_exchange()
         if ex is None:
+            _set_reject_reason(symbol, "مفاتيح باينانس غير مضبوطة")
             log_and_notify("error", f"❌ رفض أمر حقيقي {symbol}: مفاتيح باينانس غير مضبوطة", "REAL_TRADE_ERROR")
             return False
         st = binance_status_snapshot()
         if not st.get("connected") or st.get("usdt_free") is None:
+            _set_reject_reason(symbol, "اتصال باينانس غير جاهز")
             log_and_notify("error",
                            f"❌ رفض أمر حقيقي {symbol}: اتصال باينانس غير جاهز ({st.get('error') or 'لا رصيد'})",
                            "REAL_TRADE_ERROR")
@@ -1934,17 +1968,20 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
         qty = real_adjust_amount(ex, symbol, qty)
         mkt = real_market(ex, symbol)
         if qty <= 0 or qty * price_p < real_min_cost(mkt):
+            _set_reject_reason(symbol, "الكمية تحت حدود باينانس بعد الدقة")
             log_and_notify("error",
                            f"❌ رفض أمر حقيقي {symbol}: الكمية تحت حدود باينانس بعد تطبيق الدقة",
                            "REAL_TRADE_ERROR")
             return False
         order = place_real_limit_buy(symbol, price_p, qty)
         if order is None:
+            _set_reject_reason(symbol, "فشل إرسال أمر LIMIT الحقيقي")
             return False
         order_id = str(order.get("id") or "") or None
     else:
         qty = compute_quantity(symbol, entry, sl)
         if qty is None:
+            _set_reject_reason(symbol, "فشل حساب الكمية (سقوف التعرض)")
             return False
     risk_per_coin = entry - sl
     rr = (tp - entry) / risk_per_coin if risk_per_coin > 0 else 0.0
@@ -1990,6 +2027,7 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
     else:
         signal_msg = f"🌊 إشارة إليوت+فيبو جديدة ({mode_tag}): {symbol} — دخول {fmt_price(entry)}"
     log_and_notify("info", signal_msg, "NEW_SIGNAL")
+    _clear_reject_reason(symbol)  # [FE1.8.1] نجح الإنشاء — انطفأ حكم الرفض
     return True
 
 
@@ -3237,9 +3275,11 @@ def scan_cycle() -> None:
                     # أو بنية أثرية يجب ألا تُحسب «مشغول» أو «ممتلئ» (كانت تلوث عدادات
                     # الاحتلال: 55% منها أعراض زومبي لا تشدد حقيقي، فتُخفي السبب الحقيقي)
                     if not trading_on:
+                        _set_reject_reason(symbol, "توليد الإشارات معطل")
                         logger.info("[%s] إعداد صاعد صالح لكن توليد الإشارات معطل (ورقي متوقف)", symbol)
                     elif not premise_alive(best, last_close):
                         # [FE1.6.2] الفرضية ماتت قبل الولادة — لا تخلق أمرًا سيُبطل خلال دقيقة
+                        _set_reject_reason(symbol, "الفرضية ماتت — الإغلاق تحت أصل الموجة 1 (P0)")
                         with scan_stats_lock:
                             scan_stats["rejected_stale_premise"] += 1
                         logger.info(
@@ -3249,34 +3289,41 @@ def scan_cycle() -> None:
                             fmt_price(float(best.pivot_prices[0])))
                     elif not structure_fresh(best, df):
                         # [FE1.7.0] بنية أتمت قبل زمن طويل — لا إشارات من محاور أثرية
+                        _set_reject_reason(symbol, f"بنية متقادمة — P5 تجاوز سقف العمر {MAX_STRUCTURE_AGE_BARS} شمعة")
                         with scan_stats_lock:
                             scan_stats["rejected_old_structure"] += 1
                         logger.info("[%s] بنية متقادمة: نهاية النافذة (P5) تجاوزت سقف العمر %s شمعة — لا إشارة",
                                     symbol, MAX_STRUCTURE_AGE_BARS)
                     elif on_symbol_cooldown(symbol):
                         # [FE1.7.0] تبريد بعد انتهاء/إلغاء حديث — لا إعادة إنشاء حرفية
+                        _set_reject_reason(symbol, f"تبريد الرمز {int(SYMBOL_COOLDOWN_SEC) // 60} دقائق بعد انتهاء/إلغاء حديث")
                         with scan_stats_lock:
                             scan_stats["rejected_cooldown"] += 1
                         logger.info("[%s] رمز في فترة تبريد %.0f ثانية بعد انتهاء/إلغاء أمر معلق — لا إشارة",
                                     symbol, SYMBOL_COOLDOWN_SEC)
                     elif symbol_has_active(symbol):
+                        _set_reject_reason(symbol, "للرمز إشارة نشطة بالفعل")
                         with scan_stats_lock:
                             scan_stats["rejected_symbol_busy"] += 1
                     elif CLUSTER_MAX_SAME_DIRECTION > 0 and same_direction_active("BULLISH") >= CLUSTER_MAX_SAME_DIRECTION:
                         # [FE1.7.0] عنقود اتجاهي — 5 لونجات مترابطة تُضرب بشمعة BTC واحدة
                         n_cluster = same_direction_active("BULLISH")
+                        _set_reject_reason(symbol, f"سقف العنقود الاتجاهي — {n_cluster}/{CLUSTER_MAX_SAME_DIRECTION} صاعدة نشطة")
                         with scan_stats_lock:
                             scan_stats["rejected_cluster"] += 1
                         logger.info("[%s] سقف العنقود الاتجاهي: %s إشارات صاعدة نشطة (السقف %s) — لا إشارة",
                                     symbol, n_cluster, CLUSTER_MAX_SAME_DIRECTION)
                     elif active_trade_count() >= MAX_OPEN_TRADES:
+                        _set_reject_reason(symbol, f"الخانات ممتلئة ({active_trade_count()}/{MAX_OPEN_TRADES})")
                         with scan_stats_lock:
                             scan_stats["rejected_active_limit"] += 1
                     elif HTF_BIAS_ENABLED and htf_bias(symbol) is False:
                         # [FE1.6.0] حقبة هابطة واضحة على الفريم الأعلى — لا دخولات عكس التدفق
+                        _set_reject_reason(symbol, "تحيز الفريم الأعلى هابط — لا دخول عكس التدفق")
                         with scan_stats_lock:
                             scan_stats["rejected_htf_bias"] += 1
                     else:
+                        _clear_reject_reason(symbol)  # [FE1.8.1] البوابات الهيكلية مرت — الحكم يصير لبواتق الإنشاء
                         traded = create_pending_signal(symbol, best, last_close=last_close)
                     register_detection(symbol, best, traded=traded)
         except Exception as exc:
@@ -3461,6 +3508,72 @@ def compute_stats() -> Dict[str, Any]:
     }
 
 
+def performance_snapshot() -> Dict[str, Any]:
+    """[FE1.8.1] لوحة الأداء — مقتبسة من V9.34.0 (اقتباسات OctoBot: /api/stats + pnl_history):
+    صافي الربح · معدل الربح · عامل الربح · الصفقات المغلقة — زائد تمديدات محلية:
+    متوسط الرابح/الخاسر، التوقع لكل صفقة، أقصى تراجع من القمة، أفضل/أسوأ صفقة،
+    ربح اليوم، متوسط مدة الصفقة، والمنحنى التراكمي (أعمدة + خط) للرسم في اللوحة.
+    المحاسبة من pnl_usdt مباشرة (رسوم الاتجاهين محسوبة أصلًا في close_signal_row)."""
+    rows = db.query(
+        "SELECT symbol, pnl_usdt, created_at, closed_at FROM signals "
+        "WHERE status='closed' ORDER BY closed_at ASC, id ASC"
+    )
+    pnls = [float(r["pnl_usdt"] or 0) for r in rows]
+    n = len(pnls)
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p <= 0]
+    gross_win = sum(wins)
+    gross_loss = abs(sum(losses))
+    cum = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    today_pnl = 0.0
+    today = _utc_day()
+    durations: List[float] = []
+    best: Optional[Dict[str, Any]] = None
+    worst: Optional[Dict[str, Any]] = None
+    equity: List[Dict[str, Any]] = []
+    for i, r in enumerate(rows):
+        p = pnls[i]
+        cum += p
+        peak = max(peak, cum)
+        max_dd = max(max_dd, peak - cum)
+        ca = str(r.get("closed_at") or "")
+        if ca.startswith(today):
+            today_pnl += p
+        cr = str(r.get("created_at") or "")
+        try:
+            if cr and ca:
+                fmt_s = "%Y-%m-%dT%H:%M:%S"
+                dur = (datetime.strptime(ca[:19], fmt_s) - datetime.strptime(cr[:19], fmt_s)).total_seconds()
+                if dur >= 0:
+                    durations.append(dur)
+        except Exception:
+            pass
+        if best is None or p > float(best["pnl"]):
+            best = {"symbol": r.get("symbol"), "pnl": round(p, 2)}
+        if worst is None or p < float(worst["pnl"]):
+            worst = {"symbol": r.get("symbol"), "pnl": round(p, 2)}
+        equity.append({"i": i + 1, "symbol": r.get("symbol"), "net_usdt": round(p, 2),
+                       "cum_usdt": round(cum, 2), "closed_at": ca})
+    return {
+        "net_profit_usdt": round(cum, 4),
+        "win_rate": round(len(wins) / n * 100.0, 2) if n else None,
+        "profit_factor": (round(gross_win / gross_loss, 3) if gross_loss > 0
+                          else (None if gross_win == 0 else 99.0)),
+        "total_closed_trades": n,
+        "wins_n": len(wins), "losses_n": len(losses),
+        "avg_win": round(gross_win / len(wins), 4) if wins else None,
+        "avg_loss": round(-gross_loss / len(losses), 4) if losses else None,
+        "expectancy": round(cum / n, 4) if n else None,
+        "max_drawdown_usdt": round(max_dd, 4),
+        "today_pnl": round(today_pnl, 4),
+        "best_trade": best, "worst_trade": worst,
+        "avg_duration_min": round(sum(durations) / len(durations) / 60.0, 1) if durations else None,
+        "trades": equity[-120:],  # المنحنى: آخر 120 صفقة كفاية للرسم (الأقدم ← الأحدث)
+    }
+
+
 @app.route("/")
 def home():
     # [FE1.5.0] فاحصات الصحة ترسل HEAD بلا بيانات دخول — كان يُرد 401 ويظهر خطأ
@@ -3536,6 +3649,7 @@ def api_all():
             "partial_pct": PARTIAL_CLOSE_PCT,
             "rr_net_min": RR_NET_MIN,
         },
+        "performance": performance_snapshot(),  # [FE1.8.1] لوحة الأداء (اقتباس V9.34.0/OctoBot)
         "open_signals": live_rows,
         "closed_signals": [_parse_sig_row(r) for r in closed_rows],
         "detections": dets,
@@ -3549,6 +3663,16 @@ def api_all():
         "keep_alive": keep_alive_snapshot(),  # [FE1.3.0] بطاقة النبضة في اللوحة
         "scanner": scanner_state_snapshot(),  # [FE1.5.0] ماسح الكون + النتائج
     })
+
+
+@app.route("/api/performance")
+def api_performance():
+    """[FE1.8.1] لوحة الأداء كنقطة نهاية مستقلة — نفس عقد /api/all → performance
+    (اقتباس بنية V9.34.0: /api/stats كان مستقلًا في V9 أيضًا)."""
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
+    return jsonify(performance_snapshot())
 
 
 @app.route("/api/trades/close", methods=["POST"])
@@ -3787,12 +3911,19 @@ def api_stats_reset():
     db.execute("DELETE FROM signals")
     db.execute("DELETE FROM notifications")
     set_paper_balance(PAPER_BALANCE_START)
+    # [FE1.8.1] التصفير الشامل: عدادات قاطع المخاطر (FE1.8.0) كانت تبقى بعد التصفير
+    # فتبدو النتائج «غير مصفرة بالكامل» — وأي تبريد قائم كان يستمر بصمت بعد التصفير
+    for k in ("risk_day", "risk_realized", "risk_day_base", "risk_streak", "risk_pause_until"):
+        db.execute("DELETE FROM bot_state WHERE key = %s", (k,))
+    with _reject_reason_lock:
+        _reject_reason.clear()
     with detections_lock:
         recent_detections.clear()
     with scan_stats_lock:
         for k in scan_stats:
             scan_stats[k] = 0
-    msg = f"🧹 صُفّرت الإحصائيات ({len(all_rows)} صفقة أُرشفت في {arch_key}) وعاد الرصيد الورقي للبداية"
+    msg = (f"🧹 صُفّرت الإحصائيات كاملة ({len(all_rows)} صفقة أُرشفت في {arch_key}) — "
+           f"عاد الرصيد الورقي للبداية وانطفأت عدادات المخاطر والتبريد")
     log_and_notify("info", msg, "STATS_RESET")
     return jsonify({"ok": True, "message": msg})
 
