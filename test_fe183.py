@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# test_fe183.py — اختبارات FE1.8.5:
+# test_fe183.py — اختبارات FE1.8.6:
 #   1) مضاد النوم كل دقيقة: KEEP_ALIVE_INTERVAL_SEC 60ث بدل 600ث (طلب المستخدم)
 #      — والقيمة تنتقل لحالة البقاء الحي التي تراها اللوحة
 #   2) فتح الترشيح المدروس: عمر البنية 20 شمعة بدل 12 (كان يرفض كل الالتقاطات
 #      «بنية متقادمة») + صلاحية المعلق 6 شموع بدل 3 — والحدود المحمية
 #      (premise-alive/المطاردة/rr_net) لم تُمس
-# العقد: 350+2 سابقة لا تنكسر (تأكيدات الإصدار حُدثت FE1.8.5).
+# العقد: 350+2 سابقة لا تنكسر (تأكيدات الإصدار حُدثت FE1.8.6).
 import threading
 import time
 
@@ -22,7 +22,7 @@ vnz.DASHBOARD_PROTECTED = False  # بيئة الاختبار: بلا مصادق�
 class TestKeepAliveMinute:
 
     def test_default_interval_is_60s(self):
-        # [FE1.8.5] طلب المستخدم: نبضة كل دقيقة بدل 10 دقائق
+        # [FE1.8.6] طلب المستخدم: نبضة كل دقيقة بدل 10 دقائق
         assert vnz.KEEP_ALIVE_INTERVAL_SEC == 60.0
 
     def test_interval_propagates_to_live_state(self, monkeypatch):
@@ -62,11 +62,11 @@ class _StubSetup:
 class TestRelaxedGates:
 
     def test_new_defaults(self):
-        assert vnz.MAX_STRUCTURE_AGE_BARS == 36      # [FE1.8.5] بدل 30 — إثبات حي: 43 رفض تقادم مرت كلها بوابة الفرضية
+        assert vnz.MAX_STRUCTURE_AGE_BARS == 36      # [FE1.8.6] بدل 30 — إثبات حي: 43 رفض تقادم مرت كلها بوابة الفرضية
         assert vnz.PENDING_MAX_CANDLES == 6          # بدل 3 — صلاحية أطول للانتظار
 
     def test_structure_fresh_boundary_at_30(self, monkeypatch):
-        # عمر 30 شمعة (7.5س على 15m) = صالح | عمر 31 = رفض — الحد FE1.8.5 بالضبط
+        # عمر 30 شمعة (7.5س على 15m) = صالح | عمر 31 = رفض — الحد FE1.8.6 بالضبط
         monkeypatch.setattr(vnz, "MAX_STRUCTURE_AGE_BARS", 30)
         df = [{"close": 1.0}] * 121
         assert vnz.structure_fresh(_StubSetup(90), df) is True    # (120)-90 = 30
@@ -94,16 +94,16 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.8.5"
-        assert panel.BOT_VERSION == "FE1.8.5"
+        assert vnz.BOT_VERSION == "FE1.8.6"
+        assert panel.BOT_VERSION == "FE1.8.6"
 
     def test_render_yaml_carries_new_values(self):
         # مصدر الحقيقة على Render — يجب أن يحمل القيم الجديدة لا الافتراضيات القديمة
         import pathlib
         y = pathlib.Path("render.yaml").read_text(encoding="utf-8")
         assert 'value: "60"' in y          # KEEP_ALIVE_INTERVAL_SEC
-        assert 'value: "30"' in y          # MAX_STRUCTURE_AGE_BARS [FE1.8.5]
-        assert 'value: "2700"' in y        # IDLE_RESCAN_MIN_GAP_SEC [FE1.8.5]
+        assert 'value: "30"' in y          # MAX_STRUCTURE_AGE_BARS [FE1.8.6]
+        assert 'value: "2700"' in y        # IDLE_RESCAN_MIN_GAP_SEC [FE1.8.6]
         assert 'value: "6"' in y           # PENDING_MAX_CANDLES
         assert 'value: "600"' not in y     # القديم أزيل كليًا
 

@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.8.5"  # FE1.8.5: شفافية فشل اتصال باينانس (شكوى: «فشل الاتصال في اللوحة ولا شيء في اللوج») — إشعار انتقال الحالة للسجل/اللوحة عند الفشل والعودة + نص الخطأ الحقيقي في بطاقة اللوحة + عمر P5 الفعلي في حكم التقادم + سقف 36 شمعة (9س) بدل 30 (إثبات حي: 43 رفض تقادم مرت جميعها بوابة الفرضية الحية أولًا). (FE1.8.4: قائمة 30 + إعجال الفحص)
+BOT_VERSION = "FE1.8.6"  # FE1.8.6: تبديل مزود البيانات يصل السجل/اللوحة (كان صامتًا: بطاقة المزود تتغير واللوج فارغ — حي: باينانس 429 عند الإقلاع ← bybit بلا أثر في اللوج) — إشعار تحذيري عند الفشل/الانتقال وإشعار عودة عند استعادة الأساسي. (FE1.8.5: شفافية فشل اتصال باينانس + عمر P5 في حكم التقادم + سقف 36)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -840,9 +840,36 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
                 st["ok"] += 1
                 st["last_ok_at"] = utc_now_iso()
                 if active_source["name"] != name:
+                    # [FE1.8.6] الانتقال يصل السجل/اللوحة — كان logger.info فقط
+                    # (بطاقة «مزود البيانات» تتغير واللوج صامت — نفس شكوى المستخدم
+                    # «فشل الاتصال بلا أثر في اللوج»؛ حي: باينانس 429 عند الإقلاع ←
+                    # bybit بلا أي إشعار)
+                    _prev = active_source.get("name")
+                    _prev_err = str((provider_state.get(_prev) or {}).get("last_error") or "")
                     active_source["name"] = name
                     active_source["since"] = utc_now_iso()
                     logger.info("مزود البيانات الفعّال الآن: %s", name)
+                    try:
+                        if _prev:
+                            if name == (DATA_PROVIDERS[0] if DATA_PROVIDERS else "binance"):
+                                log_and_notify(
+                                    "info",
+                                    f"✅ عاد مزود البيانات الأساسي {name.upper()} "
+                                    f"(البديل {_prev.upper()} خدمنا خلال الانقطاع)",
+                                    "DATA_PROVIDER")
+                            else:
+                                log_and_notify(
+                                    "warning",
+                                    f"⚠ فشل مزود البيانات {_prev.upper()} — الانتقال إلى {name.upper()}"
+                                    + (f" — السبب: {_prev_err[:120]}" if _prev_err else ""),
+                                    "DATA_PROVIDER")
+                        else:
+                            log_and_notify(
+                                "info",
+                                f"🔌 مزود البيانات الفعّال منذ الإقلاع: {name.upper()}",
+                                "DATA_PROVIDER")
+                    except Exception:
+                        pass  # إشعار المزود لا يُسقط مسار البيانات أبدًا
             if not st.get("markets_pruned"):  # [FE1.3.1] تقليم لمرة واحدة بعد أول جلب ناجح
                 st["markets_pruned"] = True
                 n = prune_markets(EXCHANGES[name])

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_fe185.py — اختبارات FE1.8.5: شفافية فشل اتصال باينانس + معايرة عمر البنية
+test_fe185.py — اختبارات FE1.8.6: شفافية فشل اتصال باينانس + معايرة عمر البنية
 
 الشكوى الحية (المستخدم):
   «فشل الاتصال بباينانس تظهر في اللوحة ولا يظهر أي شيء في اللوج ولا وجود لتوصيات»
@@ -193,7 +193,7 @@ def _patch_scan(monkeypatch, setup, last_close=110.0):
 class TestAgeVerdictAndCeiling:
 
     def test_new_ceiling_36(self):
-        assert vnz.MAX_STRUCTURE_AGE_BARS == 36   # [FE1.8.5] بدل 30 (9س على 15m)
+        assert vnz.MAX_STRUCTURE_AGE_BARS == 36   # [FE1.8.6] بدل 30 (9س على 15m)
 
     def test_renotify_constant(self):
         assert vnz.BIN_CONN_RENOTIFY_SEC == 600.0
@@ -230,8 +230,8 @@ class TestDeploymentAndBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.8.5"
-        assert panel.BOT_VERSION == "FE1.8.5"
+        assert vnz.BOT_VERSION == "FE1.8.6"
+        assert panel.BOT_VERSION == "FE1.8.6"
 
     def test_panel_shows_real_error(self):
         # بطاقة اللوحة تعرض نص الخطأ الحقيقي بجوار «فشل الاتصال»
@@ -241,7 +241,7 @@ class TestDeploymentAndBoundaries:
     def test_render_yaml_carries_values(self):
         import pathlib
         y = pathlib.Path("render.yaml").read_text(encoding="utf-8")
-        assert 'value: "36"' in y          # MAX_STRUCTURE_AGE_BARS [FE1.8.5]
+        assert 'value: "36"' in y          # MAX_STRUCTURE_AGE_BARS [FE1.8.6]
         assert 'value: "30"' in y          # SCAN_TOP_N (من FE1.8.4)
         assert 'value: "2700"' in y        # IDLE_RESCAN_MIN_GAP_SEC
 
