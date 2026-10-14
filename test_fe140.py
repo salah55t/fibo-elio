@@ -578,7 +578,7 @@ def test_api_binance_status_endpoint(client, clean_db, real_reset, monkeypatch):
     assert body["connected"] is True
     assert body["usdt_free"] == 321.0
     assert body["real_mode"] is False
-    assert body["version"] == "FE1.5.1"
+    assert body["version"] == "FE1.5.2"
 
 
 def test_health_mode_paper_and_real(client, clean_db, real_reset, monkeypatch):
@@ -623,7 +623,7 @@ def test_panel_cyber_structure():
     assert "banner-real" in html and "banner-paper" in html
     assert "p-real" in html and "modePill" in html
     import panel as panel_mod
-    assert panel_mod.BOT_VERSION == "FE1.5.1"
+    assert panel_mod.BOT_VERSION == "FE1.5.2"
 
 
 def test_ddl_migration_adds_real_columns(clean_db):
@@ -739,7 +739,8 @@ def test_ws_exchange_injects_fabricated_markets():
     ex = vnz._ws_exchange("binance")
     assert ex.markets and "BTC/USDT" in ex.markets
     assert ex.markets["BTC/USDT"]["id"] == "BTCUSDT"
-    assert ex.markets_by_id["BTCUSDT"]["symbol"] == "BTC/USDT"
+    assert isinstance(ex.markets_by_id["BTCUSDT"], list)  # [FE1.5.2] اصطلاح ccxt 4.4+
+    assert ex.markets_by_id["BTCUSDT"][0]["symbol"] == "BTC/USDT"
     # لا اتصالات حية أُنشئت (المثال وحده) — ونظّف بعدها
     with vnz._ws_lock:
         vnz._ws_exchanges.clear()
