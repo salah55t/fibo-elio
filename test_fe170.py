@@ -113,8 +113,8 @@ class TestStructureFresh:
         assert vnz.structure_fresh(make_setup(p5_idx=95), synth_df(110.0)) is True
 
     def test_old_structure_rejected(self):
-        # P5 عند 80 من 100 → العمر 19 > 12 — بنية أثرية
-        assert vnz.structure_fresh(make_setup(p5_idx=80), synth_df(110.0)) is False
+        # P5 عند 75 من 100 → العمر 24 > 20 [FE1.8.3: السقف رُفع من 12] — بنية أثرية
+        assert vnz.structure_fresh(make_setup(p5_idx=75), synth_df(110.0)) is False
 
     def test_disabled_via_zero(self, monkeypatch):
         monkeypatch.setattr(vnz, "MAX_STRUCTURE_AGE_BARS", 0)
@@ -294,7 +294,7 @@ def _patch_scan(monkeypatch, setup, last_close=110.0):
 class TestScanCycle170:
 
     def test_old_structure_rejected(self, scan_env170, monkeypatch):
-        _patch_scan(monkeypatch, make_setup(p5_idx=80))
+        _patch_scan(monkeypatch, make_setup(p5_idx=75))  # [FE1.8.3] العمر 24 > السقف الجديد 20
         vnz.scan_cycle()
         assert vnz.scan_stats["rejected_old_structure"] == 1
         assert int(scan_env170.query("SELECT COUNT(*) AS n FROM signals")[0]["n"]) == 0
@@ -511,5 +511,5 @@ class TestOpenOutageGuard:
 
 def test_version_fe170():
     import panel
-    assert vnz.BOT_VERSION == "FE1.8.2"
-    assert panel.BOT_VERSION == "FE1.8.2"
+    assert vnz.BOT_VERSION == "FE1.8.3"
+    assert panel.BOT_VERSION == "FE1.8.3"

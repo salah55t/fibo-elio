@@ -147,7 +147,7 @@
    DEVIATION_THRESHOLD   نسبة انعكاس الزيجزاج (افتراضي 0.006 = 0.6% لفريم 1h)
    SIGNAL_TIMEFRAME      فريم الكشف (افتراضي 1h)   ENTRY_TIMEFRAME فريم التنفيذ (15m)
    MAX_OPEN_TRADES       أقصى صفقات متزامنة (معلقة + مفتوحة) — الافتراضي 3، الإنتاج 5 عبر render.yaml     RISK_PCT_PER_TRADE مخاطرة الصفقة (1%)
-   PENDING_MAX_CANDLES   صلاحية الأمر المعلق بشموع الكشف (3)
+   PENDING_MAX_CANDLES   صلاحية الأمر المعلق بشموع الكشف (6)
    PAPER_BALANCE         الرصيد الورقي (10000)
 """
 
@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.8.2"  # FE1.8.2: إصلاح حيّر للتصفير — LIKE 'stats_archive_%' مع params=() فارغة كانت تُفجّر psycopg2 بـIndexError (interpolation جانب العميل لـ% الحرفية) فيفشل التصفير دائمًا على PG بينما تنجح اختبارات SQLite؛ طبقة Database لم تعد تمرّر params فارغة + أرشفة بلا ابتلاع استثناءات + احتياط مدمج + نص الخطأ في الرد. (FE1.8.1: تصفير شامل + لوحة أداء V9.34.0/OctoBot + حكم الالتقاط)
+BOT_VERSION = "FE1.8.3"  # FE1.8.3: مضاد النوم كل دقيقة (60ث بدل 600ث) + تخفيف مدروس لفتح الترشيح: عمر البنية 20 شمعة بدل 12 (كان يرفض كل الالتقاطات «بنية متقادمة») وصلاحية المعلق 6 شموع بدل 3 — premise-alive والمطاردة وrr_net ما زالتا حراسًا. (FE1.8.2: إصلاح انسداد التصفير على PG)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -214,7 +214,7 @@ MIN_WAVE_BARS = int(os.getenv("MIN_WAVE_BARS", "2"))
 FIB_TOLERANCE_PCT = float(os.getenv("FIB_TOLERANCE_PCT", "0.5"))
 MAX_OPEN_TRADES = int(os.getenv("MAX_OPEN_TRADES", "3"))
 RISK_PCT_PER_TRADE = float(os.getenv("RISK_PCT_PER_TRADE", "1.0"))
-PENDING_MAX_CANDLES = int(os.getenv("PENDING_MAX_CANDLES", "3"))
+PENDING_MAX_CANDLES = int(os.getenv("PENDING_MAX_CANDLES", "6"))  # [FE1.8.3] 6 شموع (1.5س على 15m) بدل 3 — صلاحية أطول للأمر المعلق يرفع فرص الامتلاء
 PAPER_BALANCE_START = float(os.getenv("PAPER_BALANCE", "10000.0"))
 FEE_RATE = float(os.getenv("FEE_RATE", "0.001"))          # 0.1% تيكر لكل اتجاه
 INTER_SYMBOL_SLEEP = float(os.getenv("INTER_SYMBOL_SLEEP", "1.0"))
@@ -261,7 +261,7 @@ HTF_BIAS_CACHE_SEC = float(os.getenv("HTF_BIAS_CACHE_SEC", "14400"))  # كاش �
 # الدخول (+1.1% إلى +4.3%) و5 منها انتهت دون لمس، 3/9 إعادة حرفية لنفس المحاور،
 # وإشارة UNI بهدف أقل من السعر الحي (نمط حقق هدفه والبوت يشتري بعده).
 MAX_ENTRY_DISTANCE_PCT = float(os.getenv("MAX_ENTRY_DISTANCE_PCT", "1.5"))      # أقصى ارتفاع للسوق فوق منطقة الدخول % — لا مطاردة (0 يعطل)
-MAX_STRUCTURE_AGE_BARS = int(os.getenv("MAX_STRUCTURE_AGE_BARS", "12"))        # أقصى عمر بنية P5 بالشموع — لا بنى أتمت قبل ساعات (0 يعطل)
+MAX_STRUCTURE_AGE_BARS = int(os.getenv("MAX_STRUCTURE_AGE_BARS", "20"))        # [FE1.8.3] 20 شمعة (5س على 15m) بدل 12 — كانت تمنع كل الترشيحات (إثبات حي: كل الالتقاطات «بنية متقادمة»)؛ premise-alive وبوابة المطاردة ما زالتا تحميان الجودة
 SYMBOL_COOLDOWN_SEC = float(os.getenv("SYMBOL_COOLDOWN_SEC", "5400"))          # تبريد الرمز بعد انتهاء/إلغاء أمر معلق — لا إعادة إنشاء حرفية (0 يعطل)
 CLUSTER_MAX_SAME_DIRECTION = int(os.getenv("CLUSTER_MAX_SAME_DIRECTION", "3")) # سقف الإشارات الصاعدة النشطة معًا — لا 5 لونجات مترابطة (0 يعطل)
 # [FE1.7.0] سقوف التعرض الورقي — كانت الورقي يفتح مركزًا بقيمة 2.5× الرصيد (مخاطرة 1%
@@ -293,7 +293,7 @@ RR_NET_MIN = float(os.getenv("RR_NET_MIN", "0.3"))                             #
 # (الخطة المجانية تُخمد الخدمة بعد 15 دقيقة بلا طلبات خارجية، والاستيقاظ يأخذ نحو دقيقة)
 # القديم FE1.2.0: نبضة كل 14 دقيقة بلا إعادة محاولة — أي فشل عابر واحد كان يسمح بالنوم
 KEEP_ALIVE_ENABLED = os.getenv("KEEP_ALIVE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
-KEEP_ALIVE_INTERVAL_SEC = float(os.getenv("KEEP_ALIVE_INTERVAL_SEC", "600"))  # نبضة كل 10 دقائق — هامش أمان مزدوج تحت سقف 15 دقيقة
+KEEP_ALIVE_INTERVAL_SEC = float(os.getenv("KEEP_ALIVE_INTERVAL_SEC", "60"))  # [FE1.8.3] نبضة كل دقيقة (طلب المستخدم من 10 دقائق) — هامش أمان 15× تحت سقف نوم Render 15 دقيقة
 KEEP_ALIVE_URL = os.getenv("KEEP_ALIVE_URL", "")  # تجاوز يدوي اختياري (مثال: https://fibo-elio.onrender.com)
 PANEL_URL = os.getenv("PANEL_URL", "")            # بديل اشتقاق ثانٍ إن لم يُحقن RENDER_EXTERNAL_URL (نشر خارج Render)
 
@@ -3430,7 +3430,7 @@ def keep_alive_ping(url: str) -> bool:
 def keep_alive_loop() -> None:
     """[FE1.3.0] نبضة ذاتية ضد نوم Render المجاني — محصّنة ضد الفشل العابر.
     - الهدف /health العام (بلا مصادقة) — يصلح أيضًا هدفًا لكرون خارجي (cron-job.org)
-    - نجاح ← سكون KEEP_ALIVE_INTERVAL_SEC (افتراضي 600ث) | فشل ← إعادة محاولة كل 60ث حتى النجاح
+    - نجاح ← سكون KEEP_ALIVE_INTERVAL_SEC (افتراضي 60ث — FE1.8.3: كل دقيقة) | فشل ← إعادة محاولة كل 60ث حتى النجاح
       فلا تبقى فجوة صمت تسمح بالنوم (القديم: نبضة واحدة كل 14 دقيقة بلا إعادة محاولة)
     - أوقفه بـ KEEP_ALIVE_ENABLED=0 إن اعتمدت كليًا على كرون خارجي يضرب /health"""
     url = resolve_keep_alive_url()
@@ -3441,7 +3441,7 @@ def keep_alive_loop() -> None:
             "interval_sec": KEEP_ALIVE_INTERVAL_SEC,
         })
     if not KEEP_ALIVE_ENABLED:
-        logger.info("البقاء الحي معطّل (KEEP_ALIVE_ENABLED=0) — اعتمد على كرون خارجي يضرب /health كل 10 دقائق")
+        logger.info("البقاء الحي معطّل (KEEP_ALIVE_ENABLED=0) — اعتمد على كرون خارجي يضرب /health كل دقيقة")
         return
     if not url:
         logger.warning("البقاء الحي معطّل: لا KEEP_ALIVE_URL ولا RENDER_EXTERNAL_URL ولا PANEL_URL — اضبط KEEP_ALIVE_URL يدويًا")
