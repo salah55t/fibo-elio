@@ -59,6 +59,26 @@ services:
         value: "binance,bybit,okx,gate"
       - key: PROVIDER_COOLDOWN_SEC
         value: "900"
+      # [FE1.8.7] اقتباس طبقة الاتصال من بوت V9: الشموع عبر طلبات خام مباشرة —
+      # bybit→okx→gate أولًا (requests بلا ccxt وبلا أسواق) وباينانس احتياط أخير
+      # خلف حارس وزن تكيفي (ميزانية/دقيقة تنخفض 40% عند الحظر وتتعافى 8%/3د).
+      # DATA_FEED_RAW=0 يعيد مسار ccxt القديم كاملًا (قاتل الطوارئ).
+      - key: DATA_FEED_RAW
+        value: "1"
+      - key: DATA_FEED_ORDER
+        value: "bybit,okx,gate"
+      - key: DATA_FEED_TIMEOUT_SEC
+        value: "8"
+      - key: RATE_LIMIT_BUDGET_PER_MIN
+        value: "500"
+      - key: API_MIN_SPACING_SEC
+        value: "0.15"
+      - key: BAN_RESUME_COOLDOWN_SEC
+        value: "90"
+      - key: BAN_RESUME_RAMP_SEC
+        value: "120"
+      - key: BAN_LONG_THRESHOLD_SEC
+        value: "600"
       # [FE1.2.0] الأسعار الحية من ويب سوكت (ccxt.pro) — REST احتياطًا فقط عند تقادم التيار
       - key: WS_ENABLED
         value: "1"

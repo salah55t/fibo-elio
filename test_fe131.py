@@ -203,6 +203,8 @@ class TestSpotOnlyMarketsFE132:
         fake = types.SimpleNamespace(fetch_ohlcv=lambda *a, **k: (_ for _ in ()).throw(Exception("451 حظر")), markets=big)
         # عزل كامل: مزود واحد وهمي فاشل فقط — لا نداءات شبكة حقيقية في الاختبار
         monkeypatch.setattr(vnz, "EXCHANGES", OrderedDict([("binance", fake)]))
+        # [FE1.8.7] عقد المسار القديم ccxt — الطبقة الخام في test_fe187
+        monkeypatch.setattr(vnz, "DATA_FEED_RAW", False)
         with vnz.provider_lock:
             vnz.provider_state = {"binance": {"ok": 0, "fail": 0, "last_error": "",
                                               "last_ok_at": None, "cooldown_until": 0.0}}

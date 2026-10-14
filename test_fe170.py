@@ -511,5 +511,5 @@ class TestOpenOutageGuard:
 
 def test_version_fe170():
     import panel
-    assert vnz.BOT_VERSION == "FE1.8.6"
-    assert panel.BOT_VERSION == "FE1.8.6"
+    assert vnz.BOT_VERSION == "FE1.8.7"
+    assert panel.BOT_VERSION == "FE1.8.7"

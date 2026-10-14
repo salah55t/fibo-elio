@@ -158,7 +158,8 @@ import math
 import os
 import threading
 import time
-from collections import OrderedDict
+import re
+from collections import OrderedDict, deque
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -191,7 +192,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.8.6"  # FE1.8.6: تبديل مزود البيانات يصل السجل/اللوحة (كان صامتًا: بطاقة المزود تتغير واللوج فارغ — حي: باينانس 429 عند الإقلاع ← bybit بلا أثر في اللوج) — إشعار تحذيري عند الفشل/الانتقال وإشعار عودة عند استعادة الأساسي. (FE1.8.5: شفافية فشل اتصال باينانس + عمر P5 في حكم التقادم + سقف 36)
+BOT_VERSION = "FE1.8.7"  # FE1.8.7: اقتباس طبقة الاتصال وجلب المعلومات من بوت V9 — الشموع عبر طلبات خام مباشرة (requests بلا ccxt وبلا أسواق): bybit→okx→gate أولًا (حدود سخية) وباينانس احتياطًا أخيرًا خلف حارس وزن تكيفي (نافذة دقيقة منزلقة + ميزانية تنخفض 40% عند الحظر وتتعافى 8%/3د + تبريد استئناف وتدرج فاصل ×4) — نفس معمارية V9.9/V9.20 التي عاشت شهورًا على IP مشترك بلا حظر 418 متكرر. (FE1.8.6: تبديل المزود يصل السجل/اللوحة) (FE1.8.5: شفافية فشل اتصال باينانس + سقف 36)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -227,6 +228,19 @@ DATA_PROVIDERS: List[str] = [
     p.strip().lower() for p in os.getenv("DATA_PROVIDERS", "binance,bybit,okx,gate").split(",") if p.strip()
 ]
 PROVIDER_COOLDOWN_SEC = float(os.getenv("PROVIDER_COOLDOWN_SEC", "900"))  # تبريد المزود الفاشل 15 دقيقة
+
+# [FE1.8.7] اقتباس طبقة الاتصال من بوت V9 — مفاتيح الطبقة (كلها قابلة للضبط بيئيًا):
+# الشموع تُجلب أولًا من البدائل الخام (bybit→okx→gate) عبر requests بلا ccxt وبلا
+# load_markets، وباينانس احتياط أخير خلف حارس الوزن — لا يلمس باينانس REST إلا
+# حين يفشل الجميع، فيقارب وزنه الصفر ولا يتكرر حظر 418/-1003.
+DATA_FEED_RAW = os.getenv("DATA_FEED_RAW", "1").strip().lower() not in ("0", "false", "no", "off")  # قاطع الطبقة الخام — 0 يعيد مسار ccxt القديم كاملًا
+DATA_FEED_ORDER = [p.strip().lower() for p in os.getenv("DATA_FEED_ORDER", "bybit,okx,gate").split(",") if p.strip()]
+DATA_FEED_TIMEOUT_SEC = float(os.getenv("DATA_FEED_TIMEOUT_SEC", "8"))       # مهلة كل طلب خام (V9 افتراضي 8ث)
+RATE_LIMIT_BUDGET_PER_MIN = int(os.getenv("RATE_LIMIT_BUDGET_PER_MIN", "500"))  # ميزانية وزن باينانس/دقيقة (V9.22.0: 500)
+API_MIN_SPACING_SEC = float(os.getenv("API_MIN_SPACING_SEC", "0.15"))        # أدنى فاصل بين طلبات باينانس (V9)
+BAN_RESUME_COOLDOWN_SEC = int(os.getenv("BAN_RESUME_COOLDOWN_SEC", "90"))    # تبريد استئناف بعد انتهاء الحظر (V9.9)
+BAN_RESUME_RAMP_SEC = int(os.getenv("BAN_RESUME_RAMP_SEC", "120"))          # مدة تدرج الفاصل ×4 بعد الاستئناف (V9.9)
+BAN_LONG_THRESHOLD_SEC = int(os.getenv("BAN_LONG_THRESHOLD_SEC", "600"))    # عتبة الحظر الطويل — الميزانية للأرضية مباشرة (V9.15.1)
 
 # [FE1.2.0] تغذية الأسعار الحية عبر ويب سوكت (ccxt.pro) — REST احتياطًا فقط
 WS_ENABLED = os.getenv("WS_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
@@ -722,25 +736,23 @@ active_source: Dict[str, Any] = {"name": None, "since": None}
 
 
 def current_exchange():
-    """المزود الفعّال الحالي (لأدوات دقة الكميات) — باينانس احتياطًا."""
-    with provider_lock:
-        name = active_source["name"]
-    if name and name in EXCHANGES:
-        return EXCHANGES[name]
+    """[FE1.8.7] نسخة التنفيذ البينانسية دائمًا — دقة الكميات/الأسعار تتبع منصة
+    التنفيذ لا مصدر البيانات (بعد اقتباس V9 صار مصدر الشموع bybit/okx/gate غالبًا
+    بينما التنفيذ (الورقي محاكاته والحقيقي مباشرة) باينانس)."""
     return EXCHANGES.get("binance") or (next(iter(EXCHANGES.values())) if EXCHANGES else None)
 
 
 def amount_prec(symbol: str, qty: float) -> float:
-    """تقريب الكمية حسب قواعد المزود الفعّال — بأمان تام بلا استثناءات.
+    """تقريب الكمية بقواعد باينانس (منصة التنفيذ) — بأمان تام بلا استثناءات.
     [FE1.4.2] بلا load_markets: لباينانس عبر exchangeInfo?symbol= الخام (نفس
     فلسفة طبقة التداول بلا أسواق) — amount_to_precision الموحدة كانت تستدعي
-    market() التي تحمّل كون الأسواق عند أول إشارة ورقية (نتوء OOM)."""
+    market() التي تحمّل كون الأسواق عند أول إشارة ورقية (نتوء OOM).
+    [FE1.8.7] المصدر دائمًا باينانس بغضّ النظر عن مزود الشموع الفعّال."""
     try:
         ex = current_exchange()
         if ex is None:
             return qty
-        name = active_source.get("name") or "binance"
-        if name == "binance" and not getattr(ex, "markets", None):
+        if not getattr(ex, "markets", None):
             r = real_market_rules(symbol, ex=_binance_public_probe())
             if r:
                 v = _floor_step(float(qty), r.get("step") or 0.0)
@@ -766,6 +778,460 @@ def data_status() -> Dict[str, Any]:
             }
         active = dict(active_source)
     return {"active": active.get("name"), "active_since": active.get("since"), "providers": provs}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# [FE1.8.7] طبقة الاتصال وجلب المعلومات — اقتباس كامل من بوت V9 (V9.9/V9.20/V9.22)
+# ──────────────────────────────────────────────────────────────────────────────
+# المبدأ 1 (V9.20.0): بيانات السوق لا علاقة لها بالتنفيذ — فتُجلب من منصات أسواقها
+#   مطابقة تقريبًا لباينانس وحدود طلباتها سخية، عبر طلبات خام مباشرة (requests،
+#   بلا ccxt وبلا load_markets إطلاقًا — لا نتوء ذاكرة): bybit → okx → gate،
+#   وباينانس احتياط أخير. نتيجة V9 الحية: وزن باينانس يقارب الصفر ولا حظر 418.
+# المبدأ 2 (V9.9.1): المسار البينانسي كله خلف حارس وزن — نافذة دقيقة منزلقة +
+#   ميزانية تكيفية (تنخفض 40% عند كل حظر وتتعافى 8% كل 3 دقائق نظيفة) + تبريد
+#   استئناف + تدرج فاصل ×4 يمنع انفجار الخيوط بعد الحظر (سبب تصعيد 30ث→16د القديم).
+# كل مزود يطبّع مخرجاته على نفس صيغة الشموع [ts,o,h,l,c,v] فلا يتغير أي مستهلك.
+# ══════════════════════════════════════════════════════════════════════════════
+_INTERVAL_MINUTES: Dict[str, int] = {
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "2h": 120,
+    "4h": 240, "6h": 360, "8h": 480, "12h": 720, "1d": 1440, "3d": 4320, "1w": 10080,
+}
+# [V9.9.1] وزن صفحة شموع باينانس حسب السقف (توثيق باينانس): ≤100 → 1، ≤500 → 2، ≤1000 → 5
+_KLINE_PAGE_TIERS: Tuple[Tuple[int, int], ...] = ((100, 1), (500, 2), (10**9, 5))
+BAN_UNTIL_RE = re.compile(r"banned until (\d+)", re.IGNORECASE)
+
+
+def _bin_klines_weight(limit: int) -> int:
+    """وزن نداء شموع باينانس واحد حسب limit (نفس شرائح V9.9.1)."""
+    try:
+        lim = max(1, int(limit))
+    except (TypeError, ValueError):
+        return 5
+    return next((w for cap, w in _KLINE_PAGE_TIERS if lim <= cap), 5)
+
+
+def _is_rate_error(e: Exception) -> bool:
+    """يكشف أخطاء تجاوز الوزن/الحظر من Binance (-1003, -1015, 418, 429) — كما في V9."""
+    s = str(e)
+    return ("-1003" in s or "-1015" in s or "418" in s or "429" in s
+            or "Way too much request weight" in s or "Too many requests" in s
+            or "banned until" in s.lower())
+
+
+class BinanceRateGuard:
+    """حارس وزن الطلبات — اقتباس V9.9.1 كما هو: نافذة دقيقة منزلقة (حد باينانس
+    6000 وزن/دقيقة) + ميزانية تكيفية + انتظار ذكي بدل الانهيار.
+    دروس تصعيد الحظر التي عولجت هنا في V9 وغُرّست جميعها:
+    1) محاسبة وزن دقيقة لكل نداء (شرائح الشموع) — لا تخفي وزنًا داخليًا
+    2) انفجار الخيوط فور انتهاء الحظر (Thundering Herd) → تبريد استئناف + تدرج فاصل ×4
+    3) ميزانية ثابتة تعيد ضرب الحظر على IP مشترك (Render) → ميزانية تكيفية:
+       تنخفض 40% عند كل حظر وتتعافى 8% كل 3 دقائق نظيفة حتى المستوى المُعدّ.
+    [FE1.8.7] إضافات موضعية: is_banned/ban_remaining_sec لفحص غير حاجب قبل المسار
+    البينانسي (الشموع تتحول للبدائل فورًا)، وإشعار اللوحة عند الحظر الجديد فقط."""
+
+    def __init__(self, budget_per_min: Optional[int] = None, min_spacing: float = API_MIN_SPACING_SEC):
+        self.configured_budget = max(400, int(budget_per_min if budget_per_min is not None else RATE_LIMIT_BUDGET_PER_MIN))
+        self.budget = self.configured_budget
+        self.budget_floor = max(300, int(self.configured_budget * 0.25))
+        self.min_spacing = max(0.0, float(min_spacing))
+        self.resume_cooldown = max(0, int(BAN_RESUME_COOLDOWN_SEC))
+        self._active_cooldown = self.resume_cooldown  # التبريد الفعلي المطبق للحظر الحالي
+        self.resume_ramp_sec = max(0, int(BAN_RESUME_RAMP_SEC))
+        self.resume_spacing_factor = 4.0
+        self._lock = threading.Lock()
+        self._window: deque = deque()  # (timestamp, weight)
+        self._last_call = 0.0
+        self.banned_until = 0.0
+        self.last_error: str = ""
+        self.total_requests = 0
+        self.total_throttled_sec = 0.0
+        self.ban_count = 0
+        self._last_ban_ts = 0.0
+        self._last_recover_ts = 0.0
+        self._ramp_until = 0.0
+        self._resumed = False  # هل استُؤفي الطلبات بعد آخر حظر؟
+
+    def _prune(self, now: float) -> None:
+        while self._window and now - self._window[0][0] > 60:
+            self._window.popleft()
+
+    def used_weight(self) -> int:
+        with self._lock:
+            self._prune(time.time())
+            return int(sum(w for _, w in self._window))
+
+    def is_banned(self) -> bool:
+        """فحص غير حاجب — المسار البينانسي يتخطى نفسه أثناء الحظر لصالح البدائل."""
+        return self.banned_until > time.time()
+
+    def ban_remaining_sec(self) -> int:
+        if self.banned_until <= time.time():
+            return 0
+        return int(self.banned_until - time.time() + self._active_cooldown)
+
+    def _effective_resume_wait(self, now: float) -> float:
+        """الانتظار الفعلي: بقيّة الحظر + تبريد الاستئناف (إن وُجد حظر سابق).
+        عند لحظة الاستئناف بالضبط: يُفعّل تدرج الفاصل ×4 لمدة resume_ramp_sec مرة واحدة."""
+        with self._lock:
+            if self.banned_until <= 0:
+                return 0.0
+            wait = self.banned_until - now + float(self._active_cooldown)
+            if wait <= 0 and not self._resumed:
+                # لحظة الاستئناف بعد الحظر: بدء فترة التدرج مرة واحدة فقط
+                self._resumed = True
+                self._ramp_until = now + float(self.resume_ramp_sec)
+                self._last_call = now
+            return wait
+
+    def _maybe_recover(self, now: float) -> None:
+        """تعافي تدريجي للميزانية: +8% كل 3 دقائق بلا حظر حتى المستوى المُعدّ — كما في V9."""
+        with self._lock:
+            if self.budget >= self.configured_budget:
+                return
+            anchor = max(self._last_ban_ts, self._last_recover_ts)
+            if now - anchor >= 180:
+                self._last_recover_ts = now
+                self.budget = min(self.configured_budget, int(self.budget * 1.08) + 1)
+
+    def acquire(self, weight: int = 1) -> None:
+        """يُستدعى قبل كل طلب باينانس REST: يحجز الوزن مسبقًا وينتظر عند الحاجة.
+        بعد الحظر: تبريد استئناف ثم فاصل متدرج ×4 يمنع انفجار الخيوط.
+        [V9.11.0] النوم يتم خارج القفل — لا تتابع خيوط خلف بعضها."""
+        weight = max(1, int(weight))
+        while True:
+            now = time.time()
+            resume_wait = self._effective_resume_wait(now)
+            if resume_wait > 0:
+                time.sleep(min(resume_wait, 5.0))
+                continue
+            self._maybe_recover(now)
+            need = 0.0
+            with self._lock:
+                now = time.time()
+                self._prune(now)
+                used = int(sum(w for _, w in self._window))
+                spacing = self.min_spacing * (self.resume_spacing_factor if now < self._ramp_until else 1.0)
+                if used + weight <= self.budget:
+                    gap = now - self._last_call
+                    if gap >= spacing:
+                        # حجز فوري بلا نوم داخل القفل (V9.11.0)
+                        self._window.append((now, weight))
+                        self._last_call = now
+                        self.total_requests += 1
+                        return
+                    need = spacing - gap  # ننام خارج القفل ثم نعيد المحاولة
+                else:
+                    need = (61.0 - (now - self._window[0][0])) if self._window else 1.0
+                    self.total_throttled_sec += min(need, 5.0)
+            time.sleep(min(max(need, 0.05), 5.0))
+
+    def register_ban(self, until_ms: Optional[int] = None, fallback_sec: float = 120.0) -> None:
+        """تسجيل الحظر مع إلغاء الازدواج (V9.15.1): نفس الحظر الساري → تمديد فقط بلا
+        عدّاد ولا خفض ميزانية؛ حظر جديد أطول فعليًا (+60ث) → عدّاد + خفض 40%.
+        الحظر الطويل > BAN_LONG_THRESHOLD_SEC → الميزانية للأرضية مباشرة + تبريد ممتد.
+        [FE1.8.7] الحظر الجديد يصل سجل اللوحة (tag=RATE_GUARD) — لا صمت كما في الشكوى."""
+        now = time.time()
+        is_new = False
+        long_ban = False
+        with self._lock:
+            until = (until_ms / 1000.0) if until_ms else (now + float(fallback_sec))
+            until += 5.0  # هامش أمان فوق موعد باينانس (توقيتات الخوادم تختلف ثوانٍ)
+            prev = self.banned_until
+            is_new = (prev <= 0.0) or (until > prev + 60.0)
+            self.banned_until = max(prev, until)
+            long_ban = (self.banned_until - now) > max(60, int(BAN_LONG_THRESHOLD_SEC))
+            if is_new:
+                self.ban_count += 1
+                self._last_ban_ts = now
+                self._ramp_until = 0.0
+                self._resumed = False  # يُفعّل التدرج عند لحظة الاستئناف
+                old_budget = self.budget
+                if long_ban:
+                    self.budget = self.budget_floor
+                    self._active_cooldown = min(300, int(self.resume_cooldown * 2))
+                else:
+                    self.budget = max(self.budget_floor, int(self.budget * 0.6))
+                    self._active_cooldown = self.resume_cooldown
+            else:
+                old_budget = self.budget
+        end_utc = datetime.fromtimestamp(self.banned_until, tz=timezone.utc)
+        if is_new:
+            logger.warning(
+                "🚫 [حارس الوزن] %s من باينانس — الانتظار حتى %s UTC | الميزانية: %d → %d وزن/دقيقة | تبريد الاستئناف: %dث",
+                "حظر طويل (تصعيد)" if long_ban else "حظر مؤقت",
+                end_utc.strftime("%H:%M:%S"), old_budget, self.budget, self._active_cooldown)
+            try:  # [FE1.8.7] الحظر يصل سجل اللوحة (الإشعارات) — لا فشل صامت بعد اليوم
+                log_and_notify(
+                    "warning",
+                    f"🚫 حظر وزن باينانس ({'طويل — تصعيد' if long_ban else 'مؤقت'}) — الانتظار حتى "
+                    f"{end_utc.strftime('%H:%M:%S')} UTC | الميزانية {old_budget} → {self.budget} وزن/د | "
+                    f"الشموع تُخدم من البدائل الخام تلقائيًا",
+                    "RATE_GUARD")
+            except Exception:
+                pass  # الإشعار لا يُسقط المسار أبدًا
+        else:
+            logger.info("🔁 [حارس الوزن] تأكيد لنفس الحظر الساري — الامتداد حتى %s UTC (بلا خفض إضافي)",
+                        end_utc.strftime("%H:%M:%S"))
+
+    def register_ban_from_error(self, exc: Exception) -> None:
+        """تحليل نص خطأ باينانس واستخراج موعد انتهاء الحظر إن وُجد («banned until 17...»)."""
+        m = BAN_UNTIL_RE.search(str(exc))
+        if m:
+            try:
+                self.register_ban(int(m.group(1)))
+                return
+            except (TypeError, ValueError):
+                pass
+        self.register_ban()  # بلا موعد صريح — تبريد احتياطي 120ث
+
+    def snapshot(self) -> Dict[str, Any]:
+        now = time.time()
+        with self._lock:
+            self._prune(now)
+            banned = self.banned_until if self.banned_until > now else None
+            return {
+                "used_weight_last_min": int(sum(w for _, w in self._window)),
+                "budget_per_min": self.budget,
+                "configured_budget": self.configured_budget,
+                "banned_until": banned,
+                "banned": bool(banned),
+                "banned_until_iso": (datetime.fromtimestamp(banned, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                                     if banned else None),
+                "ban_remaining_sec": round(self.banned_until - now + self._active_cooldown, 0) if banned else 0,
+                "resume_cooldown_sec": int(self._active_cooldown),
+                "ban_count": self.ban_count,
+                "last_error": self.last_error,
+                "total_requests": self.total_requests,
+                "throttled_sec_rounded": round(self.total_throttled_sec, 1),
+            }
+
+
+rate_guard = BinanceRateGuard()
+
+
+class RawDataProvider:
+    """أساس مزود بيانات خام — اقتباس V9.20.0: requests مباشرة بلا ccxt وبلا أسواق،
+    والتطبيع إلى صيغة الشموع الموحدة [ts,o,h,l,c,v] هنا فلا يتغير أي مستهلك لاحق."""
+
+    name: str = "base"
+    base_url: str = ""
+    # خريطة فريم البوت → فريم المنصة (الفريمات غير المدعومة تُتخطى للمزود التالي)
+    INTERVAL_MAP: Dict[str, str] = {}
+
+    def to_symbol(self, symbol: str) -> Optional[str]:
+        return symbol
+
+    def supports(self, symbol: str, interval: str) -> bool:
+        return (self.to_symbol(symbol) is not None
+                and str(interval).lower() in self.INTERVAL_MAP)
+
+    def _get_json(self, path: str, params: Optional[Dict[str, Any]] = None) -> Optional[Any]:
+        try:
+            r = requests.get(self.base_url + path, params=params or {},
+                             timeout=max(3, int(DATA_FEED_TIMEOUT_SEC)),
+                             headers={"User-Agent": "fibo-elio-datafeed/1.8.7"})
+            if r.status_code != 200:
+                logger.debug("[تغذية خام:%s] HTTP %s من %s", self.name, r.status_code, path)
+                return None
+            return r.json()
+        except Exception as e:
+            logger.debug("[تغذية خام:%s] فشل %s: %s", self.name, path, str(e)[:120])
+            return None
+
+    @staticmethod
+    def _f(v) -> Optional[float]:
+        try:
+            x = float(v)
+            return x if x == x and abs(x) != float("inf") else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _binance_row(ts_ms, o, h, l, c, vol) -> Optional[list]:
+        """صف شمعة موحّد بصيغة البوت (6 أعمدة) — يفحص الصلاحية ولا يُخرج صفًا فاسدًا."""
+        try:
+            ts = int(ts_ms)
+        except (TypeError, ValueError):
+            return None
+        if ts <= 0:
+            return None
+        fo, fh, fl, fc, fv = (RawDataProvider._f(x) for x in (o, h, l, c, vol))
+        if None in (fo, fh, fl, fc) or min(fo, fh, fl, fc) <= 0:
+            return None
+        return [ts, fo, fh, fl, fc, fv if fv is not None else 0.0]
+
+    def fetch_klines(self, symbol: str, interval: str, limit: int = 300) -> Optional[List[list]]:
+        raise NotImplementedError
+
+
+class BybitRawProvider(RawDataProvider):
+    """Bybit API v5 (spot) — أقرب أسواق لباينانس، حدود عامة سخية جدًا (اقتباس V9)."""
+    name = "bybit"
+    base_url = "https://api.bybit.com"
+    INTERVAL_MAP = {"1m": "1", "3m": "3", "5m": "5", "15m": "15", "30m": "30",
+                    "1h": "60", "2h": "120", "4h": "240", "6h": "360", "12h": "720", "1d": "D"}
+    _PAGE_MAX = 1000  # سقف الصفحة الواحدة — الأعمق يُجلب بترقيم رجعي (V9.22.0)
+
+    def to_symbol(self, symbol: str) -> Optional[str]:
+        s = str(symbol).replace("/", "").replace(":", "").upper()
+        return s if s.endswith("USDT") and len(s) > 4 else None
+
+    def fetch_klines(self, symbol: str, interval: str, limit: int = 300) -> Optional[List[list]]:
+        bsym, biv = self.to_symbol(symbol), self.INTERVAL_MAP.get(str(interval).lower())
+        if not bsym or not biv:
+            return None
+        lim = max(25, min(5000, int(limit)))
+        out: List[list] = []
+        seen: set = set()
+        end_ms: Optional[int] = None
+        for _page in range(max(1, -(-lim // self._PAGE_MAX))):
+            params: Dict[str, Any] = {"category": "spot", "symbol": bsym, "interval": biv,
+                                      "limit": max(1, min(self._PAGE_MAX, lim - len(out)))}
+            if end_ms is not None:
+                params["end"] = int(end_ms)
+            data = self._get_json("/v5/market/kline", params)
+            if not isinstance(data, dict) or data.get("retCode") != 0:
+                break
+            rows = (data.get("result") or {}).get("list") or []
+            if not rows:
+                break
+            page_oldest = None
+            for r in rows:
+                try:
+                    ot = int(r[0])
+                    if ot in seen:
+                        continue
+                    seen.add(ot)
+                    # bybit: [startTime, open, high, low, close, volume, turnover]
+                    br = self._binance_row(r[0], r[1], r[2], r[3], r[4], r[5])
+                    if br:
+                        out.append(br)
+                    page_oldest = ot if page_oldest is None else min(page_oldest, ot)
+                except (TypeError, ValueError, IndexError):
+                    continue
+            if page_oldest is None or len(out) >= lim:
+                break
+            end_ms = page_oldest - 1
+        if not out:
+            return None
+        out.sort(key=lambda k: k[0])
+        return out[-lim:]
+
+
+class OKXRawProvider(RawDataProvider):
+    """OKX API v5 (spot) — موثوقة بشموع دقيقة؛ تعليم الرموز BTC-USDT (اقتباس V9)."""
+    name = "okx"
+    base_url = "https://www.okx.com"
+    INTERVAL_MAP = {"1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m",
+                    "1h": "1H", "2h": "2H", "4h": "4H", "6h": "6H", "12h": "12H", "1d": "1D"}
+
+    def to_symbol(self, symbol: str) -> Optional[str]:
+        s = str(symbol).replace("/", "").replace(":", "").upper()
+        return f"{s[:-4]}-USDT" if s.endswith("USDT") and len(s) > 4 else None
+
+    def fetch_klines(self, symbol: str, interval: str, limit: int = 300) -> Optional[List[list]]:
+        inst, bar = self.to_symbol(symbol), self.INTERVAL_MAP.get(str(interval).lower())
+        if not inst or not bar:
+            return None
+        lim = max(25, min(1000, int(limit)))
+        # endpoint الحديث يعطي حتى 300 شمعة؛ النواقص تُستكمل من history-candles (100/صفحة) — كما في V9
+        data = self._get_json("/api/v5/market/candles",
+                              {"instId": inst, "bar": bar, "limit": min(300, lim)})
+        rows: list = []
+        if isinstance(data, dict) and str(data.get("code")) == "0" and isinstance(data.get("data"), list):
+            rows = list(data["data"])
+        tries = 0
+        while rows and len(rows) < lim and tries < 4:
+            tries += 1
+            try:
+                oldest = min(int(r[0]) for r in rows)
+            except (TypeError, ValueError):
+                break
+            hdata = self._get_json("/api/v5/market/history-candles",
+                                   {"instId": inst, "bar": bar, "after": oldest, "limit": 100})
+            if not (isinstance(hdata, dict) and str(hdata.get("code")) == "0"
+                    and isinstance(hdata.get("data"), list) and hdata["data"]):
+                break
+            rows.extend(hdata["data"])
+        if not rows:
+            return None
+        out: List[list] = []
+        for r in rows:
+            try:
+                # r = [ts, o, h, l, c, vol(أساسي), volCcy, volCcyQuote, confirm]
+                qv = self._f(r[7])
+                if qv is None:
+                    qv = self._f(r[6]) or 0.0
+                br = self._binance_row(r[0], r[1], r[2], r[3], r[4], r[5])
+                if br:
+                    out.append(br)
+            except (TypeError, ValueError, IndexError):
+                continue
+        if not out:
+            return None
+        uniq = {k[0]: k for k in out}
+        return [uniq[k] for k in sorted(uniq)][-lim:]
+
+
+class GateRawProvider(RawDataProvider):
+    """Gate.io API v4 (spot) — أوسع تغطية أزواج؛ تعليم الرموز BTC_USDT.
+    لا يدعم 3m/2h/6h/12h — تُتخطى تلقائيًا لصالح غيره (اقتباس V9)."""
+    name = "gate"
+    base_url = "https://api.gateio.ws/api/v4"
+    INTERVAL_MAP = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+                    "1h": "1h", "4h": "4h", "8h": "8h", "1d": "1d"}
+
+    def to_symbol(self, symbol: str) -> Optional[str]:
+        s = str(symbol).replace("/", "").replace(":", "").upper()
+        return f"{s[:-4]}_USDT" if s.endswith("USDT") and len(s) > 4 else None
+
+    def fetch_klines(self, symbol: str, interval: str, limit: int = 300) -> Optional[List[list]]:
+        pair, giv = self.to_symbol(symbol), self.INTERVAL_MAP.get(str(interval).lower())
+        if not pair or not giv:
+            return None
+        lim = max(25, min(1000, int(limit)))
+        data = self._get_json("/spot/candlesticks",
+                              {"currency_pair": pair, "interval": giv, "limit": lim})
+        if not isinstance(data, list) or not data:
+            return None
+        out: List[list] = []
+        for r in data:
+            try:
+                if isinstance(r, dict):
+                    # صيغة كائن (احتياط): حقول مسماة
+                    ts = int(r.get("time") or r.get("current") or 0)
+                    o, h, l, c = r.get("open"), r.get("high"), r.get("low"), r.get("close")
+                    bv_raw = r.get("volume")
+                else:
+                    # الصيغة الفعلية (مدققة حيًا في V9): [t(ث), quote_vol, o, c, h, l, base_vol, done]
+                    ts = int(r[0])
+                    o, c, h, l = r[2], r[3], r[4], r[5]
+                    bv_raw = r[6]
+                if 0 < ts < 10**12:  # Gate يعيد ثوانٍ
+                    ts *= 1000
+                br = self._binance_row(ts, o, h, l, c, bv_raw)
+                if br:
+                    out.append(br)
+            except (TypeError, ValueError, IndexError):
+                continue
+        if not out:
+            return None
+        uniq = {k[0]: k for k in out}
+        return [uniq[k] for k in sorted(uniq)][-lim:]
+
+
+_RAW_PROVIDER_REGISTRY: Dict[str, type] = {
+    "bybit": BybitRawProvider, "okx": OKXRawProvider, "gate": GateRawProvider,
+}
+# ترتيب الشموع الخام: من DATA_FEED_ORDER (افتراضي bybit→okx→gate) — باينانس يُضاف
+# ضمنيًا أخيرًا داخل fetch_ohlcv_raw خلف حارس الوزن (فلسفة V9.20.0 نفسها).
+RAW_PROVIDERS: List[RawDataProvider] = []
+for _raw_name in DATA_FEED_ORDER:
+    _raw_cls = _RAW_PROVIDER_REGISTRY.get(_raw_name)
+    if _raw_cls is None:
+        logger.warning("[تغذية خام] مزود مجهول في DATA_FEED_ORDER: %s", _raw_name)
+        continue
+    RAW_PROVIDERS.append(_raw_cls())
 
 REQUIRED_COLS = ["timestamp", "open", "high", "low", "close", "volume"]
 
@@ -814,19 +1280,81 @@ def _binance_raw_klines(ex, symbol: str, timeframe: str, limit: int) -> list:
             for k in (raw or [])]
 
 
-def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[list], Optional[str]]:
-    """تجربة المزودين بالترتيب: باينانس أولًا (الأصل) ثم البدائل عند الحظر/الفشل.
-    المزود الفاشل يدخل تبريدًا مؤقتًا حتى لا تُهدر زمن كل دورة عليه."""
+def _mark_provider_ok(name: str) -> None:
+    """[FE1.8.7] توثيق نجاح مزود + الانتقال الفعّال (منطق FE1.8.6 منقول حرفيًا هنا
+    ليخدم المسارين الخام والقديم) — الإشعارات بنفس النصوص المحمية بالاختبارات."""
+    with provider_lock:
+        st = provider_state.setdefault(name, {"ok": 0, "fail": 0, "last_error": "",
+                                              "last_ok_at": None, "cooldown_until": 0.0})
+        st["ok"] += 1
+        st["last_ok_at"] = utc_now_iso()
+        if active_source["name"] != name:
+            # [FE1.8.6] الانتقال يصل السجل/اللوحة — كان logger.info فقط
+            # (بطاقة «مزود البيانات» تتغير واللوج صامت — نفس شكوى المستخدم
+            # «فشل الاتصال بلا أثر في اللوج»؛ حي: باينانس 429 عند الإقلاع ←
+            # bybit بلا أي إشعار)
+            _prev = active_source.get("name")
+            _prev_err = str((provider_state.get(_prev) or {}).get("last_error") or "")
+            active_source["name"] = name
+            active_source["since"] = utc_now_iso()
+            logger.info("مزود البيانات الفعّال الآن: %s", name)
+            try:
+                if _prev:
+                    if name == (DATA_PROVIDERS[0] if DATA_PROVIDERS else "binance"):
+                        log_and_notify(
+                            "info",
+                            f"✅ عاد مزود البيانات الأساسي {name.upper()} "
+                            f"(البديل {_prev.upper()} خدمنا خلال الانقطاع)",
+                            "DATA_PROVIDER")
+                    else:
+                        log_and_notify(
+                            "warning",
+                            f"⚠ فشل مزود البيانات {_prev.upper()} — الانتقال إلى {name.upper()}"
+                            + (f" — السبب: {_prev_err[:120]}" if _prev_err else ""),
+                            "DATA_PROVIDER")
+                else:
+                    log_and_notify(
+                        "info",
+                        f"🔌 مزود البيانات الفعّال منذ الإقلاع: {name.upper()}",
+                        "DATA_PROVIDER")
+            except Exception:
+                pass  # إشعار المزود لا يُسقط مسار البيانات أبدًا
+
+
+def _mark_provider_fail(name: str, exc: Exception) -> None:
+    """[FE1.8.7] توثيق فشل مزود + تبريد مؤقت — نفس سياسة PROVIDER_COOLDOWN_SEC القائمة."""
+    with provider_lock:
+        st = provider_state.setdefault(name, {"ok": 0, "fail": 0, "last_error": "",
+                                              "last_ok_at": None, "cooldown_until": 0.0})
+        st["fail"] += 1
+        st["last_error"] = str(exc)[:280]
+        st["cooldown_until"] = time.time() + PROVIDER_COOLDOWN_SEC
+    return st
+
+
+def _binance_attempt_prune(st: Dict[str, Any], name: str = "binance") -> None:
+    """[FE1.3.1/1.3.2] تقليم أسواق نسخة ccxt البينانسية لمرة واحدة بعد أول جلب/فشل
+    (ccxt قد يحمل كون الأسواق ضمن المحاولة — حمية الذاكرة)."""
+    if st and not st.get("markets_pruned"):
+        st["markets_pruned"] = True
+        ex = EXCHANGES.get(name)
+        if ex is not None:
+            n = prune_markets(ex)
+            if n >= 0:
+                logger.info("تقليم أسواق %s بعد أول محاولة — بقي %d زوج فقط (حمية الذاكرة)", name, n)
+
+
+def _fetch_ohlcv_ccxt(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[list], Optional[str]]:
+    """المسار القديم ccxt (كل المزودين عبر EXCHANGES) — يبقى قاتل الطوارئ عند
+    DATA_FEED_RAW=0، ويحمل نفس سلوك FE1.0.1 حرفيًا (باينانس أولًا ثم البدائل)."""
     now = time.time()
     with provider_lock:
         order = [n for n in EXCHANGES if provider_state[n]["cooldown_until"] <= now]
     errors: List[str] = []
     for name in order:
+        st: Dict[str, Any] = {}
         try:
             if name == "binance":
-                # [FE1.4.2] نقاط خام بلا أسواق — المسح هو أول نشاط عند الإقلاع
-                # وكان أكبر مصدر نتوء ذاكرة (fetch_ohlcv الموحدة تحمّل كون الأسواق).
-                # غياب publicGetKlines (نسخ قديمة/بدائل اختبار) ← سقوط آمن للموحدة.
                 try:
                     raw = _binance_raw_klines(EXCHANGES[name], symbol, timeframe, limit)
                 except AttributeError:
@@ -835,59 +1363,80 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
                 raw = EXCHANGES[name].fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
             if not raw:
                 raise ValueError("قائمة شموع فارغة")
-            with provider_lock:
-                st = provider_state[name]
-                st["ok"] += 1
-                st["last_ok_at"] = utc_now_iso()
-                if active_source["name"] != name:
-                    # [FE1.8.6] الانتقال يصل السجل/اللوحة — كان logger.info فقط
-                    # (بطاقة «مزود البيانات» تتغير واللوج صامت — نفس شكوى المستخدم
-                    # «فشل الاتصال بلا أثر في اللوج»؛ حي: باينانس 429 عند الإقلاع ←
-                    # bybit بلا أي إشعار)
-                    _prev = active_source.get("name")
-                    _prev_err = str((provider_state.get(_prev) or {}).get("last_error") or "")
-                    active_source["name"] = name
-                    active_source["since"] = utc_now_iso()
-                    logger.info("مزود البيانات الفعّال الآن: %s", name)
-                    try:
-                        if _prev:
-                            if name == (DATA_PROVIDERS[0] if DATA_PROVIDERS else "binance"):
-                                log_and_notify(
-                                    "info",
-                                    f"✅ عاد مزود البيانات الأساسي {name.upper()} "
-                                    f"(البديل {_prev.upper()} خدمنا خلال الانقطاع)",
-                                    "DATA_PROVIDER")
-                            else:
-                                log_and_notify(
-                                    "warning",
-                                    f"⚠ فشل مزود البيانات {_prev.upper()} — الانتقال إلى {name.upper()}"
-                                    + (f" — السبب: {_prev_err[:120]}" if _prev_err else ""),
-                                    "DATA_PROVIDER")
-                        else:
-                            log_and_notify(
-                                "info",
-                                f"🔌 مزود البيانات الفعّال منذ الإقلاع: {name.upper()}",
-                                "DATA_PROVIDER")
-                    except Exception:
-                        pass  # إشعار المزود لا يُسقط مسار البيانات أبدًا
-            if not st.get("markets_pruned"):  # [FE1.3.1] تقليم لمرة واحدة بعد أول جلب ناجح
-                st["markets_pruned"] = True
-                n = prune_markets(EXCHANGES[name])
-                if n >= 0:
-                    logger.info("تقليم أسواق %s بعد أول جلب — بقي %d زوج فقط (حمية الذاكرة)", name, n)
+            _mark_provider_ok(name)
+            if not (provider_state.get(name) or {}).get("markets_pruned"):
+                _binance_attempt_prune(provider_state.get(name) or {}, name)
             return raw, name
         except Exception as exc:
-            with provider_lock:
-                st = provider_state[name]
-                st["fail"] += 1
-                st["last_error"] = str(exc)[:280]
-                st["cooldown_until"] = time.time() + PROVIDER_COOLDOWN_SEC
-            if not st.get("markets_pruned"):  # [FE1.3.2] تقليم عند الفشل أيضًا — ccxt حمّل الأسواق قبل الطلب (حظر جغرافي مثلاً)
-                st["markets_pruned"] = True
-                n = prune_markets(EXCHANGES[name])
-                if n >= 0:
-                    logger.info("تقليم أسواق %s بعد فشل جلب (حُمّلت ضمن المحاولة) — بقي %d زوج فقط", name, n)
+            st = _mark_provider_fail(name, exc)
+            if not st.get("markets_pruned"):
+                _binance_attempt_prune(st, name)
             errors.append(f"{name}: {str(exc)[:120]}")
+    if errors:
+        logger.warning("فشل جلب %s %s من المزودين المتاحين — %s", symbol, timeframe, " | ".join(errors))
+    return None, None
+
+
+def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[list], Optional[str]]:
+    """[FE1.8.7] طريق V9 لتغذية الشموع: البدائل الخام أولًا (requests بلا ccxt وبلا
+    أسواق — حدودها سخية) ثم باينانس احتياطًا أخيرًا خلف حارس الوزن. أثناء حظر
+    باينانس يُتخطى مساره فورًا (فحص غير حاجب) فلا يتعطل جلب الشموع إطلاقًا،
+    وحين يُلمس باينانس يكون بحجز وزن مسبق — لا انفجار -1003/418 متكرر.
+    DATA_FEED_RAW=0 يعيد المسار القديم ccxt كاملًا (قاتل الطوارئ)."""
+    if not DATA_FEED_RAW:
+        return _fetch_ohlcv_ccxt(symbol, timeframe, limit)
+    errors: List[str] = []
+    now = time.time()
+    # 1) البدائل الخام — بالترتيب المُعدّ (bybit→okx→gate)، المزود المبرد يُتخطى
+    for prov in RAW_PROVIDERS:
+        with provider_lock:
+            cooling = (provider_state.get(prov.name) or {}).get("cooldown_until", 0.0) > now
+        if cooling:
+            errors.append(f"{prov.name}: مبرد بعد فشل سابق")
+            continue
+        try:
+            rows = prov.fetch_klines(symbol, timeframe, limit)
+        except Exception as exc:
+            _mark_provider_fail(prov.name, exc)
+            errors.append(f"{prov.name}: استثناء {str(exc)[:120]}")
+            continue
+        if rows:
+            _mark_provider_ok(prov.name)
+            return rows, prov.name
+        # None = فشل المنصة نفسها (HTTP غير 200/استجابة فارغة) — يُحتسب فشلًا مع تبريد
+        with provider_lock:
+            st = provider_state.setdefault(prov.name, {"ok": 0, "fail": 0, "last_error": "",
+                                                       "last_ok_at": None, "cooldown_until": 0.0})
+            st["fail"] += 1
+            st["last_error"] = f"{symbol} {timeframe} فارغة/غير متاحة"
+            st["cooldown_until"] = time.time() + PROVIDER_COOLDOWN_SEC
+        errors.append(f"{prov.name}: فارغة/غير متاحة")
+    # 2) باينانس أخيرًا — خلف حارس الوزن (فلسفة V9.20.0: وزن يقارب الصفر)
+    if rate_guard.is_banned():
+        errors.append("binance: 🚫 حظر وزن ساري — تخطٍ لصالح البدائل")
+    else:
+        ex_b = EXCHANGES.get("binance")
+        if ex_b is None:
+            errors.append("binance: نسخة ccxt غير مهيأة")
+        else:
+            try:
+                rate_guard.acquire(_bin_klines_weight(limit))
+                try:
+                    raw = _binance_raw_klines(ex_b, symbol, timeframe, limit)
+                except AttributeError:
+                    raw = ex_b.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+                if not raw:
+                    raise ValueError("قائمة شموع فارغة")
+                _mark_provider_ok("binance")
+                _binance_attempt_prune(provider_state.get("binance") or {})
+                return raw, "binance"
+            except Exception as exc:
+                if _is_rate_error(exc):
+                    rate_guard.last_error = str(exc)[:160]
+                    rate_guard.register_ban_from_error(exc)
+                st = _mark_provider_fail("binance", exc)
+                _binance_attempt_prune(st, "binance")
+                errors.append(f"binance: {str(exc)[:120]}")
     if errors:
         logger.warning("فشل جلب %s %s من المزودين المتاحين — %s", symbol, timeframe, " | ".join(errors))
     return None, None
@@ -1000,6 +1549,18 @@ def _binance_conn_notify(connected: bool, error: str = "") -> None:
         pass  # إشعار الاتصال لا يجب أن يُسقط اللوحة أبدًا
 
 
+def _bin_rest_gate(weight: int, purpose: str = "طلب") -> None:
+    """[FE1.8.7] بوابة حارس الوزن لكل نداء باينانس REST — عقد V9 (safe_api_call):
+    وزن محسوب مسبقًا قبل النداء، وأثناء حظر ساري يُمنع الطلب باستثناء واضح بدل
+    ضرب باينانس أثناء الحظر (السبب الأول لتصعيد الحظر في الجذور القديمة).
+    الشموع لا تمر من هنا — مسارها يتخطى باينانس فورًا لصالح البدائل الخام."""
+    if rate_guard.is_banned():
+        raise RuntimeError(
+            f"🚫 حظر وزن باينانس ساري ({rate_guard.ban_remaining_sec()}ث متبقية) — أُلغي {purpose} "
+            f"وحتى انتهاء الحظر (الشموع من البدائل الخام)")
+    rate_guard.acquire(weight)
+
+
 def binance_status_snapshot(force: bool = False) -> Dict[str, Any]:
     """[FE1.4.0] حالة اتصال باينانس للوحة: ping حي + زمن استجابة + (بمفاتيح)
     رصيد USDT وصلاحية التداول. كاش BIN_STATUS_TTL_SEC — لا ضغط على باينانس
@@ -1015,6 +1576,7 @@ def binance_status_snapshot(force: bool = False) -> Dict[str, Any]:
         "error": None, "checked_at": utc_now_iso(),
     }
     try:
+        _bin_rest_gate(1, "فحص الاتصال")  # [FE1.8.7] الحظر يمنع الـ ping وتُعرض بقيّته في البطاقة بدل 418 غامض
         ex = binance_trade_exchange() if keys_ok else _binance_public_probe()
         if ex is None:
             raise RuntimeError("تعذر إنشاء اتصال باينانس")
@@ -1045,7 +1607,8 @@ def binance_status_snapshot(force: bool = False) -> Dict[str, Any]:
 def _real_account(ex) -> Dict[str, Any]:
     """[FE1.4.1] حساب باينانس الخام (GET /api/v3/account عبر privateGetAccount) —
     نقطة implicit لا تستدعي load_markets إطلاقًا (بديل fetch_balance الذي كان يحمّل
-    كون الأسواق كاملًا ويسبب أعطال OOM)."""
+    كون الأسواق كاملًا ويسبب أعطال OOM). [FE1.8.7] خلف بوابة حارس الوزن (وزن 10)."""
+    _bin_rest_gate(10, "قراءة الحساب")
     return ex.privateGetAccount() or {}
 
 
@@ -1111,7 +1674,13 @@ def real_market_rules(symbol: str, ex=None, force: bool = False) -> Dict[str, An
     ex = ex or binance_trade_exchange()
     if ex is None:
         return {}
+    if rate_guard.is_banned():
+        # [FE1.8.7] أثناء حظر الوزن: بلا قواعد جديدة — الكاش يخدم إن وُجد (fail-open كما في الأصل)
+        with _REAL_RULES_LOCK:
+            c = _REAL_RULES_CACHE.get(symbol)
+        return dict(c["rules"]) if c else {}
     try:
+        _bin_rest_gate(10, "جلب قواعد السوق")
         raw = ex.publicGetExchangeInfo({"symbol": _bin_sym(symbol)}) or {}
         syms = raw.get("symbols") or []
         s = syms[0] if syms else {}
@@ -1254,6 +1823,7 @@ def place_real_limit_buy(symbol: str, price: float, qty: float) -> Optional[Dict
     if ex is None:
         return None
     try:
+        _bin_rest_gate(1, "إرسال أمر شراء")  # [FE1.8.7]
         raw = ex.privatePostOrder({
             "symbol": _bin_sym(symbol), "side": "BUY", "type": "LIMIT",
             "timeInForce": "GTC", "quantity": _fmt_dec(qty), "price": _fmt_dec(price),
@@ -1276,6 +1846,7 @@ def place_real_market_sell(symbol: str, qty: float) -> Optional[Dict[str, Any]]:
     if ex is None:
         return None
     try:
+        _bin_rest_gate(1, "أمر بيع سوق")  # [FE1.8.7]
         raw = ex.privatePostOrder({
             "symbol": _bin_sym(symbol), "side": "SELL", "type": "MARKET",
             "quantity": _fmt_dec(qty), "newOrderRespType": "FULL",
@@ -1294,6 +1865,7 @@ def fetch_real_order(ex, symbol: str, order_id: Any) -> Optional[Dict[str, Any]]
     """حالة الأمر الحقيقي من المنصة — [FE1.4.1] privateGetOrder موحّد بـ _norm_real_order.
     None عند فشل عابر (تُعاد المحاولة في الدورة القادمة)."""
     try:
+        _bin_rest_gate(2, "قراءة حالة الأمر")  # [FE1.8.7]
         raw = ex.privateGetOrder({"symbol": _bin_sym(symbol), "orderId": int(str(order_id))})
         return _norm_real_order(raw)
     except Exception as exc:
@@ -1305,6 +1877,7 @@ def cancel_real_order(ex, symbol: str, order_id: Any) -> bool:
     """إلغاء أمر معلق حقيقي — [FE1.4.1] privateDeleteOrder.
     False يعني إعادة الفحص/المحاولة في الدورة القادمة."""
     try:
+        _bin_rest_gate(1, "إلغاء الأمر")  # [FE1.8.7]
         ex.privateDeleteOrder({"symbol": _bin_sym(symbol), "orderId": int(str(order_id))})
         return True
     except Exception as exc:
@@ -2328,6 +2901,7 @@ def place_real_stop_loss(symbol: str, qty: float, stop_price: float,
             logger.info("[%s] كمية الوقف الراكن غبار تحت حدود باينانس (%s) — بلا أمر راكن والمراقبة المحلية خط الدفاع",
                         symbol, qty)
             return None
+        _bin_rest_gate(1, "الوقف الراكن")  # [FE1.8.7]
         raw = ex.privatePostOrder({
             "symbol": _bin_sym(symbol), "side": "SELL", "type": "STOP_LOSS_LIMIT",
             "quantity": _fmt_dec(qty), "stopPrice": _fmt_dec(stop_price),
@@ -3753,6 +4327,7 @@ def api_all():
         "mode": ("real" if is_real_mode else "paper"),
         "real_mode": is_real_mode,               # [FE1.4.0] زر التداول الحقيقي
         "binance": binance_status_snapshot(),    # [FE1.4.0] بطاقة اتصال باينانس
+        "rate_guard": rate_guard.snapshot(),     # [FE1.8.7] حارس وزن باينانس (اقتباس V9.9)
         "trading_enabled": is_trading_enabled,
         "paper_balance": get_paper_balance(),
         "stats": compute_stats(),

@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.8.6"
+BOT_VERSION = "FE1.8.7"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -321,6 +321,21 @@ function renderCards(d){
     ['عامل الربح PF', (s.profit_factor!==null&&s.profit_factor!==undefined)? Number(s.profit_factor).toFixed(2):'—', (s.profit_factor||0)>=1?'pos':'neg'],
     ['صافي الربح', usd(s.total_pnl||0), cls(s.total_pnl||0)],
     ['مزود البيانات', esc((d.data&&d.data.active)? d.data.active.toUpperCase() : '—'), 'tealc'],
+    // [FE1.8.7] بطاقة حارس الوزن — اقتباس V9: شفافية كاملة لوزن باينانس والحظر
+    (function(){
+      const rg = d.rate_guard || {};
+      let rgTxt = '—', rgCls = 'tealc';
+      if (rg.budget_per_min) {
+        if (rg.banned) {
+          rgTxt = '🚫 حظر حتى ' + esc(((rg.banned_until_iso||'').slice(11,16)) || '—') + ' UTC';
+          rgCls = 'neg';
+        } else {
+          rgTxt = (rg.used_weight_last_min||0) + '/' + rg.budget_per_min + ' وزن·د';
+          if (rg.ban_count) rgTxt += ' · ' + rg.ban_count + ' حظرات سابقة';
+        }
+      }
+      return ['حارس وزن باينانس (V9)', rgTxt, rgCls];
+    })(),
     ['آخر مسح', s.last_scan_at? esc(s.last_scan_at.slice(11,16))+' UTC' : '—', ''],
   ];
   // [FE1.3.0] بطاقة البقاء الحي — دليل مرئي أن مضاد النوم يعمل

@@ -94,8 +94,8 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.8.6"
-        assert panel.BOT_VERSION == "FE1.8.6"
+        assert vnz.BOT_VERSION == "FE1.8.7"
+        assert panel.BOT_VERSION == "FE1.8.7"
 
     def test_render_yaml_carries_new_values(self):
         # مصدر الحقيقة على Render — يجب أن يحمل القيم الجديدة لا الافتراضيات القديمة
@@ -105,7 +105,8 @@ class TestProtectedBoundaries:
         assert 'value: "30"' in y          # MAX_STRUCTURE_AGE_BARS [FE1.8.6]
         assert 'value: "2700"' in y        # IDLE_RESCAN_MIN_GAP_SEC [FE1.8.6]
         assert 'value: "6"' in y           # PENDING_MAX_CANDLES
-        assert 'value: "600"' not in y     # القديم أزيل كليًا
+        # القديم (نبضة 600ث) أزيل كليًا — value: "600" الحالية ملك BAN_LONG_THRESHOLD_SEC [FE1.8.7]
+        assert "- key: KEEP_ALIVE_INTERVAL_SEC\n        value: \"600\"" not in y
 
     def test_quality_gates_untouched(self):
         # الحراسات الجوهرية بقيت بقيمها — التخفيف في الأعمار لا في الجودة

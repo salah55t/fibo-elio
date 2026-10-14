@@ -329,7 +329,7 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "FE1.8.6"
+        assert body["version"] == "FE1.8.7"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 
@@ -421,6 +421,8 @@ def _reset_providers(monkeypatch, mapping):
     })
     monkeypatch.setattr(vnz, "active_source", {"name": None, "since": None})
     monkeypatch.setattr(vnz.time, "sleep", lambda *a: None)  # اختبارات سريعة
+    # [FE1.8.7] هذه العقود للمسار القديم ccxt (قاتل الطوارئ) — الطبقة الخام في test_fe187
+    monkeypatch.setattr(vnz, "DATA_FEED_RAW", False)
 
 
 class TestDataProviderRotation:
@@ -863,7 +865,7 @@ class TestWebSocketPriceFeedFE120:
         r = client.get("/api/ws/status")
         assert r.status_code == 200
         data = r.get_json()
-        assert data["version"] == "FE1.8.6"
+        assert data["version"] == "FE1.8.7"
         assert data["enabled"] is True
         assert "prices" in data and "subscriptions" in data and "candles" in data
 
@@ -881,7 +883,7 @@ class TestWebSocketPriceFeedFE120:
         client = vnz.app.test_client()
         data = client.get("/health").get_json()
         assert data["live_feed"] in ("websocket", "rest")
-        assert data["version"] == "FE1.8.6"
+        assert data["version"] == "FE1.8.7"
 
     def test_ws_exchange_unknown_provider_raises(self):
         with pytest.raises(ValueError):

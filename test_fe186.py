@@ -81,6 +81,9 @@ def providers(clean_db, monkeypatch):
                         {"binance": _state(), "bybit": _state()})
     monkeypatch.setattr(vnz, "active_source", {"name": None, "since": None})
     monkeypatch.setattr(vnz, "prune_markets", lambda ex: 0)
+    # [FE1.8.7] هذه الاختبارات تعاقد مسار ccxt القديم (قاتل الطوارئ DATA_FEED_RAW=0)
+    # — الطبقة الخام المقتبسة من V9 لها عالمها وعقودها في test_fe187.py
+    monkeypatch.setattr(vnz, "DATA_FEED_RAW", False)
     yield vnz
 
 
@@ -158,5 +161,5 @@ class TestVersion:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.8.6"
-        assert panel.BOT_VERSION == "FE1.8.6"
+        assert vnz.BOT_VERSION == "FE1.8.7"
+        assert panel.BOT_VERSION == "FE1.8.7"
