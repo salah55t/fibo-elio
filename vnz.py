@@ -1282,9 +1282,12 @@ def _binance_raw_klines(ex, symbol: str, timeframe: str, limit: int) -> list:
             for k in (raw or [])]
 
 
-def _mark_provider_ok(name: str) -> None:
-    """[FE1.8.7] توثيق نجاح مزود + الانتقال الفعّال (منطق FE1.8.6 منقول حرفيًا هنا
-    ليخدم المسارين الخام والقديم) — الإشعارات بنفس النصوص المحمية بالاختبارات."""
+def _mark_provider_ok(name: str, notify_transition: bool = True) -> None:
+    """[FE1.8.7] توثيق نجاح مزود + الانتقال الفعّال (منطق FE1.8.6 منقول حرفيًا).
+    [تصحيح حي 14:29Z] في الطبقة الخام التدوير بين البدائل طبيعي (رمز غير مدعوم
+    ينتقل للمزود التالي) — إشعارات الانتقال بين البدائل ضجيج (5 إشعارات/26ث حيًا)
+    فتُمرر notify_transition=False؛ الإقلاع الأول يُعلن دائمًا، وعودة باينانس
+    الأساسي (عند فشل الجميع) تبقى إشعارًا. المسار القديم يبقى بكامل الإشعارات."""
     with provider_lock:
         st = provider_state.setdefault(name, {"ok": 0, "fail": 0, "last_error": "",
                                               "last_ok_at": None, "cooldown_until": 0.0})
@@ -1301,27 +1304,28 @@ def _mark_provider_ok(name: str) -> None:
             active_source["name"] = name
             active_source["since"] = utc_now_iso()
             logger.info("مزود البيانات الفعّال الآن: %s", name)
-            try:
-                if _prev:
-                    if name == (DATA_PROVIDERS[0] if DATA_PROVIDERS else "binance"):
-                        log_and_notify(
-                            "info",
-                            f"✅ عاد مزود البيانات الأساسي {name.upper()} "
-                            f"(البديل {_prev.upper()} خدمنا خلال الانقطاع)",
-                            "DATA_PROVIDER")
+            if notify_transition or not _prev:  # الإقلاع الأول يُعلن دائمًا — تدوير البدائل لا
+                try:
+                    if _prev:
+                        if name == (DATA_PROVIDERS[0] if DATA_PROVIDERS else "binance"):
+                            log_and_notify(
+                                "info",
+                                f"✅ عاد مزود البيانات الأساسي {name.upper()} "
+                                f"(البديل {_prev.upper()} خدمنا خلال الانقطاع)",
+                                "DATA_PROVIDER")
+                        else:
+                            log_and_notify(
+                                "warning",
+                                f"⚠ فشل مزود البيانات {_prev.upper()} — الانتقال إلى {name.upper()}"
+                                + (f" — السبب: {_prev_err[:120]}" if _prev_err else ""),
+                                "DATA_PROVIDER")
                     else:
                         log_and_notify(
-                            "warning",
-                            f"⚠ فشل مزود البيانات {_prev.upper()} — الانتقال إلى {name.upper()}"
-                            + (f" — السبب: {_prev_err[:120]}" if _prev_err else ""),
+                            "info",
+                            f"🔌 مزود البيانات الفعّال منذ الإقلاع: {name.upper()}",
                             "DATA_PROVIDER")
-                else:
-                    log_and_notify(
-                        "info",
-                        f"🔌 مزود البيانات الفعّال منذ الإقلاع: {name.upper()}",
-                        "DATA_PROVIDER")
-            except Exception:
-                pass  # إشعار المزود لا يُسقط مسار البيانات أبدًا
+                except Exception:
+                    pass  # إشعار المزود لا يُسقط مسار البيانات أبدًا
 
 
 def _mark_provider_fail(name: str, exc: Exception) -> None:
@@ -1341,7 +1345,9 @@ def _mark_provider_soft_fail(name: str, err: str) -> Dict[str, Any]:
     الدرس الحي (14:16Z): رمز واحد غير مدعوم (WAL على okx / ZEC على bybit)
     كان يبرّد المزود كله 15د ويترك فجوة شموع حين تتراكب التبريدات —
     عتبة V9 (4 متتالية) تُبقي المزود يخدم رموزه الـ29 الأخرى وترفضه فقط
-    حين تنهار شبكته فعلًا. النجاح الواحد يقطع السلسلة (_mark_provider_ok)."""
+    حين تنهار شبكته فعلًا. النجاح الواحد يقطع السلسلة (_mark_provider_ok).
+    بلوغ العتبة = انقطاع فعلي ← إشعار واحد بالتبريد (لا ضجيج لكل رمز)."""
+    cooled = False
     with provider_lock:
         st = provider_state.setdefault(name, {"ok": 0, "fail": 0, "last_error": "",
                                               "last_ok_at": None, "cooldown_until": 0.0})
@@ -1351,6 +1357,18 @@ def _mark_provider_soft_fail(name: str, err: str) -> Dict[str, Any]:
         if st["consec_fail"] >= max(1, int(DATA_FEED_FAIL_THRESHOLD)):
             st["cooldown_until"] = time.time() + max(30.0, float(DATA_FEED_COOLDOWN_SEC))
             st["consec_fail"] = 0
+            cooled = True
+    if cooled:  # [V9] انقطاع فعلي بعد العتبة — إشعار واحد وليس لكل رمز
+        logger.warning("🌐 [تغذية خام] تبريد %s لمدة %dث بعد %d فشلات متتالية",
+                       name, int(DATA_FEED_COOLDOWN_SEC), int(DATA_FEED_FAIL_THRESHOLD))
+        try:
+            log_and_notify(
+                "warning",
+                f"🌐 تبريد مزود البيانات {name.upper()} لمدة {int(DATA_FEED_COOLDOWN_SEC)}ث "
+                f"بعد {int(DATA_FEED_FAIL_THRESHOLD)} فشلات متتالية — آخرها: {str(err)[:90]}",
+                "DATA_PROVIDER")
+        except Exception:
+            pass
     return st
 
 
@@ -1423,7 +1441,7 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
             errors.append(f"{prov.name}: استثناء {str(exc)[:120]}")
             continue
         if rows:
-            _mark_provider_ok(prov.name)
+            _mark_provider_ok(prov.name, notify_transition=False)  # التدوير بين البدائل طبيعي — لا ضجيج [تصحيح حي]
             return rows, prov.name
         # None = فشل المنصة نفسها (HTTP غير 200/استجابة فارغة) — عدّاد متتالٍ بلا تبريد فوري [V9]
         _mark_provider_soft_fail(prov.name, f"{symbol} {timeframe} فارغة/غير متاحة")

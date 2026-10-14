@@ -404,12 +404,23 @@ class TestFetchRouting:
         assert raw_world["binance"].calls == 0
 
     def test_transition_notification(self, raw_world):
-        # نفس عقد FE1.8.6: الانتقال يصل السجل بنص السبب (الاستثناء يُسبق بـ«استثناء:»)
+        # [تصحيح حي 14:29Z] التدوير بين البدائل طبيعي في الطبقة الخام — بلا إشعار انتقال
+        # (5 إشعارات/26ث حيًا كانت ضجيجًا يدفس الأحداث الحقيقية) — الحالة تتحرك بصمت
         vnz.active_source["name"] = "bybit"
         raw_world["bybit"].exc = RuntimeError("bybit down hard")
         vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 200)
-        assert _notif_n("فشل مزود البيانات BYBIT — الانتقال إلى OKX") == 1
-        assert _notif_n("السبب: استثناء: bybit down hard") == 1
+        assert vnz.active_source["name"] == "okx"  # التدوير يحدث فعلًا
+        assert _notif_n("فشل مزود البيانات BYBIT — الانتقال إلى OKX") == 0
+
+    def test_provider_cooldown_after_threshold_notifies_once(self, raw_world):
+        # بلوغ العتبة (4 متتالية) = انقطاع فعلي ← إشعار تبريد واحد وليس لكل رمز
+        raw_world["bybit"].empty = True
+        for _ in range(4):
+            vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 200)
+        assert _notif_n("تبريد مزود البيانات BYBIT لمدة 300ث بعد 4 فشلات متتالية") == 1
+        for _ in range(3):  # المزيد من الفشل أثناء التبريد؟ لا — المبرد يُتخطى بلا نداء
+            vnz.fetch_ohlcv_raw("BTC/USDT", "15m", 200)
+        assert _notif_n("تبريد مزود البيانات BYBIT") == 1  # بلا تكرار
 
     def test_cooled_provider_skipped(self, raw_world):
         # المزود المبرد يُتخطى بلا نداء
