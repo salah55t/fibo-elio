@@ -192,7 +192,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.8.8"  # FE1.8.8: إصلاح موت إشارات أول دورة إقلاع — علم التوليد على قاعدة حالة فارغة/غير جاهزة يبدأ مفعّلًا (ورقي آمن) بدل «معطل» صامتة + تفعيل التوليد من اللوحة يوقظ فحص كشف فوري بدل انتظار إغلاق الشمعة القادمة. (FE1.8.7: طبقة اتصال V9 الخام + حارس وزن باينانس)
+BOT_VERSION = "FE1.8.9"  # FE1.8.9: تبديل فريم الكشف/التنفيذ حيًا من اللوحة (5m/15m/1h/4h) — POST /api/config/timeframe + أزرار الفريم، تبديل نظيف (إلغاء الورقي المعلق مستثنى من التبريد + إعادة بناء الكاشف + مسح أسباب الرفض) + حفظ قاعدة الحالة يصمد عبر النشر + env SIGNAL/ENTRY_TIMEFRAME يبقى الجواب دون أي كود. (FE1.8.8: إصلاح موت إشارات أول دورة إقلاع — علم التوليد على قاعدة حالة فارغة/غير جاهزة يبدأ مفعّلًا بدل «معطل» صامتة)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -337,6 +337,19 @@ TF_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600,
     "2h": 7200, "4h": 14400, "6h": 21600, "8h": 28800, "12h": 43200, "1d": 86400,
 }
+
+# [FE1.8.9] الفريمات المسموح التبديل بينها حيًا من لوحة التحكم (فريم الكشف/التنفيذ).
+# كلها مدعومة في TF_SECONDS وجداول معايرة الكاشف — قيم أخرى تُرفض في البوابة.
+ALLOWED_TFS = ("5m", "15m", "1h", "4h")
+
+
+def _norm_tf(value: Any) -> Optional[str]:
+    """[FE1.8.9] تطبيع فريم قادم من اللوحة/env: strip + lower ثم قبول المسموح فقط."""
+    try:
+        tf = str(value or "").strip().lower()
+    except Exception:
+        return None
+    return tf if tf in ALLOWED_TFS else None
 
 logger = get_logger("fibo-elio")
 
@@ -1512,6 +1525,25 @@ detector = PivotDetector(DetectorConfig(
     fib_tolerance_pct=FIB_TOLERANCE_PCT,
     min_wave_proportion=WAVE_MIN_PROPORTION,
 ))
+
+
+def _rebuild_detector() -> None:
+    """[FE1.8.9] إعادة إنشاء الكاشف بنفس إعدادات المؤلف — يلزمها عند تبديل الفريم
+    لأن الكاشف يحمل عتبة الانعكاس مثبتة عند الإنشاء، وتبديل نصفه الحي دون إعادة
+    بناء يعني مزج حالة قديمة بفريم جديد. الفشل يبقي النسخة الحالية عاملة."""
+    global detector
+    try:
+        detector = PivotDetector(DetectorConfig(
+            method="zigzag",
+            deviation_threshold=DEVIATION_THRESHOLD,
+            price_source="close",
+            min_wave_bars=MIN_WAVE_BARS,
+            require_fib_confluence=False,
+            fib_tolerance_pct=FIB_TOLERANCE_PCT,
+            min_wave_proportion=WAVE_MIN_PROPORTION,
+        ))
+    except Exception:
+        logger.exception("إعادة بناء الكاشف فشلت — تبقى النسخة الحالية عاملة")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3898,9 +3930,12 @@ def on_symbol_cooldown(symbol: str) -> bool:
         cutoff = datetime.fromtimestamp(
             time.time() - SYMBOL_COOLDOWN_SEC, tz=timezone.utc
         ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # [FE1.8.9] الإلغاءات الجماعية بسبب تبديل الفريم مستثناة من التبريد —
+        # وإلا لُعِق الرموز المعلقة كلها 90 دقيقة بعد كل تبديل بلا ذنب (خطأ بوابات لا سلوك سوق)
         rows = db.query(
             "SELECT COUNT(*) AS n FROM signals WHERE symbol = %s AND status IN ('expired', 'cancelled')"
-            " AND COALESCE(closed_at, created_at) >= %s",
+            " AND COALESCE(closed_at, created_at) >= %s"
+            " AND (close_reason IS NULL OR close_reason NOT LIKE 'تبديل الفريم%')",
             (symbol, cutoff),
         )
         return bool(rows and int(rows[0]["n"]) > 0)
@@ -4368,6 +4403,9 @@ def api_all():
         "binance": binance_status_snapshot(),    # [FE1.4.0] بطاقة اتصال باينانس
         "rate_guard": rate_guard.snapshot(),     # [FE1.8.7] حارس وزن باينانس (اقتباس V9.9)
         "trading_enabled": is_trading_enabled,
+        "signal_timeframe": SIGNAL_TIMEFRAME,   # [FE1.8.9] فريم الكشف الحي للوحة
+        "entry_timeframe": ENTRY_TIMEFRAME,     # [FE1.8.9] فريم التنفيذ الحي
+        "allowed_tfs": list(ALLOWED_TFS),       # [FE1.8.9] خيارات التبديل المتاحة
         "paper_balance": get_paper_balance(),
         "stats": compute_stats(),
         "risk": risk_snapshot(),  # [FE1.8.0] بطاقة قاطع المخاطر (حد يومي/متتاليات/تبريد)
@@ -4537,6 +4575,34 @@ def toggle_trading_status():
     msg = "🌊 توليد الإشارات الورقية: مفعّل" if is_trading_enabled else "⏸ توليد الإشارات الورقية: معطّل (المراقبة مستمرة)"
     log_and_notify("info", msg, "TRADING_STATUS_CHANGE")
     return jsonify({"trading_enabled": is_trading_enabled, "message": msg})
+
+
+@app.route("/api/config/timeframe", methods=["POST"])
+def api_config_timeframe():
+    """[FE1.8.9] تبديل فريمي الكشف/التنفيذ من اللوحة حيًا — بين 5m/15m/1h/4h.
+    يقبل {"preset": "5m"} (فريمًا واحدًا للكشف والتنفيذ) أو {"signal_tf":..., "entry_tf":...}.
+    التبديل نظيف: إلغاء الورقي المعلق (مستثنى من التبريد) + إعادة بناء الكاشف + حفظ PG + إيقاظ الكشف."""
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
+    body = request.get_json(silent=True) or {}
+    preset = _norm_tf(body.get("preset"))
+    sig = _norm_tf(body.get("signal_tf")) or preset
+    ent = _norm_tf(body.get("entry_tf")) or preset
+    if sig is None or ent is None:
+        return jsonify({"ok": False,
+                        "error": f"فريم غير مسموح — القيم المتاحة: {' / '.join(ALLOWED_TFS)}"}), 400
+    ok, msg = apply_timeframes(sig, ent, source="لوحة")
+    if not ok:
+        # «مُطبق أصلًا» ليست فشلًا — 200 مع الحالة الحالية؛ رفض الحقيقي المعلق 409 وغيره 400
+        if "مُطبق أصلًا" in msg:
+            return jsonify({"ok": True, "message": msg,
+                            "signal_timeframe": SIGNAL_TIMEFRAME, "entry_timeframe": ENTRY_TIMEFRAME,
+                            "allowed_tfs": list(ALLOWED_TFS)})
+        return jsonify({"ok": False, "error": msg}), (409 if "حقيقي" in msg else 400)
+    return jsonify({"ok": True, "message": msg,
+                    "signal_timeframe": SIGNAL_TIMEFRAME, "entry_timeframe": ENTRY_TIMEFRAME,
+                    "allowed_tfs": list(ALLOWED_TFS)})
 
 
 @app.route("/api/binance/status")
@@ -4732,6 +4798,96 @@ def restore_real_mode_flag() -> None:
     logger.info("حالة التداول الحقيقي المستعادة: %s", "مفعّلة ⚠ (أوامر فعلية)" if is_real_mode else "متوقفة (ورقي)")
 
 
+def apply_timeframes(signal_tf: str, entry_tf: str, source: str = "لوحة") -> Tuple[bool, str]:
+    """[FE1.8.9] تبديل فريمي الكشف/التنفيذ حيًا بين 5m/15m/1h/4h — التبديل إعادة تهيئة
+    نظيفة لا مجرد تغيير رقم حي (وإلا مزجت بنى فريم قديم بأسعار فريم جديد):
+    1) تطبيع القيم ورفض غير المسموح 2) «مطبق أصلًا» بلا إبطال إذا لم يتغير شيء
+    3) رفض التبديل إن وُجد أمر معلق حقيقي على المنصة (لا إلغاء صامت لأوامر مالية)
+    4) إلغاء الأوامر الورقية المعلقة بسبب «تبديل الفريم» — مستثناة من تبريد الرموز
+    5) تحديث الفريمين + إعادة بناء الكاشف (يحمل عتبة الانعكاس عند الإنشاء)
+    6) مسح أسباب الرفض القديمة (محسوبة على فريم لم يعد معتمدًا)
+    7) حفظ في قاعدة الحالة ليصمد التبديل عبر إعادة النشر (نمط trading_enabled)
+    8) إيقاظ فحص الكون والكشف فورًا — أول دورة على الفريم الجديد خلال ثوانٍ.
+    الاشتراكات الحية للويب سوكت تنظمها تلقائيًا أول مزامنة بعد إلغاء المعلقات."""
+    global SIGNAL_TIMEFRAME, ENTRY_TIMEFRAME
+    sig = _norm_tf(signal_tf)
+    ent = _norm_tf(entry_tf)
+    if sig is None or ent is None:
+        return False, f"فريم غير مسموح — القيم المتاحة: {' / '.join(ALLOWED_TFS)}"
+    if sig == SIGNAL_TIMEFRAME and ent == ENTRY_TIMEFRAME:
+        return False, f"الفريم {sig} مُطبق أصلًا — لا تغيير"
+    try:
+        pends = db.query("SELECT id, symbol, is_real FROM signals WHERE status='pending'")
+    except Exception as exc:
+        return False, f"تعذر فحص الأوامر المعلقة قبل التبديل: {exc}"
+    real_pend = [p for p in (pends or []) if p.get("is_real")]
+    if real_pend:
+        syms = ", ".join(sorted({str(p.get("symbol")) for p in real_pend}))
+        return False, f"يوجد أمر معلق حقيقي ({syms}) — ألغِه من اللوحة أولًا ثم بدّل الفريم"
+    cancelled = 0
+    for p in (pends or []):
+        try:
+            db.execute(
+                "UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s WHERE id=%s",
+                (f"تبديل الفريم إلى {sig}/{ent} ({source})", utc_now_iso(), p.get("id")),
+            )
+            cancelled += 1
+        except Exception:
+            logger.exception("تعذر إلغاء المعلق %s أثناء تبديل الفريم", p.get("id"))
+    old = f"{SIGNAL_TIMEFRAME}/{ENTRY_TIMEFRAME}"
+    SIGNAL_TIMEFRAME, ENTRY_TIMEFRAME = sig, ent
+    _rebuild_detector()
+    with _reject_reason_lock:
+        _reject_reason.clear()
+    try:
+        db_set_state("signal_timeframe", sig)
+        db_set_state("entry_timeframe", ent)
+    except Exception:
+        logger.exception("حفظ الفريمين في قاعدة الحالة فشل — ستعمل قيم env عند الإقلاع القادم")
+    try:
+        _scan_kick.set()
+        _detect_kick.set()
+    except Exception:
+        pass
+    extra = f" — أُلغي {cancelled} أمر معلق ورقي" if cancelled else ""
+    msg = f"🕒 فريم التحليل: {old} ← {sig}/{ent} ({source}){extra}"
+    log_and_notify("info", msg, "TIMEFRAME_CHANGE")
+    return True, msg
+
+
+def restore_timeframe_flags() -> None:
+    """[FE1.8.9] استعادة الفريمين المحفوظين من قاعدة الحالة عند الإقلاع — التبديل الحي
+    يصمد عبر إعادة النشر (نفس مبدأ trading_enabled). غياب المفتاح = لا تبديل سابق
+    فتبقى قيم env؛ قيمة غير مسموحة (env قديم/يدوي) تُهمل بأمان مع تحذير."""
+    global SIGNAL_TIMEFRAME, ENTRY_TIMEFRAME
+    try:
+        sig = _norm_tf(db_get_state("signal_timeframe", ""))
+        ent = _norm_tf(db_get_state("entry_timeframe", ""))
+    except Exception as exc:
+        logger.warning("restore_timeframe_flags: قراءة قاعدة الحالة فشلت — تبقى قيم env: %s", exc)
+        return
+    raw_sig = raw_ent = None
+    try:
+        raw_sig = db_get_state("signal_timeframe", "")
+        raw_ent = db_get_state("entry_timeframe", "")
+    except Exception:
+        pass
+    for name, raw in (("signal_timeframe", raw_sig), ("entry_timeframe", raw_ent)):
+        if raw and _norm_tf(raw) is None:
+            logger.warning("قيمة فريم محفوظة غير مسموحة (%s=%s) — أُهملت والمسموح: %s",
+                           name, raw, " / ".join(ALLOWED_TFS))
+    changed = []
+    if sig and sig != SIGNAL_TIMEFRAME:
+        SIGNAL_TIMEFRAME = sig
+        changed.append(f"الكشف={sig}")
+    if ent and ent != ENTRY_TIMEFRAME:
+        ENTRY_TIMEFRAME = ent
+        changed.append(f"التنفيذ={ent}")
+    if changed:
+        _rebuild_detector()
+        logger.info("فريمات محفوظة أُعيدت من قاعدة الحالة: %s", " | ".join(changed))
+
+
 def load_markets_async() -> None:
     """[FE1.3.1] لم يعد يُحمّل أسواق المزودين مسبقًا — التحميل كسول عند أول استخدام:
     ccxt يستدعي load_markets داخليًا في أول fetch_ohlcv لكل مزود، وprune_markets
@@ -4754,6 +4910,7 @@ def initialize_bot_services() -> None:
     init_db()
     restore_trading_flag()
     restore_real_mode_flag()
+    restore_timeframe_flags()  # [FE1.8.9] قبل restore_scan_results — الأعمار والبنيات على الفريم المعتمد
     restore_scan_results()  # [FE1.5.0] قبل إقلاع WS — الأسواق المصنوعة تُبنى من القائمة المحدثة
     load_markets_async()
     start_ws_price_feed()  # [FE1.2.0] الأسعار الحية من ويب سوكت — REST احتياطًا فقط

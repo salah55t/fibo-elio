@@ -173,6 +173,14 @@ PANEL_HTML = r"""<!DOCTYPE html>
     border:1px solid var(--cyan); color:var(--cyan); padding:10px 20px; border-radius:12px; display:none;
     z-index:99; max-width:90vw; font-size:.8rem; text-shadow:0 0 6px rgba(0,229,255,.6);
     box-shadow:0 0 18px rgba(0,229,255,.35); }
+  .tf-ctl { display:flex; align-items:center; gap:4px; margin-inline-start:10px; }
+  .tf-ctl .rlbl { font-size:.7rem; color:var(--mut); }
+  button.tf-btn { background:rgba(0,229,255,.04); border:1px solid var(--line2); color:var(--cyan);
+    border-radius:8px; padding:6px 9px; cursor:pointer; font-size:.72rem;
+    font-family:'Share Tech Mono',monospace; transition:.2s; }
+  button.tf-btn:hover { border-color:var(--cyan); box-shadow:0 0 8px rgba(0,229,255,.3); }
+  button.tf-btn.on { background:rgba(0,229,255,.14); border-color:var(--cyan); font-weight:bold;
+    box-shadow:0 0 12px rgba(0,229,255,.35); }
   @media (max-width:640px){ body{padding:10px} .grid{grid-template-columns:repeat(auto-fit,minmax(135px,1fr))}
     h1{font-size:1.1rem} button.act{padding:7px 10px; font-size:.74rem} }
 </style>
@@ -195,6 +203,13 @@ PANEL_HTML = r"""<!DOCTYPE html>
       <label class="switch"><input type="checkbox" id="real-toggle" onchange="toggleReal(this)"><div class="slider"></div></label>
     </div>
     <button class="act" onclick="toggleTrading()">تشغيل/إيقاف التوليد</button>
+    <div class="tf-ctl" title="فريم الكشف والتنفيذ — التبديل يلغي الأوامر الورقية المعلقة ويبدأ فحصًا جديدًا على الفريم المختار (الاختيار محفوظ ويصمد عبر إعادة النشر)">
+      <span class="rlbl">الفريم:</span>
+      <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')">5m</button>
+      <button class="tf-btn" data-tf="15m" onclick="setTimeframe('15m')">15m</button>
+      <button class="tf-btn" data-tf="1h" onclick="setTimeframe('1h')">1h</button>
+      <button class="tf-btn" data-tf="4h" onclick="setTimeframe('4h')">4h</button>
+    </div>
     <button class="act danger" onclick="resetStats()">تصفير الإحصائيات</button>
   </header>
 
@@ -613,6 +628,7 @@ async function refresh(){
     // [FE1.5.0] كل عارضة في حماية مستقلة — خطأ في جدول لا يجمّد البطاقات
     const safe = fn => { try { fn(); } catch(e){ console.error(e); } };
     safe(()=>renderCards(d)); safe(()=>renderScanner(d));
+    safe(()=>paintTf(d.signal_timeframe || '15m'));  // [FE1.8.9] تلوين الفريم النشط
     safe(()=>renderOpen(d.open_signals)); safe(()=>renderClosed(d.closed_signals));
     safe(()=>renderDetections(d.detections)); safe(()=>renderNotifs(d.notifications));
     safe(()=>renderPerformance(d)); safe(()=>renderGates(d.stats));
@@ -629,6 +645,23 @@ async function toggleTrading(){
     const d = await api('/api/trading/toggle', {method:'POST'});
     toast(d.message); refresh();
   } catch(e){ toast('فشل التبديل: '+e.message); }
+}
+
+// [FE1.8.9] تبديل فريم الكشف/التنفيذ حيًا (5m/15m/1h/4h) — يحفظ في السيرفر ويصمد عبر النشر
+function paintTf(cur){
+  document.querySelectorAll('.tf-btn').forEach(b=>b.classList.toggle('on', b.dataset.tf===cur));
+}
+async function setTimeframe(tf){
+  if (!confirm('تبديل فريم التحليل إلى '+tf+'؟\n\n• الأوامر الورقية المعلقة تُلغى فورًا (بلا تبريد على الرموز)\n• تُبدأ دورة كشف جديدة على الفريم المختار خلال ثوانٍ\n• الاختيار محفوظ ويصمد عبر إعادة النشر')) return;
+  document.querySelectorAll('.tf-btn').forEach(b=>b.disabled=true);
+  try {
+    const d = await api('/api/config/timeframe', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({preset: tf})});
+    toast(d.message || ('الفريم: '+tf));
+    if (d.signal_timeframe) paintTf(d.signal_timeframe);
+    refresh();
+  } catch(e){ toast('فشل تبديل الفريم: '+e.message); }
+  finally { document.querySelectorAll('.tf-btn').forEach(b=>b.disabled=false); }
 }
 
 // [FE1.4.0] زر التداول الحقيقي — مثل V9: تفعيل يتطلب مفاتيح + فحص اتصال ناجح من السيرفر
