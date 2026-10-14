@@ -191,7 +191,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.8.1"  # FE1.8.1: تصفير شامل (عدادات قاطع المخاطر تُمسح أيضًا — كانت تبقى بعد التصفير) + لوحة أداء مقتبسة من V9.34.0 (اقتباسات OctoBot): صافي/نسبة/عامل ربح + منحنى تراكمي SVG + حكم لكل التقاط (لماذا لم يصبح أمرًا معلقًا)
+BOT_VERSION = "FE1.8.2"  # FE1.8.2: إصلاح حيّر للتصفير — LIKE 'stats_archive_%' مع params=() فارغة كانت تُفجّر psycopg2 بـIndexError (interpolation جانب العميل لـ% الحرفية) فيفشل التصفير دائمًا على PG بينما تنجح اختبارات SQLite؛ طبقة Database لم تعد تمرّر params فارغة + أرشفة بلا ابتلاع استثناءات + احتياط مدمج + نص الخطأ في الرد. (FE1.8.1: تصفير شامل + لوحة أداء V9.34.0/OctoBot + حكم الالتقاط)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -516,7 +516,14 @@ class Database:
         with self.lock:
             cur = self.conn.cursor()
             try:
-                cur.execute(self._ph(sql), params)
+                # [FE1.8.2] علة Postgres: params=() فارغة تجعل psycopg2 يُجري interpolation
+                # جانب العميل فتُفسّر أي % حرفي (مثل LIKE 'stats_archive_%') كنائب تنسيق
+                # → IndexError. SQLite لا يُجري interpolation فنجحت الاختبارات محليًا
+                # بينما انهار التصفير الحي دائمًا. الحل: بلا params لا نمرّر شيئًا للسائق.
+                if params:
+                    cur.execute(self._ph(sql), params)
+                else:
+                    cur.execute(self._ph(sql))
                 rows = cur.fetchall()
                 if USE_POSTGRES:
                     cols = [d[0] for d in cur.description] if cur.description else []
@@ -531,7 +538,11 @@ class Database:
         with self.lock:
             cur = self.conn.cursor()
             try:
-                cur.execute(self._ph(sql), params)
+                # [FE1.8.2] نفس علة query — راجع التعليق أعلاه
+                if params:
+                    cur.execute(self._ph(sql), params)
+                else:
+                    cur.execute(self._ph(sql))
                 if not USE_POSTGRES:
                     self.conn.commit()
             finally:
@@ -3900,14 +3911,33 @@ def api_stats_reset():
     # (درس V9: ضغط المستخدم التصفير فعليًا ففقد كل التاريخ)
     all_rows = db.query("SELECT * FROM signals")
     arch_key = "stats_archive_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    # [FE1.8.2] الأرشفة كانت عبر db_set_state الذي يبتلع الاستثناءات — ففشل الأرشفة
+    # الحقيقي (علة % على PG) كان يظهر متأخرًا من استعلام لاحق بلا نص الخطأ.
+    # الآن: INSERT مباشر (الفشل يظهر فورًا) + احتياط مدمج + نص الاستثناء في الرد.
+    _archive_sql = (
+        "INSERT INTO bot_state (key, value) VALUES (%s, %s) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+    )
+    _essential = ("symbol", "direction", "status", "entry_price", "fill_price", "stop_loss",
+                  "take_profit", "quantity", "initial_quantity", "close_price", "close_reason",
+                  "pnl_usdt", "pnl_pct", "realized_pnl_usdt", "created_at", "filled_at",
+                  "closed_at", "is_real", "order_id", "exit_order_id")
     try:
-        db_set_state(arch_key, json.dumps(all_rows, default=str))
+        used_key = arch_key
+        try:
+            db.execute(_archive_sql, (arch_key, json.dumps(all_rows, default=str)))
+        except Exception as exc_full:
+            logger.warning("أرشفة التصفير الكاملة فشلت — تُجرّب الأرشفة المدمجة: %s", exc_full)
+            compact = [{k: r.get(k) for k in _essential} for r in all_rows]
+            used_key = arch_key + "_compact"
+            db.execute(_archive_sql, (used_key, json.dumps(compact, default=str)))
         old_arch = db.query("SELECT key FROM bot_state WHERE key LIKE 'stats_archive_%' ORDER BY key DESC")
         for r in (old_arch or [])[3:]:  # احتفظ بآخر 3 أرشيفات فقط
             db.execute("DELETE FROM bot_state WHERE key = %s", (r["key"],))
     except Exception as exc:
         logger.warning("فشل أرشفة التصفير — أُلغي التصفير كليًا: %s", exc)
-        return jsonify({"ok": False, "error": "فشل حفظ الأرشفة — لم يُصفّر شيء"}), 500
+        return jsonify({"ok": False,
+                        "error": f"فشل حفظ الأرشفة — لم يُصفّر شيء ({exc})"}), 500
     db.execute("DELETE FROM signals")
     db.execute("DELETE FROM notifications")
     set_paper_balance(PAPER_BALANCE_START)
@@ -3922,7 +3952,7 @@ def api_stats_reset():
     with scan_stats_lock:
         for k in scan_stats:
             scan_stats[k] = 0
-    msg = (f"🧹 صُفّرت الإحصائيات كاملة ({len(all_rows)} صفقة أُرشفت في {arch_key}) — "
+    msg = (f"🧹 صُفّرت الإحصائيات كاملة ({len(all_rows)} صفقة أُرشفت في {used_key}) — "
            f"عاد الرصيد الورقي للبداية وانطفأت عدادات المخاطر والتبريد")
     log_and_notify("info", msg, "STATS_RESET")
     return jsonify({"ok": True, "message": msg})
