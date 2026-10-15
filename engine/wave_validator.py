@@ -490,10 +490,19 @@ class WaveValidator:
         )
 
         if not passed:
+            # [FE1.9.4] سمِّ الشرط القاتل صراحة — القاعدة مركّبة (ليست الأقصر + كسر نهاية W1)
+            # والقارئ في سجلات Render لا يستطيع استنتاج أيّهما قتل العدّة من العلمين وحدهما
+            # (الحالة الملتبسة الحقيقية: W3_not_shortest=True مع FAIL لأن كسر W1 هو القاتل).
+            _why = []
+            if not w3_not_shortest:
+                _why.append("W3 أقصر الأمواج الدافعة")
+            if not w3_breaks_w1:
+                _why.append("W3 لم تكسر نهاية W1")
             log.warning(
                 "[Rule-2 FAIL] W3 length constraint: W1=%.2f%% W3=%.2f%% W5=%.2f%%. "
-                "W3_not_shortest=%s  W3_breaks_W1=%s",
+                "W3_not_shortest=%s  W3_breaks_W1=%s  ← السبب: %s",
                 w1_pct, w3_pct, w5_pct, w3_not_shortest, w3_breaks_w1,
+                " و".join(_why) if _why else "غير محدد",
             )
         else:
             log.debug("[Rule-2 PASS] W1=%.2f%% W3=%.2f%% W5=%.2f%%", w1_pct, w3_pct, w5_pct)
@@ -754,7 +763,8 @@ class WaveValidator:
             result = wv.is_valid_impulse()
             print(result.summary())
         """
-        log.info(
+        # [FE1.9.4] نزلت DEBUG — تشويش بلا معلومة (سطر الحكم النهائي يبقى INFO ويسمّي القواعد الفاشلة)
+        log.debug(
             "Starting impulse validation for pivots: %s",
             self.pivots.as_dict(),
         )
@@ -791,11 +801,14 @@ class WaveValidator:
             pivots=self.pivots,
         )
 
+        # [FE1.9.4] سطر الحكم يسمّي القواعد الفاشلة — قارئ السجلات يرى السبب دون تتبّع الأسطر الفردية
+        _failed = [nm.split(":")[0] for nm, r in rules.items() if not r.passed]
         log.info(
-            "Impulse validation complete: %s  (%d/%d rules passed)",
+            "Impulse validation complete: %s  (%d/%d rules passed%s)",
             "VALID ✅" if is_valid else "INVALID ❌",
             sum(r.passed for r in rules.values()),
             len(rules),
+            (" — فشل: " + ", ".join(_failed)) if _failed else "",
         )
         return result
 
