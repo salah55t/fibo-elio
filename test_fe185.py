@@ -230,8 +230,8 @@ class TestDeploymentAndBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.9.2"
-        assert panel.BOT_VERSION == "FE1.9.2"
+        assert vnz.BOT_VERSION == "FE1.9.3"
+        assert panel.BOT_VERSION == "FE1.9.3"
 
     def test_panel_shows_real_error(self):
         # بطاقة اللوحة تعرض نص الخطأ الحقيقي بجوار «فشل الاتصال»

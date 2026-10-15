@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.2"
+BOT_VERSION = "FE1.9.3"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -517,6 +517,7 @@ function renderGates(st){
     ['rejected_deep_retrace','تصحيح عميق'],['rejected_cooldown','تبريد رمز'],['rejected_symbol_busy','رمز مشغول'],
     ['rejected_cluster','عنقود'],['rejected_active_limit','خانات ممتلئة'],['rejected_htf_bias','HTF هابط'],
     ['rejected_far_entry','مطاردة'],['rejected_target_invalid','هدف محقق'],
+    ['rejected_no_target','لا هدف R:R'],
     ['rejected_rr_net','R:R صافٍ منخفض'],['rejected_daily_loss','حد يومي'],['rejected_risk_pause','تبريد مخاطر']];
   const parts = gates.filter(g=>st[g[0]]).map(g=>g[1]+' <b>'+st[g[0]]+'</b>');
   el.innerHTML = '🚦 بوابات هذه الفترة: ' + (parts.length? parts.join(' · ') : 'لا رفضات بعد') +
