@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.5"
+BOT_VERSION = "FE1.9.6"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -140,6 +140,8 @@ PANEL_HTML = r"""<!DOCTYPE html>
   .p-win { background:rgba(0,255,156,.12); color:var(--neon); border-color:var(--neon); }
   .p-loss { background:rgba(255,51,85,.12); color:var(--red); border-color:var(--red); }
   .p-real { background:rgba(255,51,85,.14); color:var(--red); border-color:rgba(255,51,85,.6); }
+  .p-exp { background:rgba(160,160,170,.12); color:var(--mut); border-color:var(--mut); text-shadow:none; }
+  .p-cxl { background:rgba(255,51,85,.1); color:var(--red); border-color:rgba(255,51,85,.5); }
   .p-paper { background:rgba(0,229,255,.08); color:var(--cyan); border-color:rgba(0,229,255,.4); }
   .zone-ok { color:var(--neon); font-weight:700; } .zone-no { color:var(--mut); }
   .mut { color:var(--mut); } .small { font-size:.7rem; }
@@ -485,17 +487,25 @@ function renderOpen(list){
 
 function renderClosed(list){
   if(!list.length){ $('closed-box').innerHTML = '<div class="empty">لا صفقات مغلقة بعد</div>'; return; }
-  let rows = list.map(s => `<tr>
+  // [FE1.9.6] لا اختفاء صامت: المنتهية/الملغاة تظهر بشاراتها — دورة حياة المعلق كاملة مرئية
+  const stPill = s => s.status==='expired' ? '<span class="pill p-exp">منتهية</span>'
+                  : s.status==='cancelled' ? '<span class="pill p-cxl">ملغاة</span>'
+                  : '<span class="pill p-open">مغلقة</span>';
+  let rows = list.map(s => {
+    const inP = (s.fill_price===null||s.fill_price===undefined||isNaN(s.fill_price)) ? s.entry_price : s.fill_price;
+    return `<tr>
     <td><b>${esc(s.symbol)}</b></td><td>${modePill(s.is_real)}</td>
-    <td>${fmt(s.fill_price)} → ${fmt(s.close_price)}</td>
+    <td>${stPill(s)}</td>
+    <td>${fmt(inP)} → ${fmt(s.close_price)}</td>
     <td class="${cls(s.pnl_usdt)}"><b>${usd(s.pnl_usdt)}</b></td>
     <td class="${cls(s.pnl_pct)}">${pct(s.pnl_pct)}</td>
     <td class="mut small">${esc(s.close_reason||'')}</td>
     <td class="mut small">${dt(s.closed_at)}</td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
   // [FE1.5.0] داخل .tbl-wrap — كانت تفيض على الموبايل بلا تمرير
   $('closed-box').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
-    <th>الزوج</th><th>الوضع</th><th>دخول → خروج</th><th>النتيجة</th><th>%</th><th>السبب</th><th>أُغلقت</th>
+    <th>الزوج</th><th>الوضع</th><th>الحالة</th><th>دخول → خروج</th><th>النتيجة</th><th>%</th><th>السبب</th><th>التاريخ</th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
