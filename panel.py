@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.4"
+BOT_VERSION = "FE1.9.5"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
