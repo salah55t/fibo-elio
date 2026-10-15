@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.6"
+BOT_VERSION = "FE1.9.7"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -290,7 +290,12 @@ function renderFeed(ws){
   const b = $('feed-badge');
   if(!ws || !ws.enabled){ b.textContent='التغذية الحية: REST'; b.className='badge b-ws-off'; return; }
   if(!ws.loop_alive){ b.textContent='التغذية الحية: ويب سوكت متوقف — REST مؤقتًا'; b.className='badge b-ws-off'; return; }
-  b.textContent = `التغذية الحية: ويب سوكت ⚡ (${ws.live_streams||0} تيار حي)`;
+  // [FE1.9.7] شارة تيك باينانس الخام: حيّ = أقصى لحظية (سعر على كل صفقة فعلية)
+  const raw = ws.raw || {};
+  const tickTag = raw.connected
+    ? ` + تيك خام ⚡⚡ (${(raw.ticks||0).toLocaleString('en-US')} تيك، عمر ${raw.age_sec ?? '—'}ث)`
+    : (raw.enabled ? ' + تيك خام يعيد الاتصال' : '');
+  b.textContent = `التغذية الحية: ويب سوكت ⚡ (${ws.live_streams||0} تيار حي)${tickTag}`;
   b.className = 'badge b-ws';
 }
 

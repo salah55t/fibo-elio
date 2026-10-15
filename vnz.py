@@ -192,7 +192,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.9.6"  # FE1.9.6 «لا اختفاء صامت»: بلاغ حي (18:44 UTC 15 أكتوبر) — «السعر وصل الدخول في باينانس واللوحة لم تتغير» — التحقيق أثبت عكس البلاغ (اللوحة حية طابقت باينانس حرفيًا 0.00456500، والمنطقة لم تُلمس: أدنى قاع 0.0045230 فوق قمتها 0.06%) لكن كشف فجوة عرض حقيقية: الإشارة المعلقة عند انتهاء صلاحيتها (expired) أو إبطالها البنيوي (cancelled) تختفي من اللوحة بصمت لأن /api/all كان يعرض المغلق فقط (status='closed' = صفقة تداولت وغلقت بنتيجة). الإصلاح: (1) قسم «المغلق» يعرض المنتهية والملغاة أيضًا بشارات مميزة (منتهية/ملغاة) مع سعر الدخول المرجعي؛ (2) انتهاء الصلاحية والإبطال البنيوي يطلقان إشعارًا في اللوحة/تلجرام (مثل الملء) — دورة حياة المعلق مرئية كاملة: وُلد → مُلئ أو انتهى أو أُبطل. صفر تغيير سلوك تداولي: شروط الملء/الإبطال/الصلاحية كما هي حرفيًا. (FE1.9.5 «الإقلاع مرئي»: /health يكشف boot_at وuptime_sec — إعادة تشغيل العملية (مثل الحادثة 14:59:44 بعد نشر FE1.9.4 — كل started_at والعدادات تصفرت) تُرى فورًا من نبضة واحدة بدل استدلال عكسي من started_at للاشتراكات. صفر تغيير سلوك. (FE1.9.4 «حكم يسمّي قاتله»: سجلات wave_validator تُقرأ بلا ترجم — (1) سطر الحكم النهائي يعدّد القواعد الفاشلة («INVALID — فشل: Rule-1, Rule-3») بدل عدّاد مجرد؛ (2) رفض Rule-2 يسمّي الشرط القاتل صراحة (أقصر الأمواج؟ أم عدم كسر نهاية W1؟) — القاعدة مركّبة من الشرطين والحالة الملتبسة W3_not_shortest=True مع FAIL كانت تحيّر قارئ السجلات؛ (3) سطر «Starting impulse validation» نزل DEBUG — تشويش بلا معلومة. صفر تغيير سلوك: كل القرارات كما هي حرفيًا. (FE1.9.3 «تصنيف صادق»: رفض «لا هدف يحقق أرضية R:R» بدل «أسعار غير منطقية» — إثبات حي PUMP في حزام إعادة التشغيل (replay harness أول مرة: مسار الإنتاج الحرفي كشفًا وبوابات وإنشاء أمر معلق على بيانات حقيقية وُلّدت فيه 30 حدث أمر معلق عبر 5 رموز في 4 أيام) — سلّم الأهداف بلا درجة تحقق TP_MIN_RR وأساس 1.618 تحت الدخول = هندسة بلا هدف مربح كفاية، عداد rejected_no_target جديد + عرضه في اللوحة، الرفض نفسه لم يتغير (صفر تغيير سلوك). (FE1.9.2 «كشف بلا عمى»: (1) إصلاح انكسار الزيجزاج على شريحة فارغة (انعكاس مؤكد على الشريط الأخير ثم محور ختامي بعده — STRK/BAT/RNDR كانت تتخطى بصمت كل دورة: argmin على تسلسل فارغ) — المحور الختامي على الشريط الأخير ذاته؛ (2) التقادم قبل الاختيار: القديمة الأجود إليوتيًا كانت تدفن الحديثة المتواضعة (المختار وحده تقيّمه البوابات)؛ (3) عداد scan_errors يجعل الكشف الأعمى الصامت مرئيًا). (FE1.9.1 «نبض حي»: إصلاح قاتل النبض — اشتراكات ويب سوكت كانت لرموز الصفقات النشطة وحدها (db signals pending/open) فصفر صفقات = صفر أسعار حية = نبض الحركة صامت للأبد (الإثبات الحي: momentum_kicks=0 بعد 76 دورة). الإصلاح: watchlist كلها تدخل بتيار سعر فقط (شموع تبقى لرموز الصفقات النشطة — حمية 512MB) + فشل قاعدة البيانات لا يعطل نبض القائمة — ws_wanted_sets نقية قابلة للاختبار + _ws_spawn(with_ohlcv). (FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
+BOT_VERSION = "FE1.9.7"  # FE1.9.7 «تيك خام»: طلب «جلب الأسعار ويب سوكت لحظية لأقصى درجة ممكنة» — طبقة تيار باينانس الخام فوق ccxt.pro (لا تغيير فيها — تبقى احتياطًا حيًا): (1) @trade لكل قائمة الكشف — سعر على كل صفقة فعلية منفذة (أجزاء الثانية، نفس دلالة «آخر سعر» في واجهة باينانس) بدل ~1ث؛ (2) @kline_<فريم التنفيذ> لرموز الصفقات النشطة — الشمعة الجارية تتحدث داخل الشريط فيتحقق الملء من أرضية حية أدق؛ (3) استيقاظ فوري لحلقة المراقبة (60ث ← لحظي) عند لمس تيك لمستوى تنفيذ: معلق ← تيك ≤ الدخول، مفتوح ← تيك ≤ الوقف أو ≥ الهدف — نفس monitor_step حرفيًا فقط الاستدعاء لحظي، والحلقة الستينية شبكة أمان؛ (4) نبض الحركة يفحص كل 2ث بدل 5 (بلا REST — قراءة ذاكرة)؛ (5) شارة «تيك خام ⚡⚡» بعداد التيك وعمر آخر رسالة في اللوحة + كتلة raw في /api/ws/status. تيار مدمج واحد (30+ تيار < سقف 1024، صفر وزن REST)، إعادة اتصال دائمة بتراجع + رقيب يعيد البناء عند تغيّر المجموعة، RAW_TICK_WS=0 يعطل مع تساهل كامل. (FE1.9.6 «لا اختفاء صامت»: بلاغ حي (18:44 UTC 15 أكتوبر) — «السعر وصل الدخول في باينانس واللوحة لم تتغير» — التحقيق أثبت عكس البلاغ (اللوحة حية طابقت باينانس حرفيًا 0.00456500، والمنطقة لم تُلمس: أدنى قاع 0.0045230 فوق قمتها 0.06%) لكن كشف فجوة عرض حقيقية: الإشارة المعلقة عند انتهاء صلاحيتها (expired) أو إبطالها البنيوي (cancelled) تختفي من اللوحة بصمت لأن /api/all كان يعرض المغلق فقط (status='closed' = صفقة تداولت وغلقت بنتيجة). الإصلاح: (1) قسم «المغلق» يعرض المنتهية والملغاة أيضًا بشارات مميزة (منتهية/ملغاة) مع سعر الدخول المرجعي؛ (2) انتهاء الصلاحية والإبطال البنيوي يطلقان إشعارًا في اللوحة/تلجرام (مثل الملء) — دورة حياة المعلق مرئية كاملة: وُلد → مُلئ أو انتهى أو أُبطل. صفر تغيير سلوك تداولي: شروط الملء/الإبطال/الصلاحية كما هي حرفيًا. (FE1.9.5 «الإقلاع مرئي»: /health يكشف boot_at وuptime_sec — إعادة تشغيل العملية (مثل الحادثة 14:59:44 بعد نشر FE1.9.4 — كل started_at والعدادات تصفرت) تُرى فورًا من نبضة واحدة بدل استدلال عكسي من started_at للاشتراكات. صفر تغيير سلوك. (FE1.9.4 «حكم يسمّي قاتله»: سجلات wave_validator تُقرأ بلا ترجم — (1) سطر الحكم النهائي يعدّد القواعد الفاشلة («INVALID — فشل: Rule-1, Rule-3») بدل عدّاد مجرد؛ (2) رفض Rule-2 يسمّي الشرط القاتل صراحة (أقصر الأمواج؟ أم عدم كسر نهاية W1؟) — القاعدة مركّبة من الشرطين والحالة الملتبسة W3_not_shortest=True مع FAIL كانت تحيّر قارئ السجلات؛ (3) سطر «Starting impulse validation» نزل DEBUG — تشويش بلا معلومة. صفر تغيير سلوك: كل القرارات كما هي حرفيًا. (FE1.9.3 «تصنيف صادق»: رفض «لا هدف يحقق أرضية R:R» بدل «أسعار غير منطقية» — إثبات حي PUMP في حزام إعادة التشغيل (replay harness أول مرة: مسار الإنتاج الحرفي كشفًا وبوابات وإنشاء أمر معلق على بيانات حقيقية وُلّدت فيه 30 حدث أمر معلق عبر 5 رموز في 4 أيام) — سلّم الأهداف بلا درجة تحقق TP_MIN_RR وأساس 1.618 تحت الدخول = هندسة بلا هدف مربح كفاية، عداد rejected_no_target جديد + عرضه في اللوحة، الرفض نفسه لم يتغير (صفر تغيير سلوك). (FE1.9.2 «كشف بلا عمى»: (1) إصلاح انكسار الزيجزاج على شريحة فارغة (انعكاس مؤكد على الشريط الأخير ثم محور ختامي بعده — STRK/BAT/RNDR كانت تتخطى بصمت كل دورة: argmin على تسلسل فارغ) — المحور الختامي على الشريط الأخير ذاته؛ (2) التقادم قبل الاختيار: القديمة الأجود إليوتيًا كانت تدفن الحديثة المتواضعة (المختار وحده تقيّمه البوابات)؛ (3) عداد scan_errors يجعل الكشف الأعمى الصامت مرئيًا). (FE1.9.1 «نبض حي»: إصلاح قاتل النبض — اشتراكات ويب سوكت كانت لرموز الصفقات النشطة وحدها (db signals pending/open) فصفر صفقات = صفر أسعار حية = نبض الحركة صامت للأبد (الإثبات الحي: momentum_kicks=0 بعد 76 دورة). الإصلاح: watchlist كلها تدخل بتيار سعر فقط (شموع تبقى لرموز الصفقات النشطة — حمية 512MB) + فشل قاعدة البيانات لا يعطل نبض القائمة — ws_wanted_sets نقية قابلة للاختبار + _ws_spawn(with_ohlcv). (FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -283,7 +283,7 @@ SYMBOL_COOLDOWN_SEC = float(os.getenv("SYMBOL_COOLDOWN_SEC", "5400"))          #
 # [FE1.9.0] قاتل تأخر الكشف: نبض الحركة يوقظ الكشف عند تحرك أي رمز بعتبة الزيجزاج
 # منذ آخر تقييم (تأكيد محور محتمل) — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها
 # بدل انتظار إغلاق الشمعة القادمة (حتى 15 دقيقة يتأكل فيها التصحيح نافذة الدخول)
-MOMENTUM_LOOP_SEC = float(os.getenv("MOMENTUM_LOOP_SEC", "5"))                 # دورة فحص أسعار الحارس (بلا REST — ويب سوكت فقط)
+MOMENTUM_LOOP_SEC = float(os.getenv("MOMENTUM_LOOP_SEC", "2"))                 # دورة فحص أسعار الحارس (بلا REST — ويب سوكت/تيك خام فقط) [FE1.9.7] 5←2ث مع تيار التيك
 KICK_MIN_GAP_SEC = float(os.getenv("KICK_MIN_GAP_SEC", "90"))                  # فجوة أدنى بين إيقاظات النبض — لا إغراق بالدورات
 # [FE1.9.0] بوابة عمق التصحيح: التراجع الذي يبتلع ≥78.6% من الموجة يقترب من P0 —
 # أمر معلق عنده يموت بأول شمعة غالبًا (زومبي يقطس الخانة). رفض مبكر مصنّف (0 يعطل)
@@ -2460,6 +2460,251 @@ def ws_wanted_sets(rows: Any, watchlist_syms: Any, universe_enabled: bool) -> tu
     return wanted, full
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# [FE1.9.7] تيار تيك باينانس الخام — أقصى لحظية ممكنة
+# ──────────────────────────────────────────────────────────────────────────────
+# الطلب: «جلب الأسعار ويب سوكت لحظية لأقصى درجة ممكنة».
+# الطبقة الحالية (ccxt.pro watch_ticker) تحدث كل ~1ث لكل رمز. طبقة التيك الخام
+# تُلحق فوقها (لا تغيير فيها إطلاقًا — تبقى احتياطًا حيًا):
+#   • @trade لكل رموز القائمة: سعر على كل صفقة فعلية منفذة (أجزاء من الثانية —
+#     نفس دلالة «آخر سعر» في واجهة باينانس التي يقارن بها المستخدم)
+#   • @kline_<فريم التنفيذ> لرموز الصفقات النشطة: الشمعة الجارية تتحدث داخل
+#     الشريط فيتحقق الملء/الوقف/الهدف من أرضية الشمعة الحية الأدق
+#   • استيقاظ فوري لحلقة المراقبة (60ث ← لحظي) عند لمس تيك لمستوى تنفيذ فعلي:
+#     معلق ← تيك ≤ الدخول · مفتوح ← تيك ≤ الوقف أو ≥ الهدف (نفس منطق monitor_step
+#     حرفيًا — فقط الاستدعاء أسرع؛ الحلقة الستينية تبقى شبكة أمان)
+# تيار واحد مدمج (stream?streams=a/b/c) — 30+ رمز أقل بكثير من سقف 1024 تيار
+# باينانس، ولا يستهلك وزن REST إطلاقًا. إعادة اتصال دائمة + إعادة بناء المجموعة
+# عند تغيّرها + websockets غائبة أو معطلة env ← السلوك الحالي كما هو (تساهل).
+# ══════════════════════════════════════════════════════════════════════════════
+
+RAW_TICK_ENABLED = os.getenv("RAW_TICK_WS", "1").strip().lower() not in ("0", "false", "no", "off")
+RAW_WS_URL_BASE = "wss://stream.binance.com:9443/stream"
+_raw_state: Dict[str, Any] = {
+    "enabled": RAW_TICK_ENABLED, "connected": False,
+    "n_streams": 0, "ticks": 0, "klines": 0, "reconnects": 0, "monitor_kicks": 0,
+    "last_msg_at": None, "last_msg_ts": 0.0, "last_error": "",
+}
+_raw_state_lock = threading.Lock()
+_raw_sets_sig = ""          # توقيع المجموعات المطلوبة — يحدّثه ws_sync_subscriptions
+_raw_sets_sig_seen = ""     # توقيع الاتصال القائم — اختلافه يوقظ إعادة بناء
+_raw_mid_to_symbol: Dict[str, str] = {}   # pumpusdt → PUMP/USDT (خيط WS حصرًا)
+_raw_trigger_levels: Dict[str, List[Dict[str, Any]]] = {}  # رمز → مستويات التنفيذ
+_monitor_kick_event = threading.Event()   # استيقاظ فوري لحلقة المراقبة
+
+
+def binance_raw_mid_map(symbols: Any) -> Dict[str, str]:
+    """خريطة معرف تيار باينانس ← رمز موحد (نقية — قابلة للاختبار)."""
+    m: Dict[str, str] = {}
+    for s in symbols or []:
+        s = str(s)
+        if "/" not in s:
+            continue
+        b, q = s.split("/", 1)
+        m[(b + q).lower()] = s
+    return m
+
+
+def binance_raw_stream_names(wanted: Any, full: Any, timeframe: str) -> List[str]:
+    """أسماء تيارات التيك الخام (نقية): @trade لكل المطلوب + @kline_<tf> للنشط."""
+    names: List[str] = []
+    for s in sorted({str(x) for x in (wanted or []) if "/" in str(x)}):
+        b, q = s.split("/", 1)
+        names.append(f"{(b + q).lower()}@trade")
+    for s in sorted({str(x) for x in (full or []) if "/" in str(x)}):
+        b, q = s.split("/", 1)
+        names.append(f"{(b + q).lower()}@kline_{timeframe}")
+    return names
+
+
+def binance_raw_url(names: List[str]) -> str:
+    """رابط التيار المدمج (نقية)."""
+    return f"{RAW_WS_URL_BASE}?streams={'/'.join(names)}"
+
+
+def raw_should_kick_monitor(price: float, levels: Dict[str, Any]) -> bool:
+    """شرط الاستيقاظ الفوري النقي: تيك لمس مستوى تنفيذ فعلي (قابلة للاختبار).
+    معلق: تيك ≤ الدخول (LIMIT BUY يُنفذ عند تداول بهذا السعر أو أدنى).
+    مفتوح: تيك ≤ الوقف (حماية لحظية) أو ≥ الهدف (جني لحظي)."""
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return False
+    st = (levels or {}).get("status")
+    try:
+        if st == "pending":
+            e = float(levels.get("entry") or 0)
+            return e > 0 and p <= e
+        if st == "open":
+            sl = float(levels.get("sl") or 0)
+            tp = float(levels.get("tp") or 0)
+            return (sl > 0 and p <= sl) or (tp > 0 and p >= tp)
+    except (TypeError, ValueError):
+        return False
+    return False
+
+
+def refresh_raw_trigger_levels() -> None:
+    """إعادة بناء مستويات الاستيقاظ من قاعدة البيانات — بعد كل دورة مراقبة
+    وعند ولادة أمر معلق جديد. فشل الاستعلام ← الإبقاء على القديمة (تساهل)."""
+    try:
+        rows = db.query(
+            "SELECT symbol, status, entry_price, stop_loss, take_profit"
+            " FROM signals WHERE status IN ('pending','open')")
+    except Exception:
+        return
+    m: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows or []:
+        m.setdefault(str(r["symbol"]), []).append({
+            "status": r["status"], "entry": r["entry_price"],
+            "sl": r["stop_loss"], "tp": r["take_profit"],
+        })
+    with _raw_state_lock:
+        _raw_trigger_levels.clear()
+        _raw_trigger_levels.update(m)
+
+
+def _raw_set_state(**kw: Any) -> None:
+    with _raw_state_lock:
+        _raw_state.update(kw)
+
+
+def raw_status_snapshot() -> Dict[str, Any]:
+    """لقطة حالة التيك الخام للتشخيص (/api/ws/status)."""
+    with _raw_state_lock:
+        d = dict(_raw_state)
+    if d.get("last_msg_ts"):
+        d["age_sec"] = round(max(0.0, time.time() - float(d["last_msg_ts"])), 2)
+    else:
+        d["age_sec"] = None
+    return d
+
+
+def raw_handle_message(msg: Any) -> str:
+    """معالج رسالة التيار الخام — متزامن وسريع وقابل للاختبار مباشرة.
+    يعيد نوع الرسالة ('trade'/'kline'/'' غير معروفة/تالفة).
+    trade ← ws_apply_price (نفس مخزن ccxt.pro — الأحدث يفوز) + فحص لمس مستوى
+    تنفيذ ← استيقاظ المراقبة. kline ← دمج الشمعة الجارية بنفس دمج ws_apply_ohlcv."""
+    try:
+        obj = json.loads(msg) if isinstance(msg, (str, bytes)) else (msg or {})
+        stream = str(obj.get("stream") or "")
+        data = obj.get("data") or {}
+        if stream.endswith("@trade"):
+            sym = _raw_mid_to_symbol.get(stream[:-len("@trade")])
+            if not sym:
+                return ""
+            price = data.get("p")
+            if ws_apply_price(sym, price, "binance-tick"):
+                with _raw_state_lock:
+                    _raw_state["ticks"] += 1
+                levels = _raw_trigger_levels.get(sym)
+                if levels:
+                    try:
+                        p = float(price)
+                    except (TypeError, ValueError):
+                        p = None
+                    if p is not None:
+                        for lv in levels:
+                            if raw_should_kick_monitor(p, lv):
+                                _monitor_kick_event.set()   # آمن عبر الخيوط
+                                with _raw_state_lock:
+                                    _raw_state["monitor_kicks"] += 1
+                                break
+                return "trade"
+            return ""
+        if "@kline_" in stream:
+            sym = _raw_mid_to_symbol.get(stream.split("@", 1)[0])
+            k = data.get("k") or {}
+            if sym and k:
+                row = [int(k.get("t")), float(k.get("o")), float(k.get("h")),
+                       float(k.get("l")), float(k.get("c")), float(k.get("v"))]
+                if ws_apply_ohlcv(sym, [row], "binance-tick"):
+                    with _raw_state_lock:
+                        _raw_state["klines"] += 1
+                    return "kline"
+            return ""
+    except Exception:
+        return ""
+    return ""
+
+
+def _raw_current_sets() -> tuple:
+    """المجموعات المطلوبة الآن (نفس منطق ws_wanted_sets — استعلام خفيف)."""
+    try:
+        rows = db.query("SELECT DISTINCT symbol FROM signals WHERE status IN ('pending','open')")
+    except Exception:
+        rows = None
+    return ws_wanted_sets(rows, watchlist, SCAN_UNIVERSE_ENABLED)
+
+
+async def _raw_binance_loop() -> None:
+    """حلقة تيك باينانس الخام — داخل حلقة asyncio الخاصة بخيط ويب سوكت ذاته.
+    اتصال واحد مدمج لكل التيارات، إعادة اتصال دائمة بتراجع، وإعادة بناء فورية
+    عند تغيّر توقيع المجموعات (مزامنة كل WS_SYNC_INTERVAL). أي فشل لا يمس
+    طبقة ccxt.pro إطلاقًا — فهي تعمل بالتوازي وتغطي تلقائيًا أثناء الانقطاع."""
+    global _raw_sets_sig_seen
+    try:
+        import websockets  # noqa: F401 — التوفر يُفحص هنا لا عند الاستيراد الساكن
+    except Exception as exc:
+        logger.warning("تيك باينانس الخام معطّل — مكتبة websockets غائبة: %s", exc)
+        _raw_set_state(enabled=False, last_error=f"websockets غائبة: {exc}")
+        return
+    _raw_set_state(started=True)
+    logger.info("تيك باينانس الخام أُقلع — @trade لكل قائمة الكشف + @kline_%s للصفقات النشطة (أقصى لحظية)", ENTRY_TIMEFRAME)
+    backoff = 5.0
+    while True:
+        try:
+            wanted, full = _raw_current_sets()
+            names = binance_raw_stream_names(wanted, full, ENTRY_TIMEFRAME)
+            _raw_mid_to_symbol.clear()
+            _raw_mid_to_symbol.update(binance_raw_mid_map(wanted | full))
+            if not names:
+                await asyncio.sleep(10.0)
+                continue
+            url = binance_raw_url(names)
+            async with websockets.connect(url, ping_interval=45, ping_timeout=30,
+                                          max_size=2 ** 23, open_timeout=20) as ws:
+                _raw_sets_sig_seen = _raw_sets_sig
+                _raw_set_state(connected=True, n_streams=len(names), last_error="")
+                logger.info("تيك خام متصل — %d تيار (%d trade + %d kline_%s)",
+                            len(names), len(wanted), len(full), ENTRY_TIMEFRAME)
+                backoff = 5.0
+
+                async def _watchdog() -> None:
+                    """تغيّر المجموعة المطلوبة ← إغلاق الاتصال لإعادة بنائه فورًا."""
+                    while True:
+                        await asyncio.sleep(WS_SYNC_INTERVAL)
+                        if _raw_sets_sig != _raw_sets_sig_seen:
+                            await ws.close()
+                            return
+
+                wd = asyncio.create_task(_watchdog())
+                try:
+                    async for msg in ws:
+                        raw_handle_message(msg)
+                        _raw_set_state(last_msg_at=utc_now_iso(), last_msg_ts=time.time())
+                finally:
+                    wd.cancel()
+                    try:
+                        await wd
+                    except (asyncio.CancelledError, Exception):
+                        pass
+            # خروج نظيف (إغلاق الرقيب/المنصة) — إعادة فورية بتوقيع محدث
+            _raw_set_state(connected=False)
+            with _raw_state_lock:
+                _raw_state["reconnects"] += 1
+            await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _raw_set_state(connected=False,
+                           last_error=f"{type(exc).__name__}: {str(exc)[:160]}")
+            with _raw_state_lock:
+                _raw_state["reconnects"] += 1
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 1.5, 60.0)
+
+
 def ws_sync_subscriptions() -> Dict[str, int]:
     """مزامنة اشتراكات ويب سوكت مع الرموز المطلوبة حيًا [FE1.9.1]:
     رموز الصفقات النشطة (معلق/مفتوح) ← شموع + سعر، وقائمة الكشف watchlist
@@ -2473,6 +2718,12 @@ def ws_sync_subscriptions() -> Dict[str, int]:
     except Exception:
         rows = None   # [FE1.9.1] قاعدة بيانات معطوبة لا تعطل نبض القائمة
     wanted, full = ws_wanted_sets(rows, watchlist, SCAN_UNIVERSE_ENABLED)
+    # [FE1.9.7] نشر توقيع المجموعات لرقيب التيك الخام — تغيّرها يعيد بناء التيار فورًا
+    global _raw_sets_sig
+    _sig = ("|".join(sorted(wanted)) + "##" + "|".join(sorted(full)))
+    if _sig != _raw_sets_sig:
+        with _raw_state_lock:
+            _raw_sets_sig = _sig
     with _ws_lock:
         current = set(_ws_tasks.keys())
     added = removed = 0
@@ -2524,6 +2775,9 @@ def start_ws_price_feed() -> None:
         _ws_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_ws_loop)
         _ws_loop.call_soon_threadsafe(lambda: _ws_loop.create_task(_supervisor()))
+        # [FE1.9.7] تيار تيك باينانس الخام — طبقة لحظية فوق ccxt.pro (فشله لا يمسها)
+        if RAW_TICK_ENABLED:
+            _ws_loop.call_soon_threadsafe(lambda: _ws_loop.create_task(_raw_binance_loop()))
         try:
             _ws_loop.run_forever()
         finally:
@@ -2793,6 +3047,8 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
         signal_msg = f"🌊 إشارة إليوت+فيبو جديدة ({mode_tag}): {symbol} — دخول {fmt_price(entry)}"
     log_and_notify("info", signal_msg, "NEW_SIGNAL")
     _clear_reject_reason(symbol)  # [FE1.8.1] نجح الإنشاء — انطفأ حكم الرفض
+    # [FE1.9.7] تحديث مستويات الاستيقاظ فورًا — الأيقاظ اللحظي للملء يعرف الأمر من ولادته
+    refresh_raw_trigger_levels()
     return True
 
 
@@ -4334,18 +4590,24 @@ def scan_loop() -> None:
 
 def monitor_loop() -> None:
     """مراقبة تنفيذية على فريم الدخول (15m): ملء المعلق + وقف/هدف المفتوح.
-    [FE1.1.0] الإغلاق اليدوي من اللوحة يخدم نفس مسار close_signal_row فتظل المحاسبة موحدة."""
+    [FE1.1.0] الإغلاق اليدوي من اللوحة يخدم نفس مسار close_signal_row فتظل المحاسبة موحدة.
+    [FE1.9.7] الأيقاظ الفوري: 60ث انتظارًا أو فور لمس تيك باينانس الخام لمستوى
+    تنفيذ (معلق ← الدخول · مفتوح ← وقف/هدف) — نفس monitor_step حرفيًا، فقط
+    الاستدعاء لحظي بدل انتظار الدورة. الحلقة الستينية تبقى شبكة أمان كاملة."""
     time.sleep(20)
     while True:
         try:
             db.ensure()
+            refresh_raw_trigger_levels()  # [FE1.9.7] مستويات الاستيقاظ محدثة قبل الدورة
             monitor_step()
             _reconcile_maybe()  # [FE1.8.0] مصالقة الوقف الراكن دوريًا (حقيقي فقط)
             ws_sync_subscriptions()  # [FE1.2.0] احتياط موازٍ للمشرف — مزامنة الاشتراكات كل دقيقة
             mem_check("دورة مراقبة")  # [FE1.3.1] حمية الذاكرة كل دقيقة
         except Exception as exc:
             logger.exception("استثناء في حلقة المراقبة: %s", exc)
-        time.sleep(60)
+        # [FE1.9.7] 60ث كالسابق — أو استيقاظ لحظي عند لمس تيك لمستوى تنفيذ
+        _monitor_kick_event.wait(timeout=60)
+        _monitor_kick_event.clear()
 
 
 # [FE1.3.0] حالة البقاء الحي — تُعرض في /health و/api/all لتشخيص حي من اللوحة أو curl
@@ -4749,6 +5011,7 @@ def api_ws_status():
     if resp:
         return resp
     snap = ws_feed_snapshot()
+    snap["raw"] = raw_status_snapshot()  # [FE1.9.7] حالة تيك باينانس الخام
     snap["version"] = BOT_VERSION
     snap["entry_timeframe"] = ENTRY_TIMEFRAME
     return jsonify(snap)
