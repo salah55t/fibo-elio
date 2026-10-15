@@ -192,7 +192,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.9.0"  # FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
+BOT_VERSION = "FE1.9.1"  # FE1.9.1 «نبض حي»: إصلاح قاتل النبض — اشتراكات ويب سوكت كانت لرموز الصفقات النشطة وحدها (db signals pending/open) فصفر صفقات = صفر أسعار حية = نبض الحركة صامت للأبد (الإثبات الحي: momentum_kicks=0 بعد 76 دورة). الإصلاح: watchlist كلها تدخل بتيار سعر فقط (شموع تبقى لرموز الصفقات النشطة — حمية 512MB) + فشل قاعدة البيانات لا يعطل نبض القائمة — ws_wanted_sets نقية قابلة للاختبار + _ws_spawn(with_ohlcv). (FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -2117,7 +2117,7 @@ _ws_lock = threading.Lock()
 _ws_price: Dict[str, Dict[str, Any]] = {}    # symbol -> {price, ts(epoch), source}
 _ws_candles: Dict[str, Dict[str, Any]] = {}  # symbol -> {candles: [[ts,o,h,l,c,v]...], ts, source}
 _ws_subs: Dict[str, Dict[str, Any]] = {}     # symbol -> {provider, state, last_error, updates, last_msg_at, started_at}
-_ws_tasks: Dict[str, Dict[str, Any]] = {}    # symbol -> {"ohlcv": Task, "ticker": Task}
+_ws_tasks: Dict[str, Dict[str, Any]] = {}    # symbol -> {"ticker": Task, "ohlcv": Task؟} — [FE1.9.1] الشموع اختيارية (رموز الصفقات فقط)
 _ws_exchanges: Dict[str, Any] = {}           # اسم المزود -> نسخة ccxt.pro (اتصالات عامة بلا مفاتيح)
 _ws_loop: Any = None
 _ws_thread_started = False
@@ -2422,34 +2422,60 @@ async def _ws_cancel_task(task: Any) -> None:
         pass
 
 
-def _ws_spawn(symbol: str) -> None:
-    """إنشاء مهمتي الاشتراك (شموع + سعر) داخل حلقة asyncio — بأمان من خيط آخر."""
+def _ws_spawn(symbol: str, with_ohlcv: bool = True) -> None:
+    """إنشاء مهام الاشتراك داخل حلقة asyncio — بأمان من خيط آخر.
+    [FE1.9.1] with_ohlcv=False: تيار سعر فقط — النبض اللحظي يقرأ ticker وحده،
+    والشموع (ذاكرة أثقل) تبقى حكرًا على رموز الصفقات النشطة (حمية 512MB)."""
     def _create() -> None:
         if _ws_loop is None or not _ws_loop.is_running():
             return
-        t1 = _ws_loop.create_task(_ws_watch_stream(symbol, "ohlcv"))
-        t2 = _ws_loop.create_task(_ws_watch_stream(symbol, "ticker"))
+        tasks: Dict[str, Any] = {}
+        if with_ohlcv:
+            tasks["ohlcv"] = _ws_loop.create_task(_ws_watch_stream(symbol, "ohlcv"))
+        tasks["ticker"] = _ws_loop.create_task(_ws_watch_stream(symbol, "ticker"))
         with _ws_lock:
-            _ws_tasks[symbol] = {"ohlcv": t1, "ticker": t2}
+            _ws_tasks[symbol] = tasks
     _ws_loop.call_soon_threadsafe(_create)
 
 
+def ws_wanted_sets(rows: Any, watchlist_syms: Any, universe_enabled: bool) -> tuple:
+    """[FE1.9.1] منطق اشتراكات ويب سوكت النقي — قابل للاختبار مباشرة.
+    يعيد (wanted, full): wanted = كل من يستحق اشتراكًا، full = من يستحق شموع+سعر.
+    الجذر الحي (FE1.9.0): الاشتراك كان لرموز الصفقات النشطة وحدها — صفر صفقات =
+    صفر أسعار حية = نبض الحركة صامت للأبد (momentum_kicks=0 بعد 76 دورة).
+    الإصلاح: قائمة الكشف watchlist كلها تدخل بتيار سعر فقط، ورموز الصفقات
+    النشطة تبقى بالشموع والسعر، وفشل قاعدة البيانات لا يعطل نبض القائمة."""
+    try:
+        full = {str(r["symbol"]) for r in rows} if rows else set()
+    except Exception:
+        full = set()
+    wanted = set(full)
+    if universe_enabled:
+        try:
+            wanted |= {str(s) for s in (watchlist_syms or [])}
+        except Exception:
+            pass
+    return wanted, full
+
+
 def ws_sync_subscriptions() -> Dict[str, int]:
-    """مزامنة اشتراكات ويب سوكت مع الرموز ذات الصفقات النشطة (معلق/مفتوح) —
-    تُستدعى دوريًا من مشرف حلقة الويب سوكت ومن حلقة المراقبة احتياطًا.
-    الرمز دون نشاط يُلغى اشتراكه فورًا فلا اتصالات زائدة على المزودين."""
+    """مزامنة اشتراكات ويب سوكت مع الرموز المطلوبة حيًا [FE1.9.1]:
+    رموز الصفقات النشطة (معلق/مفتوح) ← شموع + سعر، وقائمة الكشف watchlist
+    كلها ← سعر فقط (غذاء نبض الحركة). تُستدعى دوريًا من مشرف حلقة الويب سوكت
+    ومن حلقة المراقبة احتياطًا. الرمز دون حاجة يُلغى اشتراكه فورًا فلا اتصالات
+    زائدة على المزودين."""
     if not WS_ENABLED or _ws_loop is None or not _ws_loop.is_running():
         return {"added": 0, "removed": 0}
     try:
         rows = db.query("SELECT DISTINCT symbol FROM signals WHERE status IN ('pending','open')")
     except Exception:
-        return {"added": 0, "removed": 0}
-    wanted = {r["symbol"] for r in rows} if rows else set()
+        rows = None   # [FE1.9.1] قاعدة بيانات معطوبة لا تعطل نبض القائمة
+    wanted, full = ws_wanted_sets(rows, watchlist, SCAN_UNIVERSE_ENABLED)
     with _ws_lock:
         current = set(_ws_tasks.keys())
     added = removed = 0
     for sym in wanted - current:
-        _ws_spawn(sym)
+        _ws_spawn(sym, with_ohlcv=(sym in full))
         added += 1
     for sym in current - wanted:
         with _ws_lock:
@@ -2467,7 +2493,7 @@ def ws_sync_subscriptions() -> Dict[str, int]:
         for s in dead:
             _ws_tasks.pop(s, None)
     if added or removed:
-        logger.info("ويب سوكت: اشتراكات الرموز النشطة — أضيف %d وأُلغي %d (الحالي: %s)",
+        logger.info("ويب سوكت: الاشتراكات الحية (صفقات + قائمة كشف) — أضيف %d وأُلغي %d (الحالي: %s)",
                     added, removed, ",".join(sorted(wanted)) or "لا شيء")
     return {"added": added, "removed": removed}
 
