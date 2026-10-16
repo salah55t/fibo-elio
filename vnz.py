@@ -5840,7 +5840,7 @@ def ew_js():
         return Response("// elliott-wave.js unavailable", 404, mimetype="application/javascript")
     return Response(body, 200, mimetype="application/javascript",
                     headers={"Cache-Control": "public, max-age=86400",
-                             "X-Content-License": "CC BY-NC-SA 4.0 (c) LuxAlgo — port"})
+                             "X-Content-License": "CC BY-NC-SA 4.0 (c) LuxAlgo port"})
 
 
 @app.route("/api/klines")
