@@ -11,13 +11,17 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 ضمن .tbl-wrap (كانت تفيض على الموبايل بلا تمرير)، عارضة مستقلة لكل قسم (كان خطأ
 واحد يجمّد تحديث اللوحة كاملة صامتًا)، usd/cls آمنة ضد null، حارس تكرار refresh
 + إيقاف عند إخفاء التبويب، لا اختطاف مفتاح التداول الحقيقي أثناء الطلب الجاري.
+[FE1.9.10] قسم «الشارت الحي»: شموع فريم التنفيذ عبر TradingView Lightweight
+Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CDN خارجي) يُغذى من
+/api/klines (كاش Postgres + الشمعة الجارية الحية) مع خطوط مرجعية (دخول/وقف/
+الأهداف المتدرجة/سقف الأسبوع) وعلامات الملء/الغلق، والنقر على رمز أي صفقة يعرضه.
 تعرض أيضًا: بطاقة اتصال باينانس الحية، زر التداول الحقيقي (مثل V9)، الحالة
 الورقية، الصفقات المفتوحة/المعلقة بتتبع حي وفرز حقيقية/ورقية، إغلاق/إلغاء يدوي،
 المغلقة، التقاطات الموجات، الإشعارات، شارة مصدر كل سعر (⚡WS/REST)، البقاء الحي
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.9"
+BOT_VERSION = "FE1.9.10"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -234,6 +238,19 @@ PANEL_HTML = r"""<!DOCTYPE html>
   </section>
 
   <section>
+    <h2>🕯 الشارت الحي — البنية والأهداف <span class="mut small">— شموع فريم التنفيذ من كاش Postgres الدائم (صفر طلبات للمزودين) + الشمعة الجارية حية من التيار · خطوط: منطقة الدخول · الوقف · الأهداف المتدرجة TP1→TP3 · سقف الأسبوع — اضغط رمز أي صفقة أعلاه لعرضها هنا</span></h2>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+      <select id="chart-sym" onchange="chartSelectSym()" style="background:#0a0f16;color:#e6f7ff;border:1px solid rgba(0,229,255,.3);border-radius:8px;padding:6px 10px;font-family:inherit"></select>
+      <span id="chart-legend" class="mut small">
+        <span style="color:#00e5ff">━ دخول</span> · <span style="color:#ff2d78">━ وقف</span> · <span style="color:#22e58c">━ أهداف</span> · <span style="color:#ffb020">⌈ سقف أسبوع</span>
+      </span>
+    </div>
+    <div id="lwc-chart" style="border:1px solid rgba(0,229,255,.12);border-radius:12px;background:rgba(0,229,255,.02)"></div>
+    <div id="chart-note" class="mut small" style="margin-top:6px">—</div>
+    <div class="mut small" style="margin-top:4px">الشارت: TradingView Lightweight Charts v5.2.1 (Apache-2.0) — يُقدَّم محليًا من الخادم بلا أي اعتماد خارجي</div>
+  </section>
+
+  <section>
     <h2>🧾 آخر الصفقات المغلقة</h2>
     <div id="closed-box"></div>
   </section>
@@ -269,6 +286,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
 </div>
 <div id="toast"></div>
 
+<script src="/lwc.js" onerror="window.__LWC_FAILED=true"></script>
 <script>
 const $ = id => document.getElementById(id);
 const fmt = (v, d=4) => (v===null||v===undefined||isNaN(v)) ? '—' : Number(v).toLocaleString('en-US',{maximumFractionDigits:d});
@@ -491,7 +509,7 @@ function renderOpen(list){
       ? `<button class="mini cxl" onclick="cancelOrder(${s.id},'${esc(s.symbol)}')">✖ إلغاء</button>`
       : `<button class="mini" onclick="closeTrade(${s.id},'${esc(s.symbol)}')">🔒 إغلاق</button>`;
     return `<tr>
-      <td><b>${esc(s.symbol)}</b></td><td>${st}</td><td>${modePill(s.is_real)}</td>
+      <td><b style="cursor:pointer" title="عرض في الشارت 🕯" onclick="chartFocus('${esc(s.symbol)}')">${esc(s.symbol)}</b></td><td>${st}</td><td>${modePill(s.is_real)}</td>
       <td>${live[0]}</td><td>${live[1]}</td><td>${live[2]}</td>
       <td>${fmt(isPend?s.entry_price:s.fill_price)}</td>
       <td class="neg">${fmt(s.stop_loss)}</td><td class="pos">${fmt(s.take_profit)}${stagesLine(s)}</td>
@@ -518,7 +536,7 @@ function renderClosed(list){
   let rows = list.map(s => {
     const inP = (s.fill_price===null||s.fill_price===undefined||isNaN(s.fill_price)) ? s.entry_price : s.fill_price;
     return `<tr>
-    <td><b>${esc(s.symbol)}</b></td><td>${modePill(s.is_real)}</td>
+    <td><b style="cursor:pointer" title="عرض في الشارت 🕯" onclick="chartFocus('${esc(s.symbol)}')">${esc(s.symbol)}</b></td><td>${modePill(s.is_real)}</td>
     <td>${stPill(s)}</td>
     <td>${fmt(inP)} → ${fmt(s.close_price)}</td>
     <td class="${cls(s.pnl_usdt)}"><b>${usd(s.pnl_usdt)}</b></td>
@@ -653,11 +671,147 @@ function renderNotifs(list){
       <b class="mut small">${dt(n.created_at)}</b> — ${esc(n.message)}</div>`).join('');
 }
 
+// ═══ [FE1.9.10] الشارت الحي — TradingView Lightweight Charts v5.2.1 (Apache-2.0) ═══
+// الشموع من كاش Postgres (صفر طلبات للمزودين) + الشمعة الجارية من التيار — خطوط مرجعية:
+// منطقة الدخول / الوقف البنيوي / الأهداف المتدرجة TP1→TP3 / سقف الأسبوع — «الأهداف
+// البعيدة» صارت مرئية بصريًا فورًا: القصّ على قمة 7 أيام يُرى بالعين.
+let ALLSTATE = null;          // آخر /api/all — يشترك فيه الشارت مع بقية الأقسام
+let CHART = null, CSERIES = null, CMARKS = null;
+let chartSym = null, chartKey = '', chartLastBar = null, chartBars = [];
+let chartLevels = [], chartFetchAt = 0;
+
+function chartSelectedRow(){
+  const s = ALLSTATE; if(!s || !chartSym) return null;
+  return (s.open_signals||[]).find(r=>r.symbol===chartSym) ||
+         (s.closed_signals||[]).find(r=>r.symbol===chartSym) || null;
+}
+function chartInit(){
+  if(CHART || window.__LWC_FAILED) return;
+  const LW = window.LightweightCharts;
+  if(!LW){ $('lwc-chart').innerHTML = '<div class="empty" style="padding:20px">تعذر تحميل مكتبة الشارت — تُعاد المحاولة تلقائيًا</div>'; return; }
+  const box = $('lwc-chart');
+  try{
+    CHART = LW.createChart(box, {
+      width: box.clientWidth || 640, height: 340,
+      layout: { background: { type: (LW.ColorType&&LW.ColorType.Solid)||'solid', color: 'transparent' }, textColor: '#8fa3b8', fontFamily: 'Share Tech Mono, monospace' },
+      grid: { vertLines: { color: 'rgba(0,229,255,0.05)' }, horzLines: { color: 'rgba(0,229,255,0.08)' } },
+      rightPriceScale: { borderColor: 'rgba(0,229,255,0.15)' },
+      timeScale: { borderColor: 'rgba(0,229,255,0.15)', timeVisible: true, secondsVisible: false },
+      crosshair: { mode: (LW.CrosshairMode&&LW.CrosshairMode.Normal!=null) ? LW.CrosshairMode.Normal : 0 },
+    });
+    CSERIES = CHART.addSeries(LW.CandlestickSeries, {
+      upColor: '#00e5ff', downColor: '#ff2d78', borderVisible: false,
+      wickUpColor: '#00e5ff', wickDownColor: '#ff2d78',
+    });
+    if(LW.createSeriesMarkers) CMARKS = LW.createSeriesMarkers(CSERIES, []);
+    window.addEventListener('resize', () => { if(CHART){ try{ CHART.applyOptions({ width: $('lwc-chart').clientWidth || 640 }); }catch(e){} } });
+  }catch(e){ CHART = null; $('lwc-chart').innerHTML = '<div class="empty" style="padding:20px">فشل تهيئة الشارت: ' + esc(String(e.message||e)) + '</div>'; }
+}
+function chartPopulate(s){
+  const sel = $('chart-sym'); if(!sel) return;
+  const syms = [];
+  const add = x => { if(x && !syms.includes(x)) syms.push(x); };
+  (s.open_signals||[]).forEach(r=>add(r.symbol));
+  (s.closed_signals||[]).forEach(r=>add(r.symbol));
+  ((s.scanner&&s.scanner.results)||[]).forEach(r=>add(r.symbol));
+  if(!syms.length){ if(!sel.options.length) sel.innerHTML = '<option value="">— لا رموز بعد —</option>'; return; }
+  sel.innerHTML = syms.map(x=>`<option value="${esc(x)}"${x===chartSym?' selected':''}>${esc(x)}</option>`).join('');
+  if(!chartSym) chartSym = syms[0];
+}
+function chartSelectSym(){
+  chartSym = $('chart-sym').value || null;
+  chartKey = ''; chartFetchAt = 0;   // إعادة تحميل كاملة للرمز الجديد
+  chartTick(true);
+}
+// النقر على رمز أي صفقة (مفتوحة أو مغلقة) → يُعرض فورًا في الشارت
+function chartFocus(sym){
+  chartSym = sym; chartKey = ''; chartFetchAt = 0;
+  const sel = $('chart-sym');
+  if(sel){ [...sel.options].forEach(o=>{ if(o.value===sym) o.selected = true; }); }
+  chartTick(true);
+  const el = $('lwc-chart'); if(el && el.scrollIntoView) try{ el.scrollIntoView({behavior:'smooth', block:'nearest'}); }catch(e){}
+}
+function chartApplyOverlays(){
+  if(!CSERIES) return;
+  for(const pl of chartLevels){ try{ CSERIES.removePriceLine(pl); }catch(e){} }
+  chartLevels = [];
+  if(CMARKS){ try{ CMARKS.setMarkers([]); }catch(e){} }
+  const row = chartSelectedRow(); if(!row || !chartBars.length) return;
+  const LW = window.LightweightCharts;
+  const defs = [];
+  const zl = (row.entry_zone_low!=null) ? row.entry_zone_low : row.entry_price;
+  const zh = row.entry_zone_high;
+  if(zl!=null && !isNaN(+zl)) defs.push({price:+zl, color:'#00e5ff', title:'دخول', style:(LW.LineStyle&&LW.LineStyle.Dashed!=null)?LW.LineStyle.Dashed:2, width:1});
+  if(zh!=null && !isNaN(+zh) && +zh!==+zl) defs.push({price:+zh, color:'#00e5ff', title:'دخول ▲', style:(LW.LineStyle&&LW.LineStyle.Dotted!=null)?LW.LineStyle.Dotted:1, width:1});
+  if(row.stop_loss!=null && !isNaN(+row.stop_loss)) defs.push({price:+row.stop_loss, color:'#ff2d78', title:'وقف', style:(LW.LineStyle&&LW.LineStyle.Solid!=null)?LW.LineStyle.Solid:0, width:1});
+  const tps = (row.tp_stages && row.tp_stages.length) ? row.tp_stages : [row.tp1,row.tp2,row.tp3].filter(v=>v!=null);
+  tps.forEach((t,i)=>{ if(t!=null && !isNaN(+t)) defs.push({price:+t, color:'#22e58c', title:'هدف '+(i+1), style:(LW.LineStyle&&LW.LineStyle.Solid!=null)?LW.LineStyle.Solid:0, width:1}); });
+  if(row.weekly_high!=null && !isNaN(+row.weekly_high)) defs.push({price:+row.weekly_high, color:'#ffb020', title:'سقف أسبوع', style:(LW.LineStyle&&LW.LineStyle.Dashed!=null)?LW.LineStyle.Dashed:2, width:2});
+  for(const dv of defs){ try{ chartLevels.push(CSERIES.createPriceLine({ price:dv.price, color:dv.color, lineWidth:dv.width, lineStyle:dv.style, axisLabelVisible:true, title:dv.title })); }catch(e){} }
+  // علامات الملء/الغلق على شمعتها (ضمن النطاق المعروض فقط)
+  if(CMARKS){
+    const tfSec = ({'5m':300,'15m':900,'1h':3600,'4h':14400})[(ALLSTATE&&ALLSTATE.entry_timeframe)||'5m'] || 300;
+    const marks = [];
+    const mk = (iso, obj) => {
+      const t = Math.floor(Date.parse(iso)/1000); if(isNaN(t)) return;
+      const bt = Math.floor(t/tfSec)*tfSec;
+      if(bt >= chartBars[0].time && bt <= chartBars[chartBars.length-1].time) marks.push(Object.assign({time:bt}, obj));
+    };
+    if(row.fill_price && row.filled_at) mk(row.filled_at, {position:'belowBar', color:'#00e5ff', shape:'arrowUp', text:'ملء'});
+    if(row.close_price && row.closed_at){
+      const win = (row.pnl_usdt!=null && +row.pnl_usdt>0);
+      mk(row.closed_at, {position:'aboveBar', color:win?'#22e58c':'#ff2d78', shape:'arrowDown', text:win?'ربح':'خسارة'});
+    }
+    marks.sort((a,b)=>a.time-b.time);
+    if(marks.length){ try{ CMARKS.setMarkers(marks); }catch(e){} }
+  }
+}
+async function chartTick(force){
+  if(window.__LWC_FAILED || document.hidden) return;
+  if(!CHART) chartInit();
+  if(!CHART || !CSERIES) return;
+  const s = ALLSTATE; if(!s) return;
+  if(!chartSym){ $('chart-note').textContent = 'لا رموز متاحة بعد — يظهر الشارت مع أول التقاط أو فحص كون'; return; }
+  const now = Date.now();
+  if(!force && now - chartFetchAt < 8000) return;   // الكاش يكفي كل 8ث — بلا ضغط
+  chartFetchAt = now;
+  const tf = s.entry_timeframe || '5m';
+  const key = chartSym + '|' + tf;
+  try{
+    const d = await api('/api/klines?symbol=' + encodeURIComponent(chartSym) + '&tf=' + encodeURIComponent(tf) + '&limit=180');
+    if(!d.candles || !d.candles.length){ $('chart-note').textContent = 'لا شموع في الكاش لـ ' + chartSym + ' — تظهر بعد دورة المسح القادمة'; return; }
+    const bars = d.candles.map(c => ({ time: Math.floor(c[0]/1000), open:+c[1], high:+c[2], low:+c[3], close:+c[4] }));
+    const lastc = bars[bars.length-1].close;
+    const prec = lastc>=1000?2:(lastc>=10?3:(lastc>=1?4:6));
+    try{ CSERIES.applyOptions({ priceFormat: { type:'price', precision:prec, minMove:1/Math.pow(10,prec) } }); }catch(e){}
+    if(key !== chartKey){
+      CSERIES.setData(bars);
+      try{ CHART.timeScale().fitContent(); }catch(e){}
+      chartKey = key;
+    } else {
+      CSERIES.update(bars[bars.length-1]);
+    }
+    chartBars = bars; chartLastBar = bars[bars.length-1];
+    // نبضة السعر الحي من صف اللوحة (تيار الويب سوكت ⚡) — الشمعة الجارية تتنفس بين جلبات الكاش
+    const row = chartSelectedRow();
+    if(row && row.current_price!=null && !isNaN(+row.current_price) && chartLastBar){
+      const p = +row.current_price;
+      chartLastBar = { time:chartLastBar.time, open:chartLastBar.open, high:Math.max(chartLastBar.high,p), low:Math.min(chartLastBar.low,p), close:p };
+      CSERIES.update(chartLastBar);
+    }
+    chartApplyOverlays();
+    const srcTxt = d.source==='cache+live' ? 'كاش + شمعة حية' : (d.source==='cache' ? 'كاش Postgres' : d.source);
+    $('chart-note').innerHTML = '<b>' + esc(chartSym) + '</b> · فريم ' + esc(tf) + ' · ' + d.count + ' شمعة · مصدر ' + esc(srcTxt)
+      + (row ? ' · خطوط: دخول/وقف/' + ((row.tp_stages&&row.tp_stages.length)?(row.tp_stages.length+' أهداف'):'هدف') + (row.weekly_high?' + سقف أسبوع':'') : ' · لا صفقة على هذا الرمز (شموع فقط)');
+  }catch(e){ $('chart-note').textContent = 'خطأ جلب الشموع: ' + String(e.message||e).slice(0,120); }
+}
+
 async function refresh(){
   if (REFRESHING || document.hidden) return;  // [FE1.5.0] بلا تداخل طلبات ولا ضغط والإخفاء
   REFRESHING = true;
   try {
     const d = await api('/api/all');
+    ALLSTATE = d;  // [FE1.9.10] الشارت يشترك في الحالة
     $('err-banner').style.display = 'none';
     try { WSSTATE = await api('/api/ws/status'); } catch(e){ WSSTATE = null; }
     renderFeed(WSSTATE);
@@ -665,9 +819,11 @@ async function refresh(){
     const safe = fn => { try { fn(); } catch(e){ console.error(e); } };
     safe(()=>renderCards(d)); safe(()=>renderScanner(d));
     safe(()=>paintTf(d.signal_timeframe || '15m'));  // [FE1.8.9] تلوين الفريم النشط
+    safe(()=>chartPopulate(d));  // [FE1.9.10] قائمة رموز الشارت
     safe(()=>renderOpen(d.open_signals)); safe(()=>renderClosed(d.closed_signals));
     safe(()=>renderDetections(d.detections)); safe(()=>renderNotifs(d.notifications));
     safe(()=>renderPerformance(d)); safe(()=>renderGates(d.stats));
+    safe(()=>chartTick());  // [FE1.9.10] تحديث الشارت مع كل دورة
   } catch(e){
     console.error(e);
     const eb = $('err-banner');
@@ -761,6 +917,9 @@ async function resetStats(){
 
 refresh();
 setInterval(refresh, 30000);
+// [FE1.9.10] نبض الشارت المستقل — أسرع من دورة اللوحة (30ث) ليشعر بالحياة: الشمعة الجارية
+// تتنفس من السعر الحي كل 8ث (الكاش يُجلب كل 8ث، والخطوط تُعاد الرسم عند تغيّر الصف)
+setInterval(()=>{ try{ chartTick(); }catch(e){} }, 8000);
 // [FE1.5.0] إيقاف الضغط والإخفاء + تحديث فوري عند العودة للتبويب
 document.addEventListener('visibilitychange', () => { if(!document.hidden) refresh(); });
 </script>
