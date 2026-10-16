@@ -6078,7 +6078,22 @@ def api_ew_strategy():
             lg.setLevel(lv)
     out["setups"] = len(setups)
     out["bulls"] = sum(1 for s in setups if s.direction == "BULLISH")
-    out["zigzag"] = [{"t": _ew_ts_ms(p.timestamp), "price": float(p.price),
+    # محاور الزيجزاج تُولَد بلا طابع زمني (pd.NaT — يُحل لاحقًا حصرًا داخل scan
+    # لبنى P0–P5) — للعرض نحلّه من عمود timestamp عبر bar_index
+    _ts_col = df["timestamp"].reset_index(drop=True)
+
+    def _pivot_ms(p: Any) -> int:
+        t = getattr(p, "timestamp", None)
+        try:
+            if t is None or pd.isna(t):   # pd.NaT ليس Timestamp — pd.isna يلتقطه
+                idx = int(getattr(p, "bar_index", -1))
+                if 0 <= idx < len(_ts_col):
+                    t = _ts_col.iloc[idx]
+        except Exception:
+            pass
+        return _ew_ts_ms(t)
+
+    out["zigzag"] = [{"t": _pivot_ms(p), "price": float(p.price),
                       "kind": ("H" if p.is_peak else "L")}
                      for p in pivots[-EW_ZIGZAG_MAX:]]
     bulls = [s for s in setups if s.direction == "BULLISH"]

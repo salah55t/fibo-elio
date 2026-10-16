@@ -962,7 +962,7 @@ function ewxApply(d){
     try{
       const lastT = chartBars[chartBars.length - 1].time;
       const pts = zz.map(p => ({ time: Math.floor((+p.t)/1000), value: +p.price }))
-                    .filter(p => !isNaN(p.time) && p.time <= lastT);
+                    .filter(p => !isNaN(p.time) && p.time > 0 && p.time <= lastT);
       if(pts.length >= 2){
         EWX_ZZ = CHART.addSeries(LW.LineSeries, {
           color:'#f7c948', lineWidth:2, lineStyle:0,
@@ -979,7 +979,7 @@ function ewxApply(d){
     // شارات 0–5 على محاور البنية — أزمنة فريم الكشف محاذية لشبكة فريم التنفيذ (5m/15m/1h/4h متعامدة)
     const tfSec = ({'5m':300,'15m':900,'1h':3600,'4h':14400})[(ALLSTATE&&ALLSTATE.entry_timeframe)||'5m'] || 300;
     for(const p of (s.pivots||[])){
-      const t = Math.floor((+p.t)/1000); if(isNaN(t) || !t) continue;
+      const t = Math.floor((+p.t)/1000); if(isNaN(t) || t <= 0) continue;
       const bt = Math.floor(t/tfSec)*tfSec;
       const peak = (p.label === 'P1' || p.label === 'P3' || p.label === 'P5');
       marks.push({ time:bt, position: peak?'aboveBar':'belowBar', color:'#f7c948',

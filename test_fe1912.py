@@ -83,8 +83,9 @@ XSTOP = XP[0] * 0.999
 XRISK = XENTRY - XSTOP
 
 
-def seed_impulse(symbol="TEST/USDT", tf="5m", base_ts=1_700_000_000_000):
-    """بذر شموع الدافع المصنوع عبر الكاتب الحقيقي (نفس مسار الإنتاج)."""
+def seed_impulse(symbol="TEST/USDT", tf="5m", base_ts=1_699_999_800_000):
+    """بذر شموع الدافع المصنوع عبر الكاتب الحقيقي (نفس مسار الإنتاج).
+    base_ts محاذٍ لشبكة 5m (باقي القسمة على 300000 = صفر) لدقة اختبار الشبكة."""
     vnz._kline_cache_max_ts.pop((symbol, tf), None)
     closes = _impulse_closes()
     rows = []
@@ -301,6 +302,20 @@ def test_ew_strategy_tf_fallback(clean_db, monkeypatch):
 def test_ew_strategy_protected_401(monkeypatch):
     monkeypatch.setattr(vnz, "DASHBOARD_PROTECTED", True)
     assert client().get("/api/ew_strategy?symbol=TEST/USDT").status_code == 401
+
+
+def test_ew_strategy_zigzag_times_resolved(clean_db, monkeypatch):
+    """محاور الزيجزاج تُولَد NaT في الكاشف — يجب حل أزمنتها من الشموع للعرض."""
+    monkeypatch.setattr(vnz, "WS_ENABLED", False)
+    seed_impulse()
+    body = client().get("/api/ew_strategy?symbol=TEST/USDT&tf=5m").get_json()
+    zz = body["zigzag"]
+    assert len(zz) >= 6
+    ts = [p["t"] for p in zz]
+    assert all(t > 0 for t in ts), "لا NaT — أزمنة المحاور محلولة من عمود الشموع"
+    assert ts == sorted(ts), "المحاور تصاعدية زمنيًا"
+    # أزمنة المحاور تطابق شبكة شموع الكاش (300000 مللي ثانية)
+    assert all(t % 300_000 == 0 for t in ts)
 
 
 def test_ew_strategy_does_not_touch_shared_detector(clean_db, monkeypatch):
