@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""اختبارات FE1.9.11 «موجات إليوت (LuxAlgo) على الشارت»
+"""اختبارات FE1.9.12 «موجات إليوت (LuxAlgo) على الشارت»
 ======================================================
 الطلب: «هل يمكنك تطبيق هذا المؤشر على الشارت» مع لصق كود مؤشر
 Elliott Wave [LuxAlgo] (Pine Script v5) كاملًا.
@@ -150,10 +150,10 @@ def test_indicator_file_is_pure_visualization():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync(clean_db):
-    assert vnz.BOT_VERSION == "FE1.9.11"
-    assert panel.BOT_VERSION == "FE1.9.11"
+    assert vnz.BOT_VERSION == "FE1.9.12"
+    assert panel.BOT_VERSION == "FE1.9.12"
     body = client().get("/health").get_json()
-    assert body["version"] == "FE1.9.11"
+    assert body["version"] == "FE1.9.12"
 
 
 def test_dashboard_serves_updated_html(clean_db):

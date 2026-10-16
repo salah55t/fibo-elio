@@ -324,5 +324,5 @@ def test_live_price_reads_from_ws_price(monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_pair():
-    assert vnz.BOT_VERSION == "FE1.9.11"
-    assert panel.BOT_VERSION == "FE1.9.11"
+    assert vnz.BOT_VERSION == "FE1.9.12"
+    assert panel.BOT_VERSION == "FE1.9.12"

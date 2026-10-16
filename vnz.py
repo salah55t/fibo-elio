@@ -164,6 +164,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import gc
+from dataclasses import replace as dc_replace
 from decimal import Decimal, ROUND_FLOOR
 import pandas as pd
 import requests
@@ -185,14 +186,15 @@ except Exception:
 
 from engine.pattern_detector import DetectorConfig, DetectedSetup, PivotDetector
 from engine.wave_validator import validate_impulse
-from engine.fibonacci import FibonacciLevels
+from engine.fibonacci import (FibonacciLevels, WAVE2_KEY_RATIOS, WAVE3_KEY_RATIOS,
+                              WAVE4_KEY_RATIOS)
 from utils.logger import get_logger, fmt_price
 
 # ══════════════════════════════════════════════════════════════════════════════
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.9.11"  # FE1.9.11 «موجات إليوت (LuxAlgo) على الشارت»: طلب المستخدم «هل يمكنك تطبيق هذا المؤشر على الشارت» مع لصق كود مؤشر Elliott Wave [LuxAlgo] (Pine v5) كاملًا — نقله حرفيًا إلى static/elliott-wave.js يُقدَّم من /ew.js (بنمط /lwc.js: من المستودع بلا CDN خارجي، بحماية اللوحة نفسها، رأس الملف وتذييل اللوحة يحملان الإسناد © LuxAlgo وترخيص CC BY-NC-SA 4.0). الخوارزمية بشمعة-بشمعة كما ينفذها Pine: زيجزاج بثلاثة أطوال (4/8/16) من محاور pivothigh/pivotlow المؤكدة (يمين=1، صرامة تامة) يدير مكدس نقاط بدلالاته الحرفية (دفع عند انعكاس الاتجاه، استبدال عند تجاوز القمة/القاع)، كشف الدافع 12345 بقواعد LuxAlgo (W3 ليست الأقصر + عدم التداخل)، كشف التصحيح ABC بحدود 0.854 من مدى الدافع مع بناء (a)(b)(c) عند قمة/قاع (c) وصندوقه وتمديد (c)، إبطال الدافع بالتنقيط والتصحيح بالشرط مع إخفاء شاراتهما، دمج '(5) (1)' و'(b) (1)'/'(c) (2)' عند التطابق، خطوط فيبو 0.5/0.618/0.764/0.854 من نهاية الموجة 5 للنمط الأخير السليم فقط (تُلغى فوق تصحيح مكتمل وتنقّط عند كسر 0.854)، دائرة «بداية موجة جديدة محتملة» وعلامة ✕ عند كسر صندوق التصحيح. العرض في اللوحة: الأطوال الثلاثة بألوان LuxAlgo (أحمر/أزرق/أبيض) كطبقة LineSeries رقيقة فوق الشموع + شارات على مثيل createSeriesMarkers مستقل لا يمس علامات الملء/الغلق، إعادة بناء بتوقيع (رمز|فريم|عدد|آخر شمعة) لا عند كل نبضة، زر تشغيل/إيقاف وملخص عربي لحالة كل طول — الحساب كله في متصفح المستخدم: صفر حمل على الخادم وصفر طلبات جديدة (نفس شموع /api/klines). تحقق: 35/35 اختبار node (دافع صاعد/هابط بقيم فيبو دقيقة، ABC مع إخفاء الفيبو، اتجاه أحادي، حواف) + pytest للتقديم والحماية واللوحة. صفر تغيير تداولي. (FE1.9.10 «الشارت الحي»: دمج مكتبة TradingView Lightweight Charts v5.2.1 (Apache-2.0 — مُبنيّة محليًا في static/ وصفر اعتماد خارجي) في اللوحة — شارت شموع فريم التنفيذ يُغذى من كاش Postgres الدائم (صفر طلبات للمزودين — الكاش يُكتب أصلًا كل دورة مسح) + الشمعة الجارية الحية من مخزن ويب سوكت، مع خطوط مرجعية مرسومة على الشموع: منطقة الدخول (سماوي) · الوقف البنيوي (أحمر) · الأهداف المتدرجة TP1→TP3 (أخضر) · سقف الأسبوع (برتقالي متقطع) — بلاغ «الأهداف البعيدة» صار مرئيًا بصريًا فورًا: يرى المستخدم الهدف يقص على قمة 7 أيام بعينه. نقطة /api/klines (بحماية اللوحة نفسها: tf ضمن ALLOWED_TFS، حد 30..OHLCV_LIMIT، دمج الشمعة الجارية من _ws_candles حصرًا لفريم التنفيذ دون لمس منطق المحرك) و/lwc.js لتقديم ملف المكتبة بترويسة تخزين يومية. صفر تغيير تداولي. (FE1.9.9 «أهداف سكالبينج واقعية متدرجة» — علاج بلاغ حي: «البوت يضع أهدافًا بعيدة لم تصلها العملة منذ أكثر من شهر» والبوت مصمم للسبوت سكالبينج. (1) سقف الأسبوع TP_WEEK_CAP: قمة آخر 7 أيام (شموع يومية عبر سلسلة المزودين + كاش 30د) هي أقصى ما يلمسه أي هدف — كل درجات سلّم FE1.6.0 تُقص على السقف، وما بقي تحت الدخول أو تحت أرضية R:R الصافي يُهدر، وإن سقط الجميع رُفضت الإشارة بعداد rejected_weekly_cap وسبب مسمّى في اللوحة؛ فشل جلب القمة = fail-open بالسلوك القديم (بلا سقف بلا ادّعاء). (2) أهداف متدرجة TP1→TP3: الدرجات المؤهلة الباقية تحت السقف تصير مراحل جني (tp1/tp2/tp3 أعمدة DB + عرض اللوحة + رسالة التلغرام)، عند لمس هدف وسيط تُغلق TP_STAGE_SLICE_PCT% من الكمية المتبقية بنفس عقيدة الجزئي FE1.8.0 (ورقي: محاسبة، حقيقي: بيع سوق + محاسبة، غبار = يُعتبر منجزًا ويركب)، والهدف الأخير (take_profit = tp3) يغلق الباقي في المسار القديم حرفيًا. (3) تسوية الأهداف الحية reconcile_live_targets: كل صفقة معلقة/مفتوحة هدفها فوق قمة الأسبوع تُقص للسقف مع بلاغ TARGET_FIX مرة واحدة لكل صفقة (نافذة الأسبوع تتدحرج → إعادة قص صامتة بسجل) — علاج مباشر للصفقات المفتوحة الحالية بأهدافها الشهرية البعيدة. صفر تغيير في الملء/الوقف/الإبطال/الصلاحية. (FE1.9.8 «التحكم والصمود» — ناتج بحث المشاريع مفتوحة المصدر (freqtrade/hummingbot/jesse/cryptofeed/OctoBot) وتحليل الفجوات مع مشروعنا: (1) التحكم عن بعد من تلغرام (الميزة القاتلة في freqtrade): خيط getUpdates long-poll بأوامر /status /pending /positions /stats /close /cancel /pause /resume /ping /help (عربية وإنجليزية مع اسم البوت الملحق) — أوامر التنفيذ تستخدم نفس مسارات اللوحة حرفيًا (close_signal_row/close_real_trade/set_trading_enabled) فلا منطق مزدوج، والمحادثة المصرّحة وحدها، وTELEGRAM_CONTROL=0 يعطل؛ (2) تنبيه «غلق يدوي مطلوب» (الطلب الحي): كل مسارات فشل الغلق الحقيقي (مفاتيح غائبة/تعذر إلغاء الوقف الراكن/فشل أمر البيع/استثناء) ترفع علم manual_close_required على الصفقة عبر meta_json + تنبيه 🚨 بارز يسمّي الرمز والكمية ومستوى الخروج مع إرشاد /close، تذكير كل MANUAL_CLOSE_REMIND_SEC، ويُمسح تلقائيًا عند أول إغلاق ناجح مع إشعار حلّ؛ (3) بوابة تلغرام ضد الضجيج (الطلب الحي): log_and_notify يفلتر الإرسال عبر telegram_gate — الأصناف المهمة وحدها تصل المحادثة (إشارة جديدة/ملء/إغلاق/جزئي/دورة المعلق/غلق يدوي/أخطاء التنفيذ/تغييرات الوضع/قاطع المخاطر/انقطاع البيانات/إقلاع) والضجيج (تدوير المزودين/ماسح الكون/فحص الخمول/BE) يبقى في السجل واللوحة، + كتم التكرار الحرفي TELEGRAM_DEDUP_SEC (حلقة إعادة المحاولة كانت ترسل الخطأ نفسه كل 60ث) + قصّ آمن عند 4000 حرف؛ (4) كاش الشموع الدائم + الوضع المتدهور (فلسفة cryptofeed/cryptostore): جدول kline_cache في Postgres يكتب الشموع المغلقة حصرًا (الجديدة وحدها بعد البذرة) وعند فشل كل المزودين يخدم الكاش بوضع متدهور معلن مرة واحدة — المسح والمتابعة والغلق لا يتوقفون أبدًا ما دامت Postgres حية، /health يكشف telegram_control وkline_cache. الصفر تغيير في منطق التداول نفسه. (FE1.9.7 «تيك خام»: طلب «جلب الأسعار ويب سوكت لحظية لأقصى درجة ممكنة» — طبقة تيار باينانس الخام فوق ccxt.pro (لا تغيير فيها — تبقى احتياطًا حيًا): (1) @trade لكل قائمة الكشف — سعر على كل صفقة فعلية منفذة (أجزاء الثانية، نفس دلالة «آخر سعر» في واجهة باينانس) بدل ~1ث؛ (2) @kline_<فريم التنفيذ> لرموز الصفقات النشطة — الشمعة الجارية تتحدث داخل الشريط فيتحقق الملء من أرضية حية أدق؛ (3) استيقاظ فوري لحلقة المراقبة (60ث ← لحظي) عند لمس تيك لمستوى تنفيذ: معلق ← تيك ≤ الدخول، مفتوح ← تيك ≤ الوقف أو ≥ الهدف — نفس monitor_step حرفيًا فقط الاستدعاء لحظي، والحلقة الستينية شبكة أمان؛ (4) نبض الحركة يفحص كل 2ث بدل 5 (بلا REST — قراءة ذاكرة)؛ (5) شارة «تيك خام ⚡⚡» بعداد التيك وعمر آخر رسالة في اللوحة + كتلة raw في /api/ws/status. تيار مدمج واحد (30+ تيار < سقف 1024، صفر وزن REST)، إعادة اتصال دائمة بتراجع + رقيب يعيد البناء عند تغيّر المجموعة، RAW_TICK_WS=0 يعطل مع تساهل كامل. (FE1.9.6 «لا اختفاء صامت»: بلاغ حي (18:44 UTC 15 أكتوبر) — «السعر وصل الدخول في باينانس واللوحة لم تتغير» — التحقيق أثبت عكس البلاغ (اللوحة حية طابقت باينانس حرفيًا 0.00456500، والمنطقة لم تُلمس: أدنى قاع 0.0045230 فوق قمتها 0.06%) لكن كشف فجوة عرض حقيقية: الإشارة المعلقة عند انتهاء صلاحيتها (expired) أو إبطالها البنيوي (cancelled) تختفي من اللوحة بصمت لأن /api/all كان يعرض المغلق فقط (status='closed' = صفقة تداولت وغلقت بنتيجة). الإصلاح: (1) قسم «المغلق» يعرض المنتهية والملغاة أيضًا بشارات مميزة (منتهية/ملغاة) مع سعر الدخول المرجعي؛ (2) انتهاء الصلاحية والإبطال البنيوي يطلقان إشعارًا في اللوحة/تلجرام (مثل الملء) — دورة حياة المعلق مرئية كاملة: وُلد → مُلئ أو انتهى أو أُبطل. صفر تغيير سلوك تداولي: شروط الملء/الإبطال/الصلاحية كما هي حرفيًا. (FE1.9.5 «الإقلاع مرئي»: /health يكشف boot_at وuptime_sec — إعادة تشغيل العملية (مثل الحادثة 14:59:44 بعد نشر FE1.9.4 — كل started_at والعدادات تصفرت) تُرى فورًا من نبضة واحدة بدل استدلال عكسي من started_at للاشتراكات. صفر تغيير سلوك. (FE1.9.4 «حكم يسمّي قاتله»: سجلات wave_validator تُقرأ بلا ترجم — (1) سطر الحكم النهائي يعدّد القواعد الفاشلة («INVALID — فشل: Rule-1, Rule-3») بدل عدّاد مجرد؛ (2) رفض Rule-2 يسمّي الشرط القاتل صراحة (أقصر الأمواج؟ أم عدم كسر نهاية W1؟) — القاعدة مركّبة من الشرطين والحالة الملتبسة W3_not_shortest=True مع FAIL كانت تحيّر قارئ السجلات؛ (3) سطر «Starting impulse validation» نزل DEBUG — تشويش بلا معلومة. صفر تغيير سلوك: كل القرارات كما هي حرفيًا. (FE1.9.3 «تصنيف صادق»: رفض «لا هدف يحقق أرضية R:R» بدل «أسعار غير منطقية» — إثبات حي PUMP في حزام إعادة التشغيل (replay harness أول مرة: مسار الإنتاج الحرفي كشفًا وبوابات وإنشاء أمر معلق على بيانات حقيقية وُلّدت فيه 30 حدث أمر معلق عبر 5 رموز في 4 أيام) — سلّم الأهداف بلا درجة تحقق TP_MIN_RR وأساس 1.618 تحت الدخول = هندسة بلا هدف مربح كفاية، عداد rejected_no_target جديد + عرضه في اللوحة، الرفض نفسه لم يتغير (صفر تغيير سلوك). (FE1.9.2 «كشف بلا عمى»: (1) إصلاح انكسار الزيجزاج على شريحة فارغة (انعكاس مؤكد على الشريط الأخير ثم محور ختامي بعده — STRK/BAT/RNDR كانت تتخطى بصمت كل دورة: argmin على تسلسل فارغ) — المحور الختامي على الشريط الأخير ذاته؛ (2) التقادم قبل الاختيار: القديمة الأجود إليوتيًا كانت تدفن الحديثة المتواضعة (المختار وحده تقيّمه البوابات)؛ (3) عداد scan_errors يجعل الكشف الأعمى الصامت مرئيًا). (FE1.9.1 «نبض حي»: إصلاح قاتل النبض — اشتراكات ويب سوكت كانت لرموز الصفقات النشطة وحدها (db signals pending/open) فصفر صفقات = صفر أسعار حية = نبض الحركة صامت للأبد (الإثبات الحي: momentum_kicks=0 بعد 76 دورة). الإصلاح: watchlist كلها تدخل بتيار سعر فقط (شموع تبقى لرموز الصفقات النشطة — حمية 512MB) + فشل قاعدة البيانات لا يعطل نبض القائمة — ws_wanted_sets نقية قابلة للاختبار + _ws_spawn(with_ohlcv). (FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
+BOT_VERSION = "FE1.9.12"  # FE1.9.12 «موجات المحرك — المؤشر يحسب بمنطق الاستراتيجية حرفيًا»: طلب المستخدم «اضبط عدادات المؤشر ومستويات فيبوناتشي كما هي في الاستراتيجية» ثم «اريد ان يحسب مؤشر موجات اليوت وفيبوناتشي كما في استراتيجية التداول» — بدل مؤشر بمنطق LuxAlgo الافتراضي (زيجزاج pivothigh أطوال 4/8/16 وفيبو 0.5–0.854) صارت لوحة الموجات تُحسب من محرك الاستراتيجية نفسه عبر نقطة /api/ew_strategy: الكاشف ذاته PivotDetector بنسخة إعداد مطابقة حرفيًا (dc_replace(detector.cfg) — عتبة الانعكاس DEVIATION_THRESHOLD ومصدر الإغلاق وأرضية التناسب) يعمل على شموع الكاش ذاتها التي يغذي بها الشارت (كاش Postgres + الشمعة الجارية — صفر طلبات مزودين)، يعطي زيجزاج الاستراتيجية كاملًا (محاور مؤكدة بنسبة انعكاس لا أطوال ثابتة) والبنى P0–P5 المُحقَّقة بقواعد wave_validator الثلاث + أرضية التناسب، واختيار «البنية الأفضل» بنفس select_best_setup وترتيب FE1.9.2 (التقادم قبل الاختيار)، وتسلسل كامل: أطوال الأمواج وتراجعا W2/W4 مع حالتيهما المنطقيتين وحكم القواعد مسمّى، ومنطقة الدخول (P3−0.382×W3 / حد أعلى 0.236) والوقف البنيوي P0−0.1% وخط الإبطال P0، وسلّم الأهداف بنفس صيغ create_pending_signal (W5=W1 / 0.618×W3 / 1.618×W1 من P2) مقصوصًا على قمة الأسبوع عبر build_staged_targets بمراحله TP1→TP3 وفجوتها 0.2R، إضافة طبقات فيبو الكانونية التي تفحصها الاستراتيجية فعليًا (مفاتيح W2: 0.382/0.5/0.618 على الموجة 1، مفاتيح W4: 0.236/0.382 على الموجة 3، امتدادات W3: 1.618/2.618 من P2). اللوحة: زر «موجات المحرك (الاستراتيجية)» يرسم زيجزاج المحرك (خط عنبري) وشارات 0–5 على المحاور وخطوط الاستراتيجية كلها فوق الشموع مع سطر حكم عربي (الصلاحية/القواعد/التراجعات/العمر/الأهداف) — وبإمكان المستخدم إبقاء طبقة LuxAlgo الموازية أو إيقافها (تُقيَّد إضافة عرض فقط؛ صفر تغيير على منطق التداول أو الكاشف المشترك: النسخة للعرض مستقلة وعزول عن حالة الكاشف الحي). (FE1.9.11 «موجات إليوت (LuxAlgo) على الشارت»: طلب المستخدم «هل يمكنك تطبيق هذا المؤشر على الشارت» مع لصق كود مؤشر Elliott Wave [LuxAlgo] (Pine v5) كاملًا — نقله حرفيًا إلى static/elliott-wave.js يُقدَّم من /ew.js (بنمط /lwc.js: من المستودع بلا CDN خارجي، بحماية اللوحة نفسها، رأس الملف وتذييل اللوحة يحملان الإسناد © LuxAlgo وترخيص CC BY-NC-SA 4.0). الخوارزمية بشمعة-بشمعة كما ينفذها Pine: زيجزاج بثلاثة أطوال (4/8/16) من محاور pivothigh/pivotlow المؤكدة (يمين=1، صرامة تامة) يدير مكدس نقاط بدلالاته الحرفية (دفع عند انعكاس الاتجاه، استبدال عند تجاوز القمة/القاع)، كشف الدافع 12345 بقواعد LuxAlgo (W3 ليست الأقصر + عدم التداخل)، كشف التصحيح ABC بحدود 0.854 من مدى الدافع مع بناء (a)(b)(c) عند قمة/قاع (c) وصندوقه وتمديد (c)، إبطال الدافع بالتنقيط والتصحيح بالشرط مع إخفاء شاراتهما، دمج '(5) (1)' و'(b) (1)'/'(c) (2)' عند التطابق، خطوط فيبو 0.5/0.618/0.764/0.854 من نهاية الموجة 5 للنمط الأخير السليم فقط (تُلغى فوق تصحيح مكتمل وتنقّط عند كسر 0.854)، دائرة «بداية موجة جديدة محتملة» وعلامة ✕ عند كسر صندوق التصحيح. العرض في اللوحة: الأطوال الثلاثة بألوان LuxAlgo (أحمر/أزرق/أبيض) كطبقة LineSeries رقيقة فوق الشموع + شارات على مثيل createSeriesMarkers مستقل لا يمس علامات الملء/الغلق، إعادة بناء بتوقيع (رمز|فريم|عدد|آخر شمعة) لا عند كل نبضة، زر تشغيل/إيقاف وملخص عربي لحالة كل طول — الحساب كله في متصفح المستخدم: صفر حمل على الخادم وصفر طلبات جديدة (نفس شموع /api/klines). تحقق: 35/35 اختبار node (دافع صاعد/هابط بقيم فيبو دقيقة، ABC مع إخفاء الفيبو، اتجاه أحادي، حواف) + pytest للتقديم والحماية واللوحة. صفر تغيير تداولي. (FE1.9.10 «الشارت الحي»: دمج مكتبة TradingView Lightweight Charts v5.2.1 (Apache-2.0 — مُبنيّة محليًا في static/ وصفر اعتماد خارجي) في اللوحة — شارت شموع فريم التنفيذ يُغذى من كاش Postgres الدائم (صفر طلبات للمزودين — الكاش يُكتب أصلًا كل دورة مسح) + الشمعة الجارية الحية من مخزن ويب سوكت، مع خطوط مرجعية مرسومة على الشموع: منطقة الدخول (سماوي) · الوقف البنيوي (أحمر) · الأهداف المتدرجة TP1→TP3 (أخضر) · سقف الأسبوع (برتقالي متقطع) — بلاغ «الأهداف البعيدة» صار مرئيًا بصريًا فورًا: يرى المستخدم الهدف يقص على قمة 7 أيام بعينه. نقطة /api/klines (بحماية اللوحة نفسها: tf ضمن ALLOWED_TFS، حد 30..OHLCV_LIMIT، دمج الشمعة الجارية من _ws_candles حصرًا لفريم التنفيذ دون لمس منطق المحرك) و/lwc.js لتقديم ملف المكتبة بترويسة تخزين يومية. صفر تغيير تداولي. (FE1.9.9 «أهداف سكالبينج واقعية متدرجة» — علاج بلاغ حي: «البوت يضع أهدافًا بعيدة لم تصلها العملة منذ أكثر من شهر» والبوت مصمم للسبوت سكالبينج. (1) سقف الأسبوع TP_WEEK_CAP: قمة آخر 7 أيام (شموع يومية عبر سلسلة المزودين + كاش 30د) هي أقصى ما يلمسه أي هدف — كل درجات سلّم FE1.6.0 تُقص على السقف، وما بقي تحت الدخول أو تحت أرضية R:R الصافي يُهدر، وإن سقط الجميع رُفضت الإشارة بعداد rejected_weekly_cap وسبب مسمّى في اللوحة؛ فشل جلب القمة = fail-open بالسلوك القديم (بلا سقف بلا ادّعاء). (2) أهداف متدرجة TP1→TP3: الدرجات المؤهلة الباقية تحت السقف تصير مراحل جني (tp1/tp2/tp3 أعمدة DB + عرض اللوحة + رسالة التلغرام)، عند لمس هدف وسيط تُغلق TP_STAGE_SLICE_PCT% من الكمية المتبقية بنفس عقيدة الجزئي FE1.8.0 (ورقي: محاسبة، حقيقي: بيع سوق + محاسبة، غبار = يُعتبر منجزًا ويركب)، والهدف الأخير (take_profit = tp3) يغلق الباقي في المسار القديم حرفيًا. (3) تسوية الأهداف الحية reconcile_live_targets: كل صفقة معلقة/مفتوحة هدفها فوق قمة الأسبوع تُقص للسقف مع بلاغ TARGET_FIX مرة واحدة لكل صفقة (نافذة الأسبوع تتدحرج → إعادة قص صامتة بسجل) — علاج مباشر للصفقات المفتوحة الحالية بأهدافها الشهرية البعيدة. صفر تغيير في الملء/الوقف/الإبطال/الصلاحية. (FE1.9.8 «التحكم والصمود» — ناتج بحث المشاريع مفتوحة المصدر (freqtrade/hummingbot/jesse/cryptofeed/OctoBot) وتحليل الفجوات مع مشروعنا: (1) التحكم عن بعد من تلغرام (الميزة القاتلة في freqtrade): خيط getUpdates long-poll بأوامر /status /pending /positions /stats /close /cancel /pause /resume /ping /help (عربية وإنجليزية مع اسم البوت الملحق) — أوامر التنفيذ تستخدم نفس مسارات اللوحة حرفيًا (close_signal_row/close_real_trade/set_trading_enabled) فلا منطق مزدوج، والمحادثة المصرّحة وحدها، وTELEGRAM_CONTROL=0 يعطل؛ (2) تنبيه «غلق يدوي مطلوب» (الطلب الحي): كل مسارات فشل الغلق الحقيقي (مفاتيح غائبة/تعذر إلغاء الوقف الراكن/فشل أمر البيع/استثناء) ترفع علم manual_close_required على الصفقة عبر meta_json + تنبيه 🚨 بارز يسمّي الرمز والكمية ومستوى الخروج مع إرشاد /close، تذكير كل MANUAL_CLOSE_REMIND_SEC، ويُمسح تلقائيًا عند أول إغلاق ناجح مع إشعار حلّ؛ (3) بوابة تلغرام ضد الضجيج (الطلب الحي): log_and_notify يفلتر الإرسال عبر telegram_gate — الأصناف المهمة وحدها تصل المحادثة (إشارة جديدة/ملء/إغلاق/جزئي/دورة المعلق/غلق يدوي/أخطاء التنفيذ/تغييرات الوضع/قاطع المخاطر/انقطاع البيانات/إقلاع) والضجيج (تدوير المزودين/ماسح الكون/فحص الخمول/BE) يبقى في السجل واللوحة، + كتم التكرار الحرفي TELEGRAM_DEDUP_SEC (حلقة إعادة المحاولة كانت ترسل الخطأ نفسه كل 60ث) + قصّ آمن عند 4000 حرف؛ (4) كاش الشموع الدائم + الوضع المتدهور (فلسفة cryptofeed/cryptostore): جدول kline_cache في Postgres يكتب الشموع المغلقة حصرًا (الجديدة وحدها بعد البذرة) وعند فشل كل المزودين يخدم الكاش بوضع متدهور معلن مرة واحدة — المسح والمتابعة والغلق لا يتوقفون أبدًا ما دامت Postgres حية، /health يكشف telegram_control وkline_cache. الصفر تغيير في منطق التداول نفسه. (FE1.9.7 «تيك خام»: طلب «جلب الأسعار ويب سوكت لحظية لأقصى درجة ممكنة» — طبقة تيار باينانس الخام فوق ccxt.pro (لا تغيير فيها — تبقى احتياطًا حيًا): (1) @trade لكل قائمة الكشف — سعر على كل صفقة فعلية منفذة (أجزاء الثانية، نفس دلالة «آخر سعر» في واجهة باينانس) بدل ~1ث؛ (2) @kline_<فريم التنفيذ> لرموز الصفقات النشطة — الشمعة الجارية تتحدث داخل الشريط فيتحقق الملء من أرضية حية أدق؛ (3) استيقاظ فوري لحلقة المراقبة (60ث ← لحظي) عند لمس تيك لمستوى تنفيذ: معلق ← تيك ≤ الدخول، مفتوح ← تيك ≤ الوقف أو ≥ الهدف — نفس monitor_step حرفيًا فقط الاستدعاء لحظي، والحلقة الستينية شبكة أمان؛ (4) نبض الحركة يفحص كل 2ث بدل 5 (بلا REST — قراءة ذاكرة)؛ (5) شارة «تيك خام ⚡⚡» بعداد التيك وعمر آخر رسالة في اللوحة + كتلة raw في /api/ws/status. تيار مدمج واحد (30+ تيار < سقف 1024، صفر وزن REST)، إعادة اتصال دائمة بتراجع + رقيب يعيد البناء عند تغيّر المجموعة، RAW_TICK_WS=0 يعطل مع تساهل كامل. (FE1.9.6 «لا اختفاء صامت»: بلاغ حي (18:44 UTC 15 أكتوبر) — «السعر وصل الدخول في باينانس واللوحة لم تتغير» — التحقيق أثبت عكس البلاغ (اللوحة حية طابقت باينانس حرفيًا 0.00456500، والمنطقة لم تُلمس: أدنى قاع 0.0045230 فوق قمتها 0.06%) لكن كشف فجوة عرض حقيقية: الإشارة المعلقة عند انتهاء صلاحيتها (expired) أو إبطالها البنيوي (cancelled) تختفي من اللوحة بصمت لأن /api/all كان يعرض المغلق فقط (status='closed' = صفقة تداولت وغلقت بنتيجة). الإصلاح: (1) قسم «المغلق» يعرض المنتهية والملغاة أيضًا بشارات مميزة (منتهية/ملغاة) مع سعر الدخول المرجعي؛ (2) انتهاء الصلاحية والإبطال البنيوي يطلقان إشعارًا في اللوحة/تلجرام (مثل الملء) — دورة حياة المعلق مرئية كاملة: وُلد → مُلئ أو انتهى أو أُبطل. صفر تغيير سلوك تداولي: شروط الملء/الإبطال/الصلاحية كما هي حرفيًا. (FE1.9.5 «الإقلاع مرئي»: /health يكشف boot_at وuptime_sec — إعادة تشغيل العملية (مثل الحادثة 14:59:44 بعد نشر FE1.9.4 — كل started_at والعدادات تصفرت) تُرى فورًا من نبضة واحدة بدل استدلال عكسي من started_at للاشتراكات. صفر تغيير سلوك. (FE1.9.4 «حكم يسمّي قاتله»: سجلات wave_validator تُقرأ بلا ترجم — (1) سطر الحكم النهائي يعدّد القواعد الفاشلة («INVALID — فشل: Rule-1, Rule-3») بدل عدّاد مجرد؛ (2) رفض Rule-2 يسمّي الشرط القاتل صراحة (أقصر الأمواج؟ أم عدم كسر نهاية W1؟) — القاعدة مركّبة من الشرطين والحالة الملتبسة W3_not_shortest=True مع FAIL كانت تحيّر قارئ السجلات؛ (3) سطر «Starting impulse validation» نزل DEBUG — تشويش بلا معلومة. صفر تغيير سلوك: كل القرارات كما هي حرفيًا. (FE1.9.3 «تصنيف صادق»: رفض «لا هدف يحقق أرضية R:R» بدل «أسعار غير منطقية» — إثبات حي PUMP في حزام إعادة التشغيل (replay harness أول مرة: مسار الإنتاج الحرفي كشفًا وبوابات وإنشاء أمر معلق على بيانات حقيقية وُلّدت فيه 30 حدث أمر معلق عبر 5 رموز في 4 أيام) — سلّم الأهداف بلا درجة تحقق TP_MIN_RR وأساس 1.618 تحت الدخول = هندسة بلا هدف مربح كفاية، عداد rejected_no_target جديد + عرضه في اللوحة، الرفض نفسه لم يتغير (صفر تغيير سلوك). (FE1.9.2 «كشف بلا عمى»: (1) إصلاح انكسار الزيجزاج على شريحة فارغة (انعكاس مؤكد على الشريط الأخير ثم محور ختامي بعده — STRK/BAT/RNDR كانت تتخطى بصمت كل دورة: argmin على تسلسل فارغ) — المحور الختامي على الشريط الأخير ذاته؛ (2) التقادم قبل الاختيار: القديمة الأجود إليوتيًا كانت تدفن الحديثة المتواضعة (المختار وحده تقيّمه البوابات)؛ (3) عداد scan_errors يجعل الكشف الأعمى الصامت مرئيًا). (FE1.9.1 «نبض حي»: إصلاح قاتل النبض — اشتراكات ويب سوكت كانت لرموز الصفقات النشطة وحدها (db signals pending/open) فصفر صفقات = صفر أسعار حية = نبض الحركة صامت للأبد (الإثبات الحي: momentum_kicks=0 بعد 76 دورة). الإصلاح: watchlist كلها تدخل بتيار سعر فقط (شموع تبقى لرموز الصفقات النشطة — حمية 512MB) + فشل قاعدة البيانات لا يعطل نبض القائمة — ws_wanted_sets نقية قابلة للاختبار + _ws_spawn(with_ohlcv). (FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -5843,12 +5845,41 @@ def ew_js():
                              "X-Content-License": "CC BY-NC-SA 4.0 (c) LuxAlgo port"})
 
 
+def _klines_rows(symbol: str, tf: str, limit: int) -> Tuple[List[list], str]:
+    """[FE1.9.12] صفوف شموع الشارت — كاش Postgres + دمج الشمعة الجارية الحية من
+    مخزن ويب سوكت (فريم التنفيذ فقط، أحدث زمنيًا يفوز — بلا محو) ثم فرز تصاعدي صارم.
+    المسار المشترك بين /api/klines و /api/ew_strategy — صفر طلبات للمزودين."""
+    rows = _kline_cache_read(symbol, tf, limit) or []
+    source = "cache" if rows else "none"
+    # الشمعة الجارية الحية (فريم التنفيذ فقط) — دمج بلا محو: أحدث زمنيًا يفوز
+    if tf == ENTRY_TIMEFRAME and WS_ENABLED:
+        try:
+            with _ws_lock:
+                entry = _ws_candles.get(symbol)
+            if entry and entry.get("candles"):
+                live = list(entry["candles"][-1])
+                if rows and int(live[0]) > int(rows[-1][0]):
+                    rows.append(live)
+                    source = "cache+live"
+                elif rows and int(live[0]) == int(rows[-1][0]):
+                    rows[-1] = live
+                    source = "cache+live"
+                elif not rows:
+                    rows = [live]
+                    source = "live"
+        except Exception:
+            pass
+    if rows:
+        rows.sort(key=lambda r: int(r[0]))  # تصاعدي صارم — شرط مكتبة الشارت
+    return rows, source
+
+
 @app.route("/api/klines")
 def api_klines():
     """[FE1.9.10] شموع الشارت للوحة — من كاش Postgres الدائم حصرًا (صفر طلبات للمزودين:
     الكاش يُكتب أصلًا في كل دورة مسح من FE1.9.8) + الشمعة الجارية الحية من مخزن ويب سوكت
     (فقط لفريم التنفيذ — _ws_candles آخر صف = الشمعة الجارية التي يحدّثها تيار @kline الخام).
-    لا يلمس منطق المحرك إطلاقًا — قراءة عرضية فقط."""
+    لا يلمس منطق المحرك إطلاقًا — قراءة عرضية فقط. [FE1.9.12] القراءة عبر _klines_rows المشتركة."""
     resp = require_dashboard_auth()
     if resp:
         return resp
@@ -5865,32 +5896,198 @@ def api_klines():
                            "source": "none", "count": 0}
     if not symbol or "/" not in symbol:
         return jsonify(out)
-    rows = _kline_cache_read(symbol, tf, limit) or []
+    rows, out["source"] = _klines_rows(symbol, tf, limit)
     if rows:
-        out["source"] = "cache"
-    # الشمعة الجارية الحية (فريم التنفيذ فقط) — دمج بلا محو: أحدث زمنيًا يفوز
-    if tf == ENTRY_TIMEFRAME and WS_ENABLED:
-        try:
-            with _ws_lock:
-                entry = _ws_candles.get(symbol)
-            if entry and entry.get("candles"):
-                live = list(entry["candles"][-1])
-                if rows and int(live[0]) > int(rows[-1][0]):
-                    rows.append(live)
-                    out["source"] = "cache+live"
-                elif rows and int(live[0]) == int(rows[-1][0]):
-                    rows[-1] = live
-                    out["source"] = "cache+live"
-                elif not rows:
-                    rows = [live]
-                    out["source"] = "live"
-        except Exception:
-            pass
-    if rows:
-        rows.sort(key=lambda r: int(r[0]))  # تصاعدي صارم — شرط مكتبة الشارت
         out["candles"] = [[int(r[0]), float(r[1]), float(r[2]), float(r[3]),
                            float(r[4]), float(r[5])] for r in rows[-limit:]]
         out["count"] = len(out["candles"])
+    return jsonify(out)
+
+
+# ── [FE1.9.12] مؤشر موجات المحرك — الحساب بمنطق الاستراتيجية نفسها حرفيًا ─────
+# طلب المستخدم: «اضبط عدادات المؤشر ومستويات فيبوناتشي كما هي في الاستراتيجية»
+# و«اريد ان يحسب مؤشر موجات اليوت وفيبوناتشي كما في استراتيجية التداول».
+# الجواب: بدل إعادة تنفيذ تقريبي في المتصفح، النقطة تشغّل الكاشف والمحقق والفيبو
+# ذاتهم (نسخة معزولة عن حالة الكاشف الحي بنفس الإعداد الحرفي) على شموع الكاش ذاتها.
+
+EW_ZIGZAG_MAX = int(os.getenv("EW_ZIGZAG_MAX", "140"))   # سقف محاور الزيجزاج المعروضة
+EW_MIN_CANDLES = 60                                       # حد المسح الأدنى ذاته
+
+
+def _ew_ts_ms(ts: Any) -> int:
+    """pd.Timestamp (UTC-aware) → مللي ثانية إيبوك — أزمنة المحاور لطبقة الشارت."""
+    try:
+        return int(getattr(ts, "value", 0) // 10**6)
+    except Exception:
+        try:
+            return int(ts.timestamp() * 1000)
+        except Exception:
+            return 0
+
+
+def _ew_setup_payload(setup: DetectedSetup, df: pd.DataFrame, symbol: str) -> Dict[str, Any]:
+    """تسلسل بنية المحرك نفسها التي تقيّمها البوابات — نفس الكائنات لا نسخة عنها:
+    المحاور وأطوال الأمواج وتراجعا W2/W4، حكم القواعد مسمّى (FE1.9.4)، منطقة الدخول
+    والوقف بنفس خصائص DetectedSetup، وسلّم الأهداف بنفس صيغ create_pending_signal
+    (خام ← قصّ سقف الأسبوع ← مراحل TP بفجوة 0.2R)."""
+    P = [float(p) for p in setup.pivot_prices]
+    fib = setup.validation_result.fib
+    entry = float(setup.entry_zone_low)
+    sl = float(setup.stop_loss_price)
+    try:
+        age_bars = (len(df) - 1) - int(setup.pivot_indices[5])
+    except (TypeError, ValueError, IndexError, AttributeError):
+        age_bars = -1
+    fresh = structure_fresh(setup, df)
+    failed = [r.rule_name for r in setup.validation_result.rules.values() if not r.passed]
+    if setup.validation_result.is_valid:
+        verdict = "بنية صالحة ✅"
+    elif failed:
+        verdict = "غير صالحة ❌ — فشل: " + ", ".join(failed)
+    else:
+        verdict = "غير صالحة ❌"
+    # سلّم الأهداف كما في create_pending_signal حرفيًا: بوابة السلّم ← قمة الأسبوع ← المراحل
+    raw_ladder = [[float(c), b] for c, b in compute_tp_ladder(setup)]
+    weekly_hi: Optional[float] = None
+    stages: List[List[Any]] = []
+    weekly_capped = False
+    ladder_best_rr = 0.0
+    try:
+        if TP_LADDER_ENABLED:
+            if TP_WEEK_CAP_ENABLED:
+                weekly_hi = weekly_high(symbol)
+            if weekly_hi and weekly_hi > 0 and TP_STAGES_ENABLED and setup.direction == "BULLISH":
+                _st, weekly_capped, ladder_best_rr = build_staged_targets(setup, entry, sl, weekly_hi)
+                stages = [[float(c), b] for c, b in _st]
+    except Exception:
+        weekly_hi, stages, weekly_capped, ladder_best_rr = None, [], False, 0.0
+    # طبقات فيبو الكانونية التي تفحصها الاستراتيجية فعليًا (مفاتيح الملاحظات المصدر)
+    overlays: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        f1 = FibonacciLevels(swing_start=P[0], swing_end=P[1])
+        overlays["w2_zone"] = [{"ratio": lv.ratio, "price": lv.price, "key": bool(lv.is_key)}
+                               for lv in f1.retracement_levels(ratios=(0.382, 0.5, 0.618),
+                                                               key_ratios=WAVE2_KEY_RATIOS)]
+        overlays["w3_ext"] = [{"ratio": lv.ratio, "price": lv.price, "key": bool(lv.is_key)}
+                              for lv in f1.extension_levels(ratios=(1.618, 2.618),
+                                                            key_ratios=WAVE3_KEY_RATIOS,
+                                                            base_price=P[2])]
+        f3 = FibonacciLevels(swing_start=P[2], swing_end=P[3])
+        overlays["w4_zone"] = [{"ratio": lv.ratio, "price": lv.price, "key": bool(lv.is_key)}
+                               for lv in f3.retracement_levels(ratios=(0.236, 0.382, 0.5),
+                                                               key_ratios=WAVE4_KEY_RATIOS)]
+    except Exception:
+        overlays = {}
+    return {
+        "direction": setup.direction,
+        "valid": bool(setup.validation_result.is_valid),
+        "verdict": verdict,
+        "rules": [{"name": r.rule_name, "passed": bool(r.passed),
+                   "description": r.description, "detail": (r.detail or "")}
+                  for r in setup.validation_result.rules.values()],
+        "age_bars": int(age_bars),
+        "max_age_bars": MAX_STRUCTURE_AGE_BARS,
+        "fresh": bool(fresh),
+        "pivots": [{"label": f"P{i}", "t": _ew_ts_ms(setup.pivot_timestamps[i]), "price": P[i]}
+                   for i in range(min(6, len(P)))],
+        "lengths": {"w1": abs(P[1] - P[0]), "w2": abs(P[2] - P[1]), "w3": abs(P[3] - P[2]),
+                    "w4": abs(P[4] - P[3]), "w5": abs(P[5] - P[4])},
+        "retrace": {"w2": (round(fib.wave2_retrace_pct, 4) if fib else None),
+                    "w4": (round(fib.wave4_retrace_pct, 4) if fib else None),
+                    "w2_in_zone": (bool(fib.wave2_in_zone) if fib else False),
+                    "w4_in_zone": (bool(fib.wave4_in_zone) if fib else False)},
+        "entry_zone": {"low": entry, "high": float(setup.entry_zone_high)},
+        "stop": sl,
+        "p0_invalidation": P[0],
+        "tp": {"stages": stages,
+               "weekly_high": (float(weekly_hi) if (weekly_hi and weekly_hi > 0) else None),
+               "weekly_capped": bool(weekly_capped),
+               "raw_ladder": raw_ladder,
+               "ladder_best_rr": round(ladder_best_rr, 4),
+               "fallback_take_profit": float(compute_take_profit(setup))},
+        "fib_overlays": overlays,
+        "detected_at": _ew_ts_ms(setup.detected_at),
+    }
+
+
+@app.route("/api/ew_strategy")
+def api_ew_strategy():
+    """[FE1.9.12] موجات المحرك على الشارت — نفس منطق الاستراتيجية حرفيًا لا تقريب:
+    زيجزاج الكاشف ذاته (عتبة انعكاس DEVIATION_THRESHOLD على الإغلاق — لا أطوال pivothigh)،
+    البنية P0–P5 بقواعد wave_validator الثلاث + أرضية التناسب، اختيار الأفضل بنفس
+    select_best_setup وترتيب FE1.9.2، ومناطق الدخول/الوقف وسلّم الأهداف المقصوص على
+    قمة الأسبوع بنفس صيغ create_pending_signal. الكاشف نسخة معزولة (dc_replace(detector.cfg))
+    فلا تلوث حالة الكاشف الحي، وسجلات المحرك تُسكَت مؤقتًا كي لا يزخم المسح سجلات Render."""
+    resp = require_dashboard_auth()
+    if resp:
+        return resp
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    tf = (request.args.get("tf") or SIGNAL_TIMEFRAME).strip()
+    if tf not in ALLOWED_TFS:
+        tf = SIGNAL_TIMEFRAME if SIGNAL_TIMEFRAME in ALLOWED_TFS else sorted(ALLOWED_TFS)[0]
+    try:
+        limit = int(request.args.get("limit") or 400)
+    except Exception:
+        limit = 400
+    limit = max(30, min(limit, OHLCV_LIMIT))
+    out: Dict[str, Any] = {
+        "symbol": symbol, "tf": tf, "source": "none", "zigzag": [],
+        "setup": None, "setups": 0, "bulls": 0, "note": "",
+        "params": {"deviation_pct": round(DEVIATION_THRESHOLD * 100.0, 3),
+                   "price_source": "close", "min_wave_bars": MIN_WAVE_BARS,
+                   "min_wave_proportion": WAVE_MIN_PROPORTION,
+                   "signal_timeframe": SIGNAL_TIMEFRAME,
+                   "entry_zone_basis": "0.382×W3", "stop_basis": "P0−0.1%",
+                   "tp_ladder": "W5=W1 / 0.618×W3 / 1.618×W1 من P2",
+                   "week_cap_days": (TP_WEEK_CAP_DAYS if TP_WEEK_CAP_ENABLED else 0)},
+    }
+    if not symbol or "/" not in symbol:
+        out["note"] = "رمز غير صالح"
+        return jsonify(out)
+    rows, out["source"] = _klines_rows(symbol, tf, limit)
+    if len(rows) < EW_MIN_CANDLES:
+        out["note"] = "شموع غير كافية في الكاش لهذا الرمز/الفريم"
+        return jsonify(out)
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+    df["timestamp"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
+    df["symbol"] = symbol
+    df["timeframe"] = tf
+    df = df[REQUIRED_COLS + ["symbol", "timeframe"]]
+    df = df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
+    try:
+        det = PivotDetector(dc_replace(detector.cfg))   # إعداد المؤلف نفسه — نسخة معزولة
+    except Exception:
+        det = PivotDetector(DetectorConfig(
+            method="zigzag", deviation_threshold=DEVIATION_THRESHOLD,
+            price_source="close", min_wave_bars=MIN_WAVE_BARS,
+            require_fib_confluence=False, fib_tolerance_pct=FIB_TOLERANCE_PCT,
+            min_wave_proportion=WAVE_MIN_PROPORTION))
+    _noisy = (logging.getLogger("engine.pattern_detector"),
+              logging.getLogger("engine.wave_validator"))
+    _saved = [(lg, lg.level) for lg in _noisy]
+    for lg in _noisy:
+        lg.setLevel(logging.WARNING)
+    try:
+        pivots = det.get_pivots(df)
+        setups = det.scan(df)
+    except Exception as exc:
+        out["note"] = ("فشل حساب المحرك: " + str(exc))[:180]
+        return jsonify(out)
+    finally:
+        for lg, lv in _saved:
+            lg.setLevel(lv)
+    out["setups"] = len(setups)
+    out["bulls"] = sum(1 for s in setups if s.direction == "BULLISH")
+    out["zigzag"] = [{"t": _ew_ts_ms(p.timestamp), "price": float(p.price),
+                      "kind": ("H" if p.is_peak else "L")}
+                     for p in pivots[-EW_ZIGZAG_MAX:]]
+    bulls = [s for s in setups if s.direction == "BULLISH"]
+    if bulls:
+        best = select_best_setup([s for s in bulls if structure_fresh(s, df)] or bulls)
+        if best is not None:
+            out["setup"] = _ew_setup_payload(best, df, symbol)
+    if out["setup"] is None and not out["zigzag"]:
+        out["note"] = "لا محاور زيجزاج كافية — حركة أقل من عتبة الانعكاس على هذا الفريم"
     return jsonify(out)
 
 

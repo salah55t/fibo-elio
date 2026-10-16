@@ -211,5 +211,5 @@ def test_panel_has_status_pills():
 
 
 def test_version_pair():
-    assert vnz.BOT_VERSION == "FE1.9.11"
-    assert panel.BOT_VERSION == "FE1.9.11"
+    assert vnz.BOT_VERSION == "FE1.9.12"
+    assert panel.BOT_VERSION == "FE1.9.12"

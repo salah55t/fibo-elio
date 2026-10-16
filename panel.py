@@ -11,6 +11,12 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 ضمن .tbl-wrap (كانت تفيض على الموبايل بلا تمرير)، عارضة مستقلة لكل قسم (كان خطأ
 واحد يجمّد تحديث اللوحة كاملة صامتًا)، usd/cls آمنة ضد null، حارس تكرار refresh
 + إيقاف عند إخفاء التبويب، لا اختطاف مفتاح التداول الحقيقي أثناء الطلب الجاري.
+[FE1.9.12] «موجات المحرك»: طبقة مؤشر جديدة على الشارت تحسب بمنطق الاستراتيجية حرفيًا
+عبر /api/ew_strategy — زيجزاج الكاشف ذاته (عتبة انعكاس 0.6% على الإغلاق) والبنية P0–P5
+بقواعد wave_validator الثلاث ومنطقة الدخول 0.382×W3 والوقف P0−0.1% وسلّم الأهداف
+المقصوص على قمة الأسبوع TP1→TP3 ومفاتيح فيبو W2/W4/W3 الكانونية — تُرسم خط زيجزاج
+عنبري وشارات 0–5 وخطوط استراتيجية كاملة مع سطر حكم عربي. زرها: «موجات المحرك
+(الاستراتيجية)»، وبإمكان المستخدم إبقاء طبقة LuxAlgo الموازية أو إيقافها.
 [FE1.9.11] مؤشر «موجات إليوت (LuxAlgo)» على الشارت الحي: نقل حرفي لمنطق مؤشر
 Elliott Wave [LuxAlgo] (Pine v5 — © LuxAlgo، CC BY-NC-SA 4.0 مع الإسناد) من
 static/elliott-wave.js (/ew.js): زيجزاج بثلاثة أطوال (4/8/16) من المحاور المؤكدة،
@@ -28,7 +34,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.11"
+BOT_VERSION = "FE1.9.12"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -251,9 +257,15 @@ PANEL_HTML = r"""<!DOCTYPE html>
       <span id="chart-legend" class="mut small">
         <span style="color:#00e5ff">━ دخول</span> · <span style="color:#ff2d78">━ وقف</span> · <span style="color:#22e58c">━ أهداف</span> · <span style="color:#ffb020">⌈ سقف أسبوع</span>
       </span>
+      <label for="ewx-toggle" title="مؤشر موجات المحرك — نفس حساب الاستراتيجية حرفيًا من /api/ew_strategy: زيجزاج الكاشف بعتبة الانعكاس + البنية P0–P5 بقواعدها الثلاث + منطقة الدخول 0.382×W3 + الوقف P0−0.1% + أهداف متدرجة مقصوصة على قمة الأسبوع + مفاتيح فيبو W2/W4/W3" style="display:flex;align-items:center;gap:5px;cursor:pointer;color:#f7c948;font-size:12px;border:1px solid rgba(247,201,72,.35);border-radius:8px;padding:5px 10px;background:rgba(247,201,72,.06)">
+        <input type="checkbox" id="ewx-toggle" checked onchange="ewxToggle()" style="accent-color:#f7c948;cursor:pointer"> موجات المحرك (الاستراتيجية)
+      </label>
       <label for="ew-toggle" title="مؤشر Elliott Wave [LuxAlgo] — ثلاثة زيجزاج (4/8/16) بمنطق Pine حرفي: دافع 12345 + تصحيح ABC + فيبو 0.5–0.854" style="display:flex;align-items:center;gap:5px;cursor:pointer;color:#e6f7ff;font-size:12px;border:1px solid rgba(0,229,255,.25);border-radius:8px;padding:5px 10px;background:rgba(0,229,255,.05)">
         <input type="checkbox" id="ew-toggle" checked onchange="ewToggle()" style="accent-color:#00e5ff;cursor:pointer"> موجات إليوت (LuxAlgo)
       </label>
+      <span id="chart-legend-ewx" class="mut small">
+        <span style="color:#f7c948">━ زيجزاج المحرك + 0–5</span> · <span style="color:#c792ea">┈ مفاتيح فيبو W2/W3</span> · <span style="color:#64d8cb">┈ مفاتيح W4</span>
+      </span>
       <span id="chart-legend-ew" class="mut small">
         <span style="color:#ff5b6a">━ زيجزاج 4</span> · <span style="color:#4da3ff">━ زيجزاج 8</span> · <span style="color:#e6edf3">━ زيجزاج 16</span>
       </span>
@@ -261,7 +273,8 @@ PANEL_HTML = r"""<!DOCTYPE html>
     <div id="lwc-chart" style="border:1px solid rgba(0,229,255,.12);border-radius:12px;background:rgba(0,229,255,.02)"></div>
     <div id="chart-note" class="mut small" style="margin-top:6px">—</div>
     <div id="ew-note" class="mut small" style="margin-top:2px"></div>
-    <div class="mut small" style="margin-top:4px">الشارت: TradingView Lightweight Charts v5.2.1 (Apache-2.0) — يُقدَّم محليًا من الخادم بلا أي اعتماد خارجي · مؤشر الموجات: منقول من Elliott Wave [LuxAlgo] © LuxAlgo (CC BY-NC-SA 4.0) — إسناد إلزامي</div>
+    <div id="ewx-note" class="mut small" style="margin-top:2px;color:#f7c948"></div>
+    <div class="mut small" style="margin-top:4px">الشارت: TradingView Lightweight Charts v5.2.1 (Apache-2.0) — يُقدَّم محليًا من الخادم بلا أي اعتماد خارجي · طبقة «موجات المحرك» تُحسب من محرك الاستراتيجية نفسه (زيجزاج 0.6% + قواعد P0–P5 + فيبو الاستراتيجية) · مؤشر الموجات الإضافي: منقول من Elliott Wave [LuxAlgo] © LuxAlgo (CC BY-NC-SA 4.0) — إسناد إلزامي</div>
   </section>
 
   <section>
@@ -698,6 +711,8 @@ let chartSym = null, chartKey = '', chartLastBar = null, chartBars = [];
 let chartLevels = [], chartFetchAt = 0;
 // [FE1.9.11] مؤشر موجات إليوت (LuxAlgo) — حالة الطبقة فوق الشارت
 let EW_ON = true, EW_SIG = '', EW_SERIES = [], EW_MARKS = null;
+// [FE1.9.12] موجات المحرك — الحساب من الاستراتيجية نفسها عبر /api/ew_strategy
+let EWX_ON = true, EWX_SIG = '', EWX_LINES = [], EWX_ZZ = null, EWX_MARKS = null, EWX_BUSY = false;
 
 function chartSelectedRow(){
   const s = ALLSTATE; if(!s || !chartSym) return null;
@@ -725,6 +740,8 @@ function chartInit(){
     if(LW.createSeriesMarkers) CMARKS = LW.createSeriesMarkers(CSERIES, []);
     // [FE1.9.11] مثيل علامات مستقل لمؤشر الموجات (يدخل/الغلق في CMARKS لا يُمسّ)
     try{ if(LW.createSeriesMarkers) EW_MARKS = LW.createSeriesMarkers(CSERIES, []); }catch(e){ EW_MARKS = null; }
+    // [FE1.9.12] مثيل علامات مستقل لمحاور المحرك P0–P5
+    try{ if(LW.createSeriesMarkers) EWX_MARKS = LW.createSeriesMarkers(CSERIES, []); }catch(e){ EWX_MARKS = null; }
     window.addEventListener('resize', () => { if(CHART){ try{ CHART.applyOptions({ width: $('lwc-chart').clientWidth || 640 }); }catch(e){} } });
   }catch(e){ CHART = null; $('lwc-chart').innerHTML = '<div class="empty" style="padding:20px">فشل تهيئة الشارت: ' + esc(String(e.message||e)) + '</div>'; }
 }
@@ -822,6 +839,7 @@ async function chartTick(force){
     }
     chartApplyOverlays();
     try{ ewMaybe(); }catch(e){ console.error(e); }   // [FE1.9.11] إعادة بناء طبقة الموجات عند تغيّر البيانات
+    try{ ewxMaybe(); }catch(e){ console.error(e); }  // [FE1.9.12] طبقة موجات المحرك (الاستراتيجية)
     const srcTxt = d.source==='cache+live' ? 'كاش + شمعة حية' : (d.source==='cache' ? 'كاش Postgres' : d.source);
     $('chart-note').innerHTML = '<b>' + esc(chartSym) + '</b> · فريم ' + esc(tf) + ' · ' + d.count + ' شمعة · مصدر ' + esc(srcTxt)
       + (row ? ' · خطوط: دخول/وقف/' + ((row.tp_stages&&row.tp_stages.length)?(row.tp_stages.length+' أهداف'):'هدف') + (row.weekly_high?' + سقف أسبوع':'') : ' · لا صفقة على هذا الرمز (شموع فقط)');
@@ -907,6 +925,113 @@ function ewMaybe(){
   if(sig === EW_SIG) return;
   EW_SIG = sig;
   ewRebuild();
+}
+
+// ═══ [FE1.9.12] موجات المحرك — الحساب من الاستراتيجية نفسها عبر /api/ew_strategy ═══
+// الزيجزاج والبنية P0–P5 ومناطق الدخول/الوقف والأهداف والمفاتيح الفيبوناتشية تأتي جاهزة
+// من محرك البوت ذاته (نفس الكائنات التي تولّد الأوامر المعلقة: كاشف 0.6% + قواعد wave_validator
+// + سلّم الأهداف المقصوص على قمة الأسبوع) — لا تقريب ولا إعادة تنفيذ في المتصفح.
+function ewxToggle(){
+  EWX_ON = !!($('ewx-toggle') && $('ewx-toggle').checked);
+  EWX_SIG = '';
+  ewxClear();
+  try{ chartTick(true); }catch(e){}
+}
+function ewxClear(){
+  if(CHART){
+    for(const s of EWX_LINES){ try{ CSERIES.removePriceLine(s); }catch(e){} }
+    if(EWX_ZZ){ try{ CHART.removeSeries(EWX_ZZ); }catch(e){} }
+  }
+  EWX_LINES = []; EWX_ZZ = null;
+  if(EWX_MARKS){ try{ EWX_MARKS.setMarkers([]); }catch(e){} }
+}
+function ewxLine(price, color, title, style, width){
+  try{
+    EWX_LINES.push(CSERIES.createPriceLine({ price:+price, color, lineWidth:width||1,
+      lineStyle:(style==null)?0:style, axisLabelVisible:true, title }));
+  }catch(e){}
+}
+function ewxApply(d){
+  ewxClear();
+  if(!CHART || !CSERIES || !EWX_ON) return;
+  const LW = window.LightweightCharts;
+  const LS = (LW && LW.LineStyle) || {};
+  const zz = d.zigzag || [];
+  // زيجزاج المحرك — خط عنبري يصل محاور الاستراتيجية المؤكدة (عتبة الانعكاس 0.6%)
+  if(zz.length >= 2 && chartBars.length){
+    try{
+      const lastT = chartBars[chartBars.length - 1].time;
+      const pts = zz.map(p => ({ time: Math.floor((+p.t)/1000), value: +p.price }))
+                    .filter(p => !isNaN(p.time) && p.time <= lastT);
+      if(pts.length >= 2){
+        EWX_ZZ = CHART.addSeries(LW.LineSeries, {
+          color:'#f7c948', lineWidth:2, lineStyle:0,
+          lastValueVisible:false, priceLineVisible:false, crosshairMarkerVisible:false,
+          pointMarkersVisible:false,
+        });
+        EWX_ZZ.setData(pts);
+      }
+    }catch(e){ EWX_ZZ = null; }
+  }
+  const s = d.setup;
+  const marks = [];
+  if(s){
+    // شارات 0–5 على محاور البنية — أزمنة فريم الكشف محاذية لشبكة فريم التنفيذ (5m/15m/1h/4h متعامدة)
+    const tfSec = ({'5m':300,'15m':900,'1h':3600,'4h':14400})[(ALLSTATE&&ALLSTATE.entry_timeframe)||'5m'] || 300;
+    for(const p of (s.pivots||[])){
+      const t = Math.floor((+p.t)/1000); if(isNaN(t) || !t) continue;
+      const bt = Math.floor(t/tfSec)*tfSec;
+      const peak = (p.label === 'P1' || p.label === 'P3' || p.label === 'P5');
+      marks.push({ time:bt, position: peak?'aboveBar':'belowBar', color:'#f7c948',
+                   shape:'circle', text: String(+p.label.slice(1)) });
+    }
+    marks.sort((a,b)=>a.time-b.time);
+    // خطوط الاستراتيجية: دخول/وقف/إبطال/أهداف/سقف — نفس لغة خطوط الصفقات
+    ewxLine(s.entry_zone.low,  '#00e5ff', 'دخول 0.382×W3', LS.Dashed!=null?LS.Dashed:2, 1);
+    ewxLine(s.entry_zone.high, '#00e5ff', 'دخول ▲',        LS.Dotted!=null?LS.Dotted:1, 1);
+    ewxLine(s.stop,            '#ff2d78', 'وقف P0−0.1%',   LS.Solid!=null?LS.Solid:0, 1);
+    ewxLine(s.p0_invalidation, '#ff7ab8', 'إبطال P0',      LS.Dotted!=null?LS.Dotted:1, 1);
+    ((s.tp&&s.tp.stages)||[]).forEach((st,i)=> ewxLine(st[0], '#22e58c', 'هدف '+(i+1), LS.Solid!=null?LS.Solid:0, 1));
+    if(s.tp && s.tp.weekly_high) ewxLine(s.tp.weekly_high, '#ffb020', 'سقف أسبوع', LS.Dashed!=null?LS.Dashed:2, 2);
+    // مفاتيح فيبو الكانونية التي تفحصها الاستراتيجية: W2 على الموجة 1، W4 على الموجة 3، امتدادات W3 من P2
+    const ov = s.fib_overlays || {};
+    (ov.w2_zone||[]).forEach(lv => ewxLine(lv.price, lv.key?'#c792ea':'#8a6bb8', 'W2 '+lv.ratio, LS.Dotted!=null?LS.Dotted:1, 1));
+    (ov.w4_zone||[]).forEach(lv => ewxLine(lv.price, lv.key?'#64d8cb':'#4b9e94', 'W4 '+lv.ratio, LS.Dotted!=null?LS.Dotted:1, 1));
+    (ov.w3_ext||[]).forEach(lv => ewxLine(lv.price, lv.key?'#c792ea':'#8a6bb8', 'W3 ×'+lv.ratio, LS.Dotted!=null?LS.Dotted:1, 1));
+  }
+  if(EWX_MARKS && marks.length){ try{ EWX_MARKS.setMarkers(marks); }catch(e){} }
+  const n = $('ewx-note');
+  if(!n) return;
+  if(!s){
+    n.textContent = 'موجات المحرك: لا بنية صاعدة حالية على ' + (d.tf||'?') + (d.note? (' — ' + d.note) : '') + ' (زيجزاج المحرك مرسوم)';
+    return;
+  }
+  const rls = (s.rules||[]).map(r => (r.passed?'✅':'❌') + r.name).join(' ');
+  const tps = ((s.tp&&s.tp.stages)||[]).map(x=>fmt(x[0])).join(' → ');
+  const pct = v => (v==null?'—':(v*100).toFixed(1)+'%');
+  n.innerHTML = '<b>موجات المحرك</b> · ' + esc(s.direction==='BULLISH'?'صاعدة':'هابطة')
+    + ' · ' + esc(s.verdict) + ' · قواعد ' + esc(rls)
+    + ' · W2 ' + esc(pct(s.retrace.w2)) + (s.retrace.w2_in_zone?' ✅':' ⚠')
+    + ' · W4 ' + esc(pct(s.retrace.w4)) + (s.retrace.w4_in_zone?' ✅':' ⚠')
+    + ' · عمر P5 ' + s.age_bars + ' شمعة' + (s.fresh?' (حية)':' (متقادمة — السقف '+s.max_age_bars+')')
+    + (tps? ' · أهداف: '+esc(tps) : ' · لا أهداف تحت سقف الأسبوع')
+    + (s.tp&&s.tp.weekly_capped? ' 🎯مقصوصة على قمة الأسبوع':'');
+}
+async function ewxMaybe(){
+  if(!EWX_ON){
+    if(EWX_SIG !== 'off'){ ewxClear(); EWX_SIG='off'; const n=$('ewx-note'); if(n) n.textContent=''; }
+    return;
+  }
+  if(!CHART || !CSERIES || !chartSym || document.hidden) return;
+  const s = ALLSTATE; if(!s) return;
+  const sig = [chartSym, s.signal_timeframe || '15m', chartBars.length, chartBars.length?chartBars[chartBars.length-1].time:0].join('|');
+  if(sig === EWX_SIG || EWX_BUSY) return;
+  EWX_SIG = sig; EWX_BUSY = true;
+  try{
+    const d = await api('/api/ew_strategy?symbol=' + encodeURIComponent(chartSym) + '&tf=' + encodeURIComponent(s.signal_timeframe || '15m'));
+    if(EWX_ON) ewxApply(d);
+  }catch(e){ /* طبقة عرض — لا تكسر الشارت عند الفشل */ }
+  finally{ EWX_BUSY = false; }
 }
 
 async function refresh(){
