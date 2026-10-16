@@ -296,9 +296,9 @@ class TestRejectReasonInfra:
 class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
-        assert vnz.BOT_VERSION == "FE1.9.10"
+        assert vnz.BOT_VERSION == "FE1.9.11"
         import panel
-        assert panel.BOT_VERSION == "FE1.9.10"
+        assert panel.BOT_VERSION == "FE1.9.11"
 
     def test_paper_balance_still_resets(self, clean_db):
         vnz.set_paper_balance(5000.0)

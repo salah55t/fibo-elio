@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""اختبارات FE1.9.10 «الشارت الحي»
+"""اختبارات FE1.9.11 «الشارت الحي»
 ==================================
 الطلب: «فيما قد يفيدنا هذا المشروع في مشروعنا —
 https://github.com/tradingview/lightweight-charts»
@@ -256,7 +256,7 @@ def test_panel_lwc_failure_fallback():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync():
-    assert vnz.BOT_VERSION == "FE1.9.10"
-    assert panel.BOT_VERSION == "FE1.9.10"
+    assert vnz.BOT_VERSION == "FE1.9.11"
+    assert panel.BOT_VERSION == "FE1.9.11"
     body = client().get("/health").get_json()
-    assert body["version"] == "FE1.9.10"
+    assert body["version"] == "FE1.9.11"

@@ -254,8 +254,8 @@ def test_ws_status_exposes_raw_block():
 
 
 def test_version_pair():
-    assert vnz.BOT_VERSION == "FE1.9.10"
-    assert panel.BOT_VERSION == "FE1.9.10"
+    assert vnz.BOT_VERSION == "FE1.9.11"
+    assert panel.BOT_VERSION == "FE1.9.11"
 
 
 def test_panel_has_tick_badge():

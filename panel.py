@@ -11,6 +11,13 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 ضمن .tbl-wrap (كانت تفيض على الموبايل بلا تمرير)، عارضة مستقلة لكل قسم (كان خطأ
 واحد يجمّد تحديث اللوحة كاملة صامتًا)، usd/cls آمنة ضد null، حارس تكرار refresh
 + إيقاف عند إخفاء التبويب، لا اختطاف مفتاح التداول الحقيقي أثناء الطلب الجاري.
+[FE1.9.11] مؤشر «موجات إليوت (LuxAlgo)» على الشارت الحي: نقل حرفي لمنطق مؤشر
+Elliott Wave [LuxAlgo] (Pine v5 — © LuxAlgo، CC BY-NC-SA 4.0 مع الإسناد) من
+static/elliott-wave.js (/ew.js): زيجزاج بثلاثة أطوال (4/8/16) من المحاور المؤكدة،
+كشف الدافع 12345 وتصحيح ABC، شارات (1)..(5)/(a)(b)(c)، خطوط فيبو 0.5–0.854 من نهاية
+الموجة 5 (تُلغى فوق تصحيح مكتمل وتنقّط عند الكسر)، صندوق التصحيح وعلامة كسره —
+الحساب كله في متصفح المستخدم من نفس شموع /api/klines (صفر حمل على الخادم) مع زر
+تشغيل/إيقاف وتلخيص حالة أطول نمط تحت الشارت.
 [FE1.9.10] قسم «الشارت الحي»: شموع فريم التنفيذ عبر TradingView Lightweight
 Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CDN خارجي) يُغذى من
 /api/klines (كاش Postgres + الشمعة الجارية الحية) مع خطوط مرجعية (دخول/وقف/
@@ -21,7 +28,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.10"
+BOT_VERSION = "FE1.9.11"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -244,10 +251,17 @@ PANEL_HTML = r"""<!DOCTYPE html>
       <span id="chart-legend" class="mut small">
         <span style="color:#00e5ff">━ دخول</span> · <span style="color:#ff2d78">━ وقف</span> · <span style="color:#22e58c">━ أهداف</span> · <span style="color:#ffb020">⌈ سقف أسبوع</span>
       </span>
+      <label for="ew-toggle" title="مؤشر Elliott Wave [LuxAlgo] — ثلاثة زيجزاج (4/8/16) بمنطق Pine حرفي: دافع 12345 + تصحيح ABC + فيبو 0.5–0.854" style="display:flex;align-items:center;gap:5px;cursor:pointer;color:#e6f7ff;font-size:12px;border:1px solid rgba(0,229,255,.25);border-radius:8px;padding:5px 10px;background:rgba(0,229,255,.05)">
+        <input type="checkbox" id="ew-toggle" checked onchange="ewToggle()" style="accent-color:#00e5ff;cursor:pointer"> موجات إليوت (LuxAlgo)
+      </label>
+      <span id="chart-legend-ew" class="mut small">
+        <span style="color:#ff5b6a">━ زيجزاج 4</span> · <span style="color:#4da3ff">━ زيجزاج 8</span> · <span style="color:#e6edf3">━ زيجزاج 16</span>
+      </span>
     </div>
     <div id="lwc-chart" style="border:1px solid rgba(0,229,255,.12);border-radius:12px;background:rgba(0,229,255,.02)"></div>
     <div id="chart-note" class="mut small" style="margin-top:6px">—</div>
-    <div class="mut small" style="margin-top:4px">الشارت: TradingView Lightweight Charts v5.2.1 (Apache-2.0) — يُقدَّم محليًا من الخادم بلا أي اعتماد خارجي</div>
+    <div id="ew-note" class="mut small" style="margin-top:2px"></div>
+    <div class="mut small" style="margin-top:4px">الشارت: TradingView Lightweight Charts v5.2.1 (Apache-2.0) — يُقدَّم محليًا من الخادم بلا أي اعتماد خارجي · مؤشر الموجات: منقول من Elliott Wave [LuxAlgo] © LuxAlgo (CC BY-NC-SA 4.0) — إسناد إلزامي</div>
   </section>
 
   <section>
@@ -281,12 +295,15 @@ PANEL_HTML = r"""<!DOCTYPE html>
     (LOT_SIZE · NOTIONAL · دقة السعر/الكمية · كفاية الرصيد) —
     تتبع حي + إغلاق/إلغاء يدوي [FE1.1.0] + أسعار حية من ويب سوكت [FE1.2.0] + مضاد نوم محصّن [FE1.3.0]<br>
     المحرك منقول حرفيًا من <a href="https://github.com/dtwijesekara/Elliott_Waves_Algo_TradingBot" target="_blank">Elliott_Waves_Algo_TradingBot</a>
-    (MIT) — مستودع المشروع: <a href="https://github.com/salah55t/fibo-elio" target="_blank">salah55t/fibo-elio</a>
+    (MIT) — مؤشر الموجات على الشارت منقول من <a href="https://www.tradingview.com/u/LuxAlgo/" target="_blank">Elliott Wave [LuxAlgo]</a>
+    © LuxAlgo (<a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a>) —
+    مستودع المشروع: <a href="https://github.com/salah55t/fibo-elio" target="_blank">salah55t/fibo-elio</a>
   </footer>
 </div>
 <div id="toast"></div>
 
 <script src="/lwc.js" onerror="window.__LWC_FAILED=true"></script>
+<script src="/ew.js" onerror="window.__EW_FAILED=true"></script>
 <script>
 const $ = id => document.getElementById(id);
 const fmt = (v, d=4) => (v===null||v===undefined||isNaN(v)) ? '—' : Number(v).toLocaleString('en-US',{maximumFractionDigits:d});
@@ -679,6 +696,8 @@ let ALLSTATE = null;          // آخر /api/all — يشترك فيه الشا�
 let CHART = null, CSERIES = null, CMARKS = null;
 let chartSym = null, chartKey = '', chartLastBar = null, chartBars = [];
 let chartLevels = [], chartFetchAt = 0;
+// [FE1.9.11] مؤشر موجات إليوت (LuxAlgo) — حالة الطبقة فوق الشارت
+let EW_ON = true, EW_SIG = '', EW_SERIES = [], EW_MARKS = null;
 
 function chartSelectedRow(){
   const s = ALLSTATE; if(!s || !chartSym) return null;
@@ -704,6 +723,8 @@ function chartInit(){
       wickUpColor: '#00e5ff', wickDownColor: '#ff2d78',
     });
     if(LW.createSeriesMarkers) CMARKS = LW.createSeriesMarkers(CSERIES, []);
+    // [FE1.9.11] مثيل علامات مستقل لمؤشر الموجات (يدخل/الغلق في CMARKS لا يُمسّ)
+    try{ if(LW.createSeriesMarkers) EW_MARKS = LW.createSeriesMarkers(CSERIES, []); }catch(e){ EW_MARKS = null; }
     window.addEventListener('resize', () => { if(CHART){ try{ CHART.applyOptions({ width: $('lwc-chart').clientWidth || 640 }); }catch(e){} } });
   }catch(e){ CHART = null; $('lwc-chart').innerHTML = '<div class="empty" style="padding:20px">فشل تهيئة الشارت: ' + esc(String(e.message||e)) + '</div>'; }
 }
@@ -800,10 +821,92 @@ async function chartTick(force){
       CSERIES.update(chartLastBar);
     }
     chartApplyOverlays();
+    try{ ewMaybe(); }catch(e){ console.error(e); }   // [FE1.9.11] إعادة بناء طبقة الموجات عند تغيّر البيانات
     const srcTxt = d.source==='cache+live' ? 'كاش + شمعة حية' : (d.source==='cache' ? 'كاش Postgres' : d.source);
     $('chart-note').innerHTML = '<b>' + esc(chartSym) + '</b> · فريم ' + esc(tf) + ' · ' + d.count + ' شمعة · مصدر ' + esc(srcTxt)
       + (row ? ' · خطوط: دخول/وقف/' + ((row.tp_stages&&row.tp_stages.length)?(row.tp_stages.length+' أهداف'):'هدف') + (row.weekly_high?' + سقف أسبوع':'') : ' · لا صفقة على هذا الرمز (شموع فقط)');
   }catch(e){ $('chart-note').textContent = 'خطأ جلب الشموع: ' + String(e.message||e).slice(0,120); }
+}
+
+// ═══ [FE1.9.11] مؤشر موجات إليوت (LuxAlgo) — طبقة حسابية في متصفح المستخدم ═══
+// المنطق كله من static/elliott-wave.js (/ew.js) — نقل CC BY-NC-SA 4.0 © LuxAlgo.
+// إعادة البناء عند تغيّر التوقيع فقط (رمز/فريم/عدد/آخر شمعة) — لا تخريب سلاسل كل نبضة.
+function ewToggle(){
+  EW_ON = !!($('ew-toggle') && $('ew-toggle').checked);
+  EW_SIG = '';
+  try{ chartTick(true); }catch(e){}
+}
+function ewClear(){
+  if(CHART){ for(const s of EW_SERIES){ try{ CHART.removeSeries(s); }catch(e){} } }
+  EW_SERIES = [];
+  if(EW_MARKS){ try{ EW_MARKS.setMarkers([]); }catch(e){} }
+}
+function ewStyleOf(st){
+  const LW = window.LightweightCharts;
+  if(st === 'dotted') return (LW && LW.LineStyle && LW.LineStyle.Dotted != null) ? LW.LineStyle.Dotted : 1;
+  if(st === 'dashed') return (LW && LW.LineStyle && LW.LineStyle.Dashed != null) ? LW.LineStyle.Dashed : 2;
+  return 0;
+}
+function ewRebuild(){
+  ewClear();
+  if(!EW_ON || window.__EW_FAILED || !window.ElliottWaveLux || !CHART || !CSERIES || !chartBars.length) return;
+  const LW = window.LightweightCharts;
+  const lastT = chartBars[chartBars.length - 1].time;
+  const CFGS = [
+    { len: 4,  color: '#ff5b6a' },
+    { len: 8,  color: '#4da3ff' },
+    { len: 16, color: '#e6edf3' },
+  ];
+  const marks = [], infos = [];
+  for(const cfg of CFGS){
+    let res = null;
+    try{ res = window.ElliottWaveLux.compute(chartBars, { len: cfg.len, color: cfg.color }); }catch(e){ continue; }
+    if(res && res.info) infos.push('[' + cfg.len + '] ' + res.info);
+    if(!res) continue;
+    for(const ln of (res.lines || [])){
+      if(ln.t1 > lastT) continue;
+      try{
+        const s = CHART.addSeries(LW.LineSeries, {
+          color: ln.color || cfg.color, lineWidth: 1, lineStyle: ewStyleOf(ln.style || 'solid'),
+          lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+          pointMarkersVisible: false,
+        });
+        s.setData([{ time: ln.t1, value: ln.p1 }, { time: Math.min(ln.t2, lastT), value: ln.p2 }]);
+        EW_SERIES.push(s);
+      }catch(e){}
+    }
+    for(const fb of (res.fibs || [])){
+      try{
+        const s = CHART.addSeries(LW.LineSeries, {
+          color: fb.color || cfg.color, lineWidth: 1, lineStyle: ewStyleOf(fb.style || 'solid'),
+          lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+          pointMarkersVisible: false,
+        });
+        s.setData([{ time: fb.t1, value: fb.price }, { time: Math.min(fb.t2, lastT), value: fb.price }]);
+        EW_SERIES.push(s);
+      }catch(e){}
+    }
+    for(const m of (res.marks || [])) marks.push(m);
+  }
+  marks.sort((a, b) => a.time - b.time);   // شرط المكتبة: تصاعدي صارم
+  if(EW_MARKS && marks.length){ try{ EW_MARKS.setMarkers(marks); }catch(e){} }
+  const noteEl = $('ew-note');
+  if(noteEl) noteEl.textContent = (EW_ON && infos.length) ? ('موجات إليوت: ' + infos.join(' · ')) : '';
+}
+function ewMaybe(){
+  if(window.__EW_FAILED || !window.ElliottWaveLux) return;
+  if(!EW_ON){
+    if(EW_SIG !== 'off'){
+      ewClear(); EW_SIG = 'off';
+      const n = $('ew-note'); if(n) n.textContent = '';
+    }
+    return;
+  }
+  if(!chartBars.length) return;
+  const sig = [chartSym, (ALLSTATE && ALLSTATE.entry_timeframe) || '5m', chartBars.length, chartBars[chartBars.length - 1].time].join('|');
+  if(sig === EW_SIG) return;
+  EW_SIG = sig;
+  ewRebuild();
 }
 
 async function refresh(){
