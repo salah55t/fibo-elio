@@ -192,7 +192,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.9.8"  # FE1.9.8 «التحكم والصمود» — ناتج بحث المشاريع مفتوحة المصدر (freqtrade/hummingbot/jesse/cryptofeed/OctoBot) وتحليل الفجوات مع مشروعنا: (1) التحكم عن بعد من تلغرام (الميزة القاتلة في freqtrade): خيط getUpdates long-poll بأوامر /status /pending /positions /stats /close /cancel /pause /resume /ping /help (عربية وإنجليزية مع اسم البوت الملحق) — أوامر التنفيذ تستخدم نفس مسارات اللوحة حرفيًا (close_signal_row/close_real_trade/set_trading_enabled) فلا منطق مزدوج، والمحادثة المصرّحة وحدها، وTELEGRAM_CONTROL=0 يعطل؛ (2) تنبيه «غلق يدوي مطلوب» (الطلب الحي): كل مسارات فشل الغلق الحقيقي (مفاتيح غائبة/تعذر إلغاء الوقف الراكن/فشل أمر البيع/استثناء) ترفع علم manual_close_required على الصفقة عبر meta_json + تنبيه 🚨 بارز يسمّي الرمز والكمية ومستوى الخروج مع إرشاد /close، تذكير كل MANUAL_CLOSE_REMIND_SEC، ويُمسح تلقائيًا عند أول إغلاق ناجح مع إشعار حلّ؛ (3) بوابة تلغرام ضد الضجيج (الطلب الحي): log_and_notify يفلتر الإرسال عبر telegram_gate — الأصناف المهمة وحدها تصل المحادثة (إشارة جديدة/ملء/إغلاق/جزئي/دورة المعلق/غلق يدوي/أخطاء التنفيذ/تغييرات الوضع/قاطع المخاطر/انقطاع البيانات/إقلاع) والضجيج (تدوير المزودين/ماسح الكون/فحص الخمول/BE) يبقى في السجل واللوحة، + كتم التكرار الحرفي TELEGRAM_DEDUP_SEC (حلقة إعادة المحاولة كانت ترسل الخطأ نفسه كل 60ث) + قصّ آمن عند 4000 حرف؛ (4) كاش الشموع الدائم + الوضع المتدهور (فلسفة cryptofeed/cryptostore): جدول kline_cache في Postgres يكتب الشموع المغلقة حصرًا (الجديدة وحدها بعد البذرة) وعند فشل كل المزودين يخدم الكاش بوضع متدهور معلن مرة واحدة — المسح والمتابعة والغلق لا يتوقفون أبدًا ما دامت Postgres حية، /health يكشف telegram_control وkline_cache. الصفر تغيير في منطق التداول نفسه. (FE1.9.7 «تيك خام»: طلب «جلب الأسعار ويب سوكت لحظية لأقصى درجة ممكنة» — طبقة تيار باينانس الخام فوق ccxt.pro (لا تغيير فيها — تبقى احتياطًا حيًا): (1) @trade لكل قائمة الكشف — سعر على كل صفقة فعلية منفذة (أجزاء الثانية، نفس دلالة «آخر سعر» في واجهة باينانس) بدل ~1ث؛ (2) @kline_<فريم التنفيذ> لرموز الصفقات النشطة — الشمعة الجارية تتحدث داخل الشريط فيتحقق الملء من أرضية حية أدق؛ (3) استيقاظ فوري لحلقة المراقبة (60ث ← لحظي) عند لمس تيك لمستوى تنفيذ: معلق ← تيك ≤ الدخول، مفتوح ← تيك ≤ الوقف أو ≥ الهدف — نفس monitor_step حرفيًا فقط الاستدعاء لحظي، والحلقة الستينية شبكة أمان؛ (4) نبض الحركة يفحص كل 2ث بدل 5 (بلا REST — قراءة ذاكرة)؛ (5) شارة «تيك خام ⚡⚡» بعداد التيك وعمر آخر رسالة في اللوحة + كتلة raw في /api/ws/status. تيار مدمج واحد (30+ تيار < سقف 1024، صفر وزن REST)، إعادة اتصال دائمة بتراجع + رقيب يعيد البناء عند تغيّر المجموعة، RAW_TICK_WS=0 يعطل مع تساهل كامل. (FE1.9.6 «لا اختفاء صامت»: بلاغ حي (18:44 UTC 15 أكتوبر) — «السعر وصل الدخول في باينانس واللوحة لم تتغير» — التحقيق أثبت عكس البلاغ (اللوحة حية طابقت باينانس حرفيًا 0.00456500، والمنطقة لم تُلمس: أدنى قاع 0.0045230 فوق قمتها 0.06%) لكن كشف فجوة عرض حقيقية: الإشارة المعلقة عند انتهاء صلاحيتها (expired) أو إبطالها البنيوي (cancelled) تختفي من اللوحة بصمت لأن /api/all كان يعرض المغلق فقط (status='closed' = صفقة تداولت وغلقت بنتيجة). الإصلاح: (1) قسم «المغلق» يعرض المنتهية والملغاة أيضًا بشارات مميزة (منتهية/ملغاة) مع سعر الدخول المرجعي؛ (2) انتهاء الصلاحية والإبطال البنيوي يطلقان إشعارًا في اللوحة/تلجرام (مثل الملء) — دورة حياة المعلق مرئية كاملة: وُلد → مُلئ أو انتهى أو أُبطل. صفر تغيير سلوك تداولي: شروط الملء/الإبطال/الصلاحية كما هي حرفيًا. (FE1.9.5 «الإقلاع مرئي»: /health يكشف boot_at وuptime_sec — إعادة تشغيل العملية (مثل الحادثة 14:59:44 بعد نشر FE1.9.4 — كل started_at والعدادات تصفرت) تُرى فورًا من نبضة واحدة بدل استدلال عكسي من started_at للاشتراكات. صفر تغيير سلوك. (FE1.9.4 «حكم يسمّي قاتله»: سجلات wave_validator تُقرأ بلا ترجم — (1) سطر الحكم النهائي يعدّد القواعد الفاشلة («INVALID — فشل: Rule-1, Rule-3») بدل عدّاد مجرد؛ (2) رفض Rule-2 يسمّي الشرط القاتل صراحة (أقصر الأمواج؟ أم عدم كسر نهاية W1؟) — القاعدة مركّبة من الشرطين والحالة الملتبسة W3_not_shortest=True مع FAIL كانت تحيّر قارئ السجلات؛ (3) سطر «Starting impulse validation» نزل DEBUG — تشويش بلا معلومة. صفر تغيير سلوك: كل القرارات كما هي حرفيًا. (FE1.9.3 «تصنيف صادق»: رفض «لا هدف يحقق أرضية R:R» بدل «أسعار غير منطقية» — إثبات حي PUMP في حزام إعادة التشغيل (replay harness أول مرة: مسار الإنتاج الحرفي كشفًا وبوابات وإنشاء أمر معلق على بيانات حقيقية وُلّدت فيه 30 حدث أمر معلق عبر 5 رموز في 4 أيام) — سلّم الأهداف بلا درجة تحقق TP_MIN_RR وأساس 1.618 تحت الدخول = هندسة بلا هدف مربح كفاية، عداد rejected_no_target جديد + عرضه في اللوحة، الرفض نفسه لم يتغير (صفر تغيير سلوك). (FE1.9.2 «كشف بلا عمى»: (1) إصلاح انكسار الزيجزاج على شريحة فارغة (انعكاس مؤكد على الشريط الأخير ثم محور ختامي بعده — STRK/BAT/RNDR كانت تتخطى بصمت كل دورة: argmin على تسلسل فارغ) — المحور الختامي على الشريط الأخير ذاته؛ (2) التقادم قبل الاختيار: القديمة الأجود إليوتيًا كانت تدفن الحديثة المتواضعة (المختار وحده تقيّمه البوابات)؛ (3) عداد scan_errors يجعل الكشف الأعمى الصامت مرئيًا). (FE1.9.1 «نبض حي»: إصلاح قاتل النبض — اشتراكات ويب سوكت كانت لرموز الصفقات النشطة وحدها (db signals pending/open) فصفر صفقات = صفر أسعار حية = نبض الحركة صامت للأبد (الإثبات الحي: momentum_kicks=0 بعد 76 دورة). الإصلاح: watchlist كلها تدخل بتيار سعر فقط (شموع تبقى لرموز الصفقات النشطة — حمية 512MB) + فشل قاعدة البيانات لا يعطل نبض القائمة — ws_wanted_sets نقية قابلة للاختبار + _ws_spawn(with_ohlcv). (FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
+BOT_VERSION = "FE1.9.9"  # FE1.9.9 «أهداف سكالبينج واقعية متدرجة» — علاج بلاغ حي: «البوت يضع أهدافًا بعيدة لم تصلها العملة منذ أكثر من شهر» والبوت مصمم للسبوت سكالبينج. (1) سقف الأسبوع TP_WEEK_CAP: قمة آخر 7 أيام (شموع يومية عبر سلسلة المزودين + كاش 30د) هي أقصى ما يلمسه أي هدف — كل درجات سلّم FE1.6.0 تُقص على السقف، وما بقي تحت الدخول أو تحت أرضية R:R الصافي يُهدر، وإن سقط الجميع رُفضت الإشارة بعداد rejected_weekly_cap وسبب مسمّى في اللوحة؛ فشل جلب القمة = fail-open بالسلوك القديم (بلا سقف بلا ادّعاء). (2) أهداف متدرجة TP1→TP3: الدرجات المؤهلة الباقية تحت السقف تصير مراحل جني (tp1/tp2/tp3 أعمدة DB + عرض اللوحة + رسالة التلغرام)، عند لمس هدف وسيط تُغلق TP_STAGE_SLICE_PCT% من الكمية المتبقية بنفس عقيدة الجزئي FE1.8.0 (ورقي: محاسبة، حقيقي: بيع سوق + محاسبة، غبار = يُعتبر منجزًا ويركب)، والهدف الأخير (take_profit = tp3) يغلق الباقي في المسار القديم حرفيًا. (3) تسوية الأهداف الحية reconcile_live_targets: كل صفقة معلقة/مفتوحة هدفها فوق قمة الأسبوع تُقص للسقف مع بلاغ TARGET_FIX مرة واحدة لكل صفقة (نافذة الأسبوع تتدحرج → إعادة قص صامتة بسجل) — علاج مباشر للصفقات المفتوحة الحالية بأهدافها الشهرية البعيدة. صفر تغيير في الملء/الوقف/الإبطال/الصلاحية. (FE1.9.8 «التحكم والصمود» — ناتج بحث المشاريع مفتوحة المصدر (freqtrade/hummingbot/jesse/cryptofeed/OctoBot) وتحليل الفجوات مع مشروعنا: (1) التحكم عن بعد من تلغرام (الميزة القاتلة في freqtrade): خيط getUpdates long-poll بأوامر /status /pending /positions /stats /close /cancel /pause /resume /ping /help (عربية وإنجليزية مع اسم البوت الملحق) — أوامر التنفيذ تستخدم نفس مسارات اللوحة حرفيًا (close_signal_row/close_real_trade/set_trading_enabled) فلا منطق مزدوج، والمحادثة المصرّحة وحدها، وTELEGRAM_CONTROL=0 يعطل؛ (2) تنبيه «غلق يدوي مطلوب» (الطلب الحي): كل مسارات فشل الغلق الحقيقي (مفاتيح غائبة/تعذر إلغاء الوقف الراكن/فشل أمر البيع/استثناء) ترفع علم manual_close_required على الصفقة عبر meta_json + تنبيه 🚨 بارز يسمّي الرمز والكمية ومستوى الخروج مع إرشاد /close، تذكير كل MANUAL_CLOSE_REMIND_SEC، ويُمسح تلقائيًا عند أول إغلاق ناجح مع إشعار حلّ؛ (3) بوابة تلغرام ضد الضجيج (الطلب الحي): log_and_notify يفلتر الإرسال عبر telegram_gate — الأصناف المهمة وحدها تصل المحادثة (إشارة جديدة/ملء/إغلاق/جزئي/دورة المعلق/غلق يدوي/أخطاء التنفيذ/تغييرات الوضع/قاطع المخاطر/انقطاع البيانات/إقلاع) والضجيج (تدوير المزودين/ماسح الكون/فحص الخمول/BE) يبقى في السجل واللوحة، + كتم التكرار الحرفي TELEGRAM_DEDUP_SEC (حلقة إعادة المحاولة كانت ترسل الخطأ نفسه كل 60ث) + قصّ آمن عند 4000 حرف؛ (4) كاش الشموع الدائم + الوضع المتدهور (فلسفة cryptofeed/cryptostore): جدول kline_cache في Postgres يكتب الشموع المغلقة حصرًا (الجديدة وحدها بعد البذرة) وعند فشل كل المزودين يخدم الكاش بوضع متدهور معلن مرة واحدة — المسح والمتابعة والغلق لا يتوقفون أبدًا ما دامت Postgres حية، /health يكشف telegram_control وkline_cache. الصفر تغيير في منطق التداول نفسه. (FE1.9.7 «تيك خام»: طلب «جلب الأسعار ويب سوكت لحظية لأقصى درجة ممكنة» — طبقة تيار باينانس الخام فوق ccxt.pro (لا تغيير فيها — تبقى احتياطًا حيًا): (1) @trade لكل قائمة الكشف — سعر على كل صفقة فعلية منفذة (أجزاء الثانية، نفس دلالة «آخر سعر» في واجهة باينانس) بدل ~1ث؛ (2) @kline_<فريم التنفيذ> لرموز الصفقات النشطة — الشمعة الجارية تتحدث داخل الشريط فيتحقق الملء من أرضية حية أدق؛ (3) استيقاظ فوري لحلقة المراقبة (60ث ← لحظي) عند لمس تيك لمستوى تنفيذ: معلق ← تيك ≤ الدخول، مفتوح ← تيك ≤ الوقف أو ≥ الهدف — نفس monitor_step حرفيًا فقط الاستدعاء لحظي، والحلقة الستينية شبكة أمان؛ (4) نبض الحركة يفحص كل 2ث بدل 5 (بلا REST — قراءة ذاكرة)؛ (5) شارة «تيك خام ⚡⚡» بعداد التيك وعمر آخر رسالة في اللوحة + كتلة raw في /api/ws/status. تيار مدمج واحد (30+ تيار < سقف 1024، صفر وزن REST)، إعادة اتصال دائمة بتراجع + رقيب يعيد البناء عند تغيّر المجموعة، RAW_TICK_WS=0 يعطل مع تساهل كامل. (FE1.9.6 «لا اختفاء صامت»: بلاغ حي (18:44 UTC 15 أكتوبر) — «السعر وصل الدخول في باينانس واللوحة لم تتغير» — التحقيق أثبت عكس البلاغ (اللوحة حية طابقت باينانس حرفيًا 0.00456500، والمنطقة لم تُلمس: أدنى قاع 0.0045230 فوق قمتها 0.06%) لكن كشف فجوة عرض حقيقية: الإشارة المعلقة عند انتهاء صلاحيتها (expired) أو إبطالها البنيوي (cancelled) تختفي من اللوحة بصمت لأن /api/all كان يعرض المغلق فقط (status='closed' = صفقة تداولت وغلقت بنتيجة). الإصلاح: (1) قسم «المغلق» يعرض المنتهية والملغاة أيضًا بشارات مميزة (منتهية/ملغاة) مع سعر الدخول المرجعي؛ (2) انتهاء الصلاحية والإبطال البنيوي يطلقان إشعارًا في اللوحة/تلجرام (مثل الملء) — دورة حياة المعلق مرئية كاملة: وُلد → مُلئ أو انتهى أو أُبطل. صفر تغيير سلوك تداولي: شروط الملء/الإبطال/الصلاحية كما هي حرفيًا. (FE1.9.5 «الإقلاع مرئي»: /health يكشف boot_at وuptime_sec — إعادة تشغيل العملية (مثل الحادثة 14:59:44 بعد نشر FE1.9.4 — كل started_at والعدادات تصفرت) تُرى فورًا من نبضة واحدة بدل استدلال عكسي من started_at للاشتراكات. صفر تغيير سلوك. (FE1.9.4 «حكم يسمّي قاتله»: سجلات wave_validator تُقرأ بلا ترجم — (1) سطر الحكم النهائي يعدّد القواعد الفاشلة («INVALID — فشل: Rule-1, Rule-3») بدل عدّاد مجرد؛ (2) رفض Rule-2 يسمّي الشرط القاتل صراحة (أقصر الأمواج؟ أم عدم كسر نهاية W1؟) — القاعدة مركّبة من الشرطين والحالة الملتبسة W3_not_shortest=True مع FAIL كانت تحيّر قارئ السجلات؛ (3) سطر «Starting impulse validation» نزل DEBUG — تشويش بلا معلومة. صفر تغيير سلوك: كل القرارات كما هي حرفيًا. (FE1.9.3 «تصنيف صادق»: رفض «لا هدف يحقق أرضية R:R» بدل «أسعار غير منطقية» — إثبات حي PUMP في حزام إعادة التشغيل (replay harness أول مرة: مسار الإنتاج الحرفي كشفًا وبوابات وإنشاء أمر معلق على بيانات حقيقية وُلّدت فيه 30 حدث أمر معلق عبر 5 رموز في 4 أيام) — سلّم الأهداف بلا درجة تحقق TP_MIN_RR وأساس 1.618 تحت الدخول = هندسة بلا هدف مربح كفاية، عداد rejected_no_target جديد + عرضه في اللوحة، الرفض نفسه لم يتغير (صفر تغيير سلوك). (FE1.9.2 «كشف بلا عمى»: (1) إصلاح انكسار الزيجزاج على شريحة فارغة (انعكاس مؤكد على الشريط الأخير ثم محور ختامي بعده — STRK/BAT/RNDR كانت تتخطى بصمت كل دورة: argmin على تسلسل فارغ) — المحور الختامي على الشريط الأخير ذاته؛ (2) التقادم قبل الاختيار: القديمة الأجود إليوتيًا كانت تدفن الحديثة المتواضعة (المختار وحده تقيّمه البوابات)؛ (3) عداد scan_errors يجعل الكشف الأعمى الصامت مرئيًا). (FE1.9.1 «نبض حي»: إصلاح قاتل النبض — اشتراكات ويب سوكت كانت لرموز الصفقات النشطة وحدها (db signals pending/open) فصفر صفقات = صفر أسعار حية = نبض الحركة صامت للأبد (الإثبات الحي: momentum_kicks=0 بعد 76 دورة). الإصلاح: watchlist كلها تدخل بتيار سعر فقط (شموع تبقى لرموز الصفقات النشطة — حمية 512MB) + فشل قاعدة البيانات لا يعطل نبض القائمة — ws_wanted_sets نقية قابلة للاختبار + _ws_spawn(with_ohlcv). (FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -252,7 +252,7 @@ TELEGRAM_ALERT_TYPES = {t.strip() for t in os.getenv(
     "TELEGRAM_ALERT_TYPES",
     "NEW_SIGNAL,ORDER_FILLED,TRADE_CLOSED,PARTIAL_CLOSE,PENDING_LIFECYCLE,"
     "MANUAL_CLOSE_REQUIRED,REAL_TRADE_ERROR,TRADING_STATUS_CHANGE,REAL_MODE_CHANGE,"
-    "STATS_RESET,BINANCE_CONN,RISK_PAUSE,DATA_DEGRADED,KILL_SWITCH,BOOT").split(",") if t.strip()}
+    "STATS_RESET,BINANCE_CONN,RISK_PAUSE,DATA_DEGRADED,KILL_SWITCH,BOOT,TARGET_FIX").split(",") if t.strip()}
 TELEGRAM_DEDUP_SEC = int(os.getenv("TELEGRAM_DEDUP_SEC", "300"))     # كتم تكرار الرسالة الحرفية خلال النافذة (ضجيج إعادة المحاولة)
 TELEGRAM_CONTROL = os.getenv("TELEGRAM_CONTROL", "1").strip().lower() not in ("0", "false", "no", "off")
 TELEGRAM_POLL_TIMEOUT_SEC = int(os.getenv("TELEGRAM_POLL_TIMEOUT_SEC", "25"))  # long-poll getUpdates
@@ -285,6 +285,16 @@ IDLE_RESCAN_MIN_GAP_SEC = float(os.getenv("IDLE_RESCAN_MIN_GAP_SEC", "2700"))  #
 WAVE_MIN_PROPORTION = float(os.getenv("WAVE_MIN_PROPORTION", "0.15"))  # أرضية الموجة الدافعة من الحركة الأمومية (0 يعطل القاعدة الرابعة)
 TP_LADDER_ENABLED = os.getenv("TP_LADDER_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 TP_MIN_RR = float(os.getenv("TP_MIN_RR", "0.5"))          # أدنى مخاطرة/عائد يقبل به هدف من السلّم — وإلا بقي 1.618 الأصلي (الوقف البنيوي يجعل R:R النموذجي 0.5-0.8)
+
+# [FE1.9.9] أهداف سكالبينج واقعية متدرجة — «الهدف لا يتجاوز ما لمسته العملة فعلًا مؤخرًا»
+TP_WEEK_CAP_ENABLED = os.getenv("TP_WEEK_CAP_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+TP_WEEK_CAP_DAYS = int(os.getenv("TP_WEEK_CAP_DAYS", "7"))            # نافذة القمم التاريخية بالأيام — طلب المستخدم: أسبوع
+TP_WEEK_CAP_TTL_SEC = float(os.getenv("TP_WEEK_CAP_TTL_SEC", "1800")) # كاش قمة الأسبوع لكل رمز (شموع يومية رخيصة لكن لا تكررها)
+TP_WEEK_CAP_NEG_TTL_SEC = float(os.getenv("TP_WEEK_CAP_NEG_TTL_SEC", "300"))  # كاش سلبي للفشل (fail-open مؤقت)
+TP_STAGES_ENABLED = os.getenv("TP_STAGES_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+TP_STAGE_SLICE_PCT = float(os.getenv("TP_STAGE_SLICE_PCT", "40.0"))   # % من الكمية المتبقية يُغلق عند كل هدف وسيط (tp1/tp2)
+TP_STAGE_MIN_GAP_R = float(os.getenv("TP_STAGE_MIN_GAP_R", "0.2"))    # أدنى فجوة بين مرحلتين بوحدة R — لا مراحل متلاصقة ضجيجية
+TP_RECONCILE_SEC = float(os.getenv("TP_RECONCILE_SEC", "900"))        # إيقاع تسوية الأهداف الحية (قصّ ما فوق سقف الأسبوع)
 HTF_BIAS_ENABLED = os.getenv("HTF_BIAS_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 HTF_BIAS_TIMEFRAME = os.getenv("HTF_BIAS_TIMEFRAME", "1d")  # فريم التحيز الأعلى (يوجّه فريم الكشف 15m)
 HTF_BIAS_CACHE_SEC = float(os.getenv("HTF_BIAS_CACHE_SEC", "14400"))  # كاش التحيز 4 ساعات (وزن REST مهمل)
@@ -478,6 +488,8 @@ scan_stats: Dict[str, Any] = {
     "rejected_cluster": 0,        # [FE1.7.0] سقف العنقود الاتجاهي
     "rejected_exposure_cap": 0,   # [FE1.7.0] سقوف التعرض الورقي (مركز/إجمالي)
     "rejected_rr_net": 0,         # [FE1.8.0] R:R صافي بعد الرسوم تحت الأرضية
+    "rejected_weekly_cap": 0,     # [FE1.9.9] لا هدف واقعي تحت قمة آخر 7 أيام — سلّم كله فوق سقف الأسبوع بعد القص
+    "targets_capped_live": 0,     # [FE1.9.9] صفقات حية قُصّ هدفها إلى سقف الأسبوع (تسوية)
     "rejected_risk_pause": 0,     # [FE1.8.0] تبريد متتاليات الخسارة جارٍ
     "rejected_daily_loss": 0,     # [FE1.8.0] حد الخسارة اليومي ملامس
     "last_scan_at": "", "last_scan_fetched": 0,  # [FE1.0.1] تشخيص دورة المسح
@@ -662,7 +674,9 @@ _SIGNALS_DDL_SQLITE = _SIGNALS_DDL_PG.replace("BIGSERIAL PRIMARY KEY", "INTEGER 
 def migrate_db() -> None:
     """[FE1.4.0] أعمدة التداول الحقيقي لقواعد بيانات قديمة (ALTER بلا أذى إن وُجدت)."""
     for col, ddl in (("is_real", "INTEGER DEFAULT 0"), ("order_id", "TEXT"), ("exit_order_id", "TEXT"),
-                     ("initial_quantity", "NUMERIC"), ("realized_pnl_usdt", "NUMERIC DEFAULT 0")):  # [FE1.8.0] محاسبة الجزئي
+                     ("initial_quantity", "NUMERIC"), ("realized_pnl_usdt", "NUMERIC DEFAULT 0"),  # [FE1.8.0] محاسبة الجزئي
+                     ("tp1", "NUMERIC"), ("tp2", "NUMERIC"), ("tp3", "NUMERIC"),  # [FE1.9.9] الأهداف المتدرجة
+                     ("weekly_high", "NUMERIC")):  # [FE1.9.9] سقف الأسبوع لحظة الإنشاء/القص
         try:
             db.execute(f"ALTER TABLE signals ADD COLUMN {col} {ddl}")
         except Exception:
@@ -2174,6 +2188,82 @@ def compute_tp_ladder(setup: DetectedSetup) -> List[Tuple[float, str]]:
     return sorted(cands, key=lambda t: t[0], reverse=True)
 
 
+# ── [FE1.9.9] أهداف سكالبينج واقعية متدرجة — سقف الأسبوع + مراحل جني ──────────
+# البلاغ الحي: «البوت يضع أهدافًا بعيدة لم تصلها العملة منذ أكثر من شهر» والبوت
+# مصمم للسبوت سكالبينج. الحل: (1) قمة آخر 7 أيام هي أقصى ما يلمسه أي هدف؛
+# (2) الدرجات المؤهلة تحت السقف تصير مراحل TP1→TP3 بجني جزئي عند كل مرحلة.
+
+_tp_week_lock = threading.Lock()
+_tp_week_cache: Dict[str, Tuple[float, Optional[float]]] = {}  # symbol → (ts, high أو None)
+
+
+def weekly_high(symbol: str) -> Optional[float]:
+    """أعلى قمة لآخر TP_WEEK_CAP_DAYS أيام (شموع يومية عبر سلسلة المزودين).
+    [FE1.9.9] السقف الواقعي: هدف لا يتجاوز ما لمسته العملة فعلًا خلال أسبوع.
+    كاش 30 دقيقة للناجح وكاش سلبي 5 دقائق للفاشل — فشل الجلب يعيد None
+    (fail-open: بلا سقف يعمل المسار القديم حرفيًا، بلا ادّعاء قمة وهمية)."""
+    now = time.time()
+    with _tp_week_lock:
+        hit = _tp_week_cache.get(symbol)
+        if hit is not None:
+            age = now - hit[0]
+            ttl = TP_WEEK_CAP_TTL_SEC if hit[1] is not None else TP_WEEK_CAP_NEG_TTL_SEC
+            if age < ttl:
+                return hit[1]
+    hi: Optional[float] = None
+    try:
+        df = fetch_ohlcv_df(symbol, "1d", limit=TP_WEEK_CAP_DAYS + 1, min_candles=3)
+        if df is not None and not df.empty:
+            hi = float(df["high"].max())
+            if not (hi > 0):
+                hi = None
+    except Exception as exc:
+        logger.debug("weekly_high(%s) فشل: %s", symbol, exc)
+        hi = None
+    with _tp_week_lock:
+        _tp_week_cache[symbol] = (now, hi)
+    return hi
+
+
+def build_staged_targets(setup: DetectedSetup, entry: float, sl: float,
+                         weekly_hi: float) -> Tuple[List[Tuple[float, str]], bool, float]:
+    """[FE1.9.9] درجات سلّم FE1.6.0 مُقصّة على سقف الأسبوع ومرتبة مراحل صاعدة.
+    التأهيل: الدرجة الخام rr ≥ TP_MIN_RR (كالأصل)، وبعد القص: فوق الدخول
+    وأرضية R:R الصافي بعد الرسوم، وإزالة التقارب بفجوة ≥ TP_STAGE_MIN_GAP_R×R.
+    يعيد (stages صاعدة [(سعر، أساس)، ...]، هل قُصّت درجة فعلًا، أفضل rr خام).
+    stages فارغة = لا هدف واقعي تحت السقف (المتصل يرفض بعداد rejected_weekly_cap).
+    الهابط (BEARISH) لا يُنشئ صفقات سبوت أصلًا — المتصل لا يستدعيها له."""
+    risk = entry - sl
+    if risk <= 0:
+        return [], False, 0.0
+    best_rr = 0.0
+    weekly_capped = False
+    kept: List[Tuple[float, str]] = []
+    for cand, basis in compute_tp_ladder(setup):
+        c = float(cand)
+        rr_raw = (c - entry) / risk
+        if rr_raw > best_rr:
+            best_rr = rr_raw
+        if rr_raw < TP_MIN_RR:
+            continue                      # تأهيل خام كما في الأصل (قبل القص)
+        cc = min(c, weekly_hi)            # القص على قمة الأسبوع — القلب الأول للإصلاح
+        if cc < c:
+            weekly_capped = True
+        if cc <= entry:
+            continue                      # القص أنزل الدرجة تحت الدخول — مهدراة
+        if RR_NET_MIN > 0 and rr_net_value(entry, sl, cc) < RR_NET_MIN:
+            continue                      # الرسوم تلتهم الربح الصافي لهذه الدرجة
+        kept.append((cc, basis))
+    kept.sort(key=lambda t: t[0])
+    stages: List[Tuple[float, str]] = []
+    min_gap = risk * max(TP_STAGE_MIN_GAP_R, 0.0)
+    for c, b in kept:                     # إزالة التقارب: لا مراحل متلاصقة ضجيجية
+        if stages and (c - stages[-1][0]) < min_gap:
+            continue
+        stages.append((c, b))
+    return stages, weekly_capped, best_rr
+
+
 def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
     """حجم المركز على مسافة المخاطرة الحقيقية (1% من الرصيد الورقي)."""
     balance = get_paper_balance()
@@ -2983,6 +3073,16 @@ def enrich_live_signal(sig: Dict[str, Any]) -> Dict[str, Any]:
             out["stop_order_id"] = meta.get("stop_order_id") or None
             out["realized_pnl_usdt"] = round(float(sig.get("realized_pnl_usdt") or 0), 6)
             out["initial_quantity"] = float(sig.get("initial_quantity") or qty)
+            # [FE1.9.9] مراحل الأهداف للوحة — صاعدة صارمة فقط (لا تكرار ولا تنازلي)
+            _stg = []
+            for _k in ("tp1", "tp2", "take_profit"):
+                try:
+                    _vf = float(sig.get(_k)) if sig.get(_k) is not None else 0.0
+                except (TypeError, ValueError):
+                    _vf = 0.0
+                if _vf > 0 and (not _stg or _vf > _stg[-1]):
+                    _stg.append(_vf)
+            out["tp_stages"] = [round(s, 8) for s in _stg] if len(_stg) > 1 else []
         elif status == "pending":
             entry = float(sig.get("entry_price") or 0)
             if price and entry > 0:
@@ -2996,6 +3096,16 @@ def enrich_live_signal(sig: Dict[str, Any]) -> Dict[str, Any]:
 def register_detection(symbol: str, setup: DetectedSetup, traded: bool) -> None:
     """حلقة الالتقاطات للوحة: صاعدة (قابلة للتنفيذ) وهابطة (للمتابعة فقط — سبوت)."""
     fib = setup.validation_result.fib
+    # [FE1.9.9] الهدف المعروض في الالتقاطات مقصوص على قمة الأسبوع — لا هدف شلالي وهمي
+    tp_disp = compute_take_profit(setup)
+    _wh: Optional[float] = None
+    try:
+        if TP_WEEK_CAP_ENABLED:
+            _wh = weekly_high(symbol)
+            if _wh and _wh > 0 and tp_disp > _wh:
+                tp_disp = _wh
+    except Exception:
+        _wh = None
     entry = {
         "symbol": symbol,
         "timeframe": setup.timeframe,
@@ -3008,7 +3118,8 @@ def register_detection(symbol: str, setup: DetectedSetup, traded: bool) -> None:
         "entry_zone_low": round(setup.entry_zone_low, 8),
         "entry_zone_high": round(setup.entry_zone_high, 8),
         "stop_loss": round(setup.stop_loss_price, 8),
-        "take_profit": round(compute_take_profit(setup), 8),
+        "take_profit": round(tp_disp, 8),  # [FE1.9.9] معروض مقصوصًا على قمة الأسبوع — لا هدف شلالي وهمي في الالتقاطات
+        "weekly_high": (round(_wh, 8) if (_wh and _wh > 0) else None),
         "traded": traded,
         "detected_at": utc_now_iso(),
     }
@@ -3047,17 +3158,66 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
     sl = float(setup.stop_loss_price)
     tp = compute_take_profit(setup)
     # [FE1.6.0] سلّم الأهداف: أقرب هدف احتمالي يحقق أرضية R:R — وإلا بقي 1.618
+    # [FE1.9.9] سكالبينج واقعي: الدرجات تُقص على قمة آخر 7 أيام (سقف الأسبوع) —
+    # «الهدف لا يتجاوز ما لمسته العملة فعلًا خلال أسبوع» — والمؤهل الباقي يصير مراحل
+    # TP1→TP3. فشل جلب القمة = السلوك القديم حرفيًا (fail-open بلا ادّعاء).
     tp_basis = "ext_1618"
+    tp1: Optional[float] = None
+    tp2: Optional[float] = None
+    tp3: Optional[float] = None
+    weekly_hi: Optional[float] = None
+    weekly_capped = False
     risk_per_coin_pre = entry - sl
     ladder_best_rr = 0.0   # [FE1.9.3] أفضل نسبة R:R لدرة سلّم فوق الدخول — لتصنيف صادق عند الفشل
     if TP_LADDER_ENABLED and risk_per_coin_pre > 0:
-        for cand, basis in compute_tp_ladder(setup):
-            rr_c = (float(cand) - entry) / risk_per_coin_pre
-            if rr_c > ladder_best_rr:
-                ladder_best_rr = rr_c
-            if rr_c >= TP_MIN_RR:
-                tp, tp_basis = float(cand), basis
-                break
+        if TP_WEEK_CAP_ENABLED:
+            weekly_hi = weekly_high(symbol)
+        if weekly_hi and weekly_hi > 0 and TP_STAGES_ENABLED and setup.direction == "BULLISH":
+            stages, weekly_capped, ladder_best_rr = build_staged_targets(setup, entry, sl, weekly_hi)
+            if stages:
+                tp1, tp_basis = stages[0]
+                tp3 = stages[-1][0]
+                if len(stages) >= 3:
+                    tp2 = stages[1][0]
+                tp = tp3  # الهدف الأخير يغلق الباقي — الوسطاء يُغلقون جزئيًا عند لمسهم
+            elif ladder_best_rr >= TP_MIN_RR:
+                # درجات مؤهلة خامًا لكن لا شيء واقعي تحت سقف الأسبوع بعد القص
+                _why = (f"لا هدف واقعي تحت سقف الأسبوع ({TP_WEEK_CAP_DAYS} أيام) — أفضل درجة سلّم "
+                        f"{ladder_best_rr:.2f}R سقطت تحت الدخول أو أرضية R:R الصافية بعد القص على القمة")
+                _set_reject_reason(symbol, _why)
+                with scan_stats_lock:
+                    scan_stats["rejected_weekly_cap"] += 1
+                logger.info("[%s] رفض سقف الأسبوع: %s (دخول %s، وقف %s، قمة %s أيام %s) — لا إشارة",
+                            symbol, _why, fmt_price(entry), fmt_price(sl),
+                            TP_WEEK_CAP_DAYS, fmt_price(weekly_hi))
+                return False
+        elif weekly_hi and weekly_hi > 0:
+            # قصّ بلا مراحل (مراحل معطلة أو إعداد هابط): أقرب درجة مؤهلة ثم قصّ صارم
+            for cand, basis in compute_tp_ladder(setup):
+                rr_c = (float(cand) - entry) / risk_per_coin_pre
+                if rr_c > ladder_best_rr:
+                    ladder_best_rr = rr_c
+                if rr_c >= TP_MIN_RR:
+                    tp, tp_basis = float(cand), basis
+                    break
+            if tp > weekly_hi:
+                tp, weekly_capped = weekly_hi, True
+                if tp <= entry and ladder_best_rr >= TP_MIN_RR:
+                    _why = (f"سقف الأسبوع ({fmt_price(weekly_hi)}) تحت منطقة الدخول — "
+                            f"لا هدف واقعي يحقق أرضية R:R الصافية")
+                    _set_reject_reason(symbol, _why)
+                    with scan_stats_lock:
+                        scan_stats["rejected_weekly_cap"] += 1
+                    logger.info("[%s] رفض سقف الأسبوع: %s — لا إشارة", symbol, _why)
+                    return False
+        else:
+            for cand, basis in compute_tp_ladder(setup):
+                rr_c = (float(cand) - entry) / risk_per_coin_pre
+                if rr_c > ladder_best_rr:
+                    ladder_best_rr = rr_c
+                if rr_c >= TP_MIN_RR:
+                    tp, tp_basis = float(cand), basis
+                    break
     if not (entry > 0 and sl > 0 and tp > entry > sl):
         # [FE1.9.3] تصنيف صادق (إثبات حي PUMP في حزام إعادة التشغيل): سلّم بلا درجة
         # تحقق أرضية TP_MIN_RR وأساس 1.618 تحت الدخول = هندسة بلا هدف مربح كفاية
@@ -3173,17 +3333,22 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
         "w4_in_zone": bool(fib.wave4_in_zone) if fib else False,
         "entry_zone_low": round(setup.entry_zone_low, 8),
         "entry_zone_high": round(setup.entry_zone_high, 8),
-        "tp_note": "سلّم أهداف FE1.6.0 (W5=W1، 0.618×W3، امتداد 1.618) — الأصل 1.618 احتياطًا",
+        "tp_note": "FE1.9.9: مراحل TP1→TP3 مقصوصة على قمة 7 أيام (سكالبينج واقعي) — الأصل 1.618 احتياطًا",
         "tp_basis": tp_basis,
         "tp_ladder": [round(c, 8) for c, _ in compute_tp_ladder(setup)] if TP_LADDER_ENABLED else [],
+        "tp_stages": [round(x, 8) for x in (tp1, tp2, tp3) if x],
+        "weekly_high": round(weekly_hi, 8) if weekly_hi else None,
+        "weekly_capped": bool(weekly_capped),
         "rr_net": round(rr_net, 4),  # [FE1.8.0] R:R صافي بعد رسوم الاتجاهين
     })
     db.execute(
         "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price, stop_loss,"
         " take_profit, quantity, notional_usdt, rr_ratio, pivots_json, fib_json, created_at,"
-        " peak_price, expires_at, is_real, order_id) VALUES (%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        " peak_price, expires_at, is_real, order_id, tp1, tp2, tp3, weekly_high)"
+        " VALUES (%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (symbol, "BULLISH", STRATEGY_NAME, entry, sl, tp, qty, qty * entry, round(rr, 2),
-         pivots_json, fib_json, utc_now_iso(), entry, expires_at, 1 if real else 0, order_id),
+         pivots_json, fib_json, utc_now_iso(), entry, expires_at, 1 if real else 0, order_id,
+         tp1, tp2, tp3, weekly_hi),
     )
     with scan_stats_lock:
         scan_stats["setups_bull_traded"] += 1
@@ -3192,9 +3357,18 @@ def create_pending_signal(symbol: str, setup: DetectedSetup, last_close: float =
         "w5_eq_w1": "W5=W1", "w5_0618_w3": "W5=0.618×W3", "ext_1618": "امتداد 1.618",
     }.get(tp_basis, tp_basis)
     if fib:
+        tp_line = f"هدف {basis_txt}: {fmt_price(tp)}"
+        if tp1:
+            _stg: list = []
+            for _x in (tp1, tp2, tp3):
+                if _x and _x not in _stg:
+                    _stg.append(_x)
+            if len(_stg) > 1:
+                tp_line = ("أهداف متدرجة: " + " → ".join(fmt_price(x) for x in _stg)
+                           + (f" (سقف أسبوع {fmt_price(weekly_hi)})" if weekly_hi else ""))
         signal_msg = (
             f"🌊 إشارة إليوت+فيبو جديدة ({mode_tag}): {symbol}\n"
-            f"دخول معلّق: {fmt_price(entry)} | وقف بنيوي: {fmt_price(sl)} | هدف {basis_txt}: {fmt_price(tp)}\n"
+            f"دخول معلّق: {fmt_price(entry)} | وقف بنيوي: {fmt_price(sl)} | {tp_line}\n"
             f"R:R = {rr:.2f} (صافٍ بعد الرسوم {rr_net:.2f}) | W2={fib.wave2_retrace_pct*100:.1f}% W4={fib.wave4_retrace_pct*100:.1f}%"
         )
     else:
@@ -3732,6 +3906,147 @@ def _protection_step(sig: Dict[str, Any], high_now: float) -> None:
             meta["be_done"] = True
             log_and_notify("info", be_msg, "BREAK_EVEN")
     _save_sig_meta(sig["id"], meta)
+    sig["meta_json"] = json.dumps(meta, ensure_ascii=False)  # [FE1.9.9] مزامنة الذاكرة — من قارئ لاحق في نفس الدورة (جني المراحل) أن يرى الأعلام ويحفظ فوقها
+
+
+def _tp_stage_step(sig: Dict[str, Any], high_now: float) -> None:
+    """[FE1.9.9] تنفيذ الأهداف المتدرجة (سكالبينج): عند لمس هدف وسيط (tp1/tp2)
+    يُغلق TP_STAGE_SLICE_PCT% من الكمية المتبقية — نفس عقيدة الجزئي FE1.8.0:
+    الورقي محاسبة فورية على الرصيد، والحقيقي بيع سوق فعلي + محاسبة، ورجل الغبار
+    تحت حدود باينانس تُعتبر منجزة بلا بيع فتركب مع المرحلة التالية/النهائية.
+    الهدف الأخير (take_profit) يغلق الباقي كاملًا في المسار القديم دون تغيير،
+    والهدف الوسيط يُنفّذ مرة واحدة (علم meta يعبر النشر). الهدف المساوي للنهائي
+    (مرحلة مفردة) يُتخطى — يعامَل كهدف تراثي مفرد."""
+    try:
+        qty = float(sig.get("quantity") or 0)
+        tp_final = float(sig.get("take_profit") or 0)
+    except (TypeError, ValueError):
+        return
+    if qty <= 0 or tp_final <= 0:
+        return
+    # [FE1.9.9] meta حية من DB — الحماية (+1R/BE) كتبت أعلامها في نفس الدورة قبلنا،
+    # وقراءة sig["meta_json"] الراكدة كنا سنمحو أعلامها بالحفظ فوقها (خطأ مؤكد باختبار تكامل)
+    meta = None
+    try:
+        fresh = db.query("SELECT meta_json FROM signals WHERE id = %s", (sig["id"],))
+        if fresh:
+            raw = fresh[0].get("meta_json")
+            if raw:
+                m = json.loads(raw)
+                meta = m if isinstance(m, dict) else {}
+    except Exception:
+        meta = None
+    if meta is None:
+        meta = _sig_meta(sig)
+    is_real = bool(sig.get("is_real"))
+    ex = binance_trade_exchange() if is_real else None
+    if is_real and ex is None:
+        return
+    changed = False
+    for stage_col, flag in (("tp1", "tp1_done"), ("tp2", "tp2_done")):
+        try:
+            lvl = float(sig.get(stage_col)) if sig.get(stage_col) is not None else 0.0
+        except (TypeError, ValueError):
+            lvl = 0.0
+        if lvl <= 0 or meta.get(flag):
+            continue
+        if not (tp_final > lvl * 1.0005):
+            continue  # مرحلة مساوية للهدف النهائي (مفردة) — المسار القديم يغلقها كاملة
+        if high_now < lvl:
+            continue
+        leg_qty = qty * min(max(TP_STAGE_SLICE_PCT, 1.0), 99.0) / 100.0
+        tag_reason = f"هدف مرحلة {stage_col.upper()} (سكالبينج متدرج)"
+        if is_real:
+            leg_adj = real_adjust_amount(ex, sig["symbol"], leg_qty)
+            mkt = real_market(ex, sig["symbol"])
+            if leg_adj <= 0 or leg_adj < real_min_amount(mkt) or leg_adj * lvl < real_min_cost(mkt):
+                meta[flag] = True  # غبار — يُعتبر منجزًا ويركب مع المرحلة التالية/النهائية
+                changed = True
+                logger.info("[%s] رجل %s غبار تحت حدود باينانس — تُركت للمرحلة التالية", sig["symbol"], stage_col)
+            else:
+                order = place_real_market_sell(sig["symbol"], leg_adj)
+                if order:
+                    meta[flag] = True
+                    changed = True
+                    _account_partial_close(sig, leg_adj, float(order.get("average") or lvl), tag_reason)
+                # فشل البيع → بلا علم — تعاد المحاولة في الدورة القادمة
+        else:
+            meta[flag] = True
+            changed = True
+            _account_partial_close(sig, leg_qty, lvl, tag_reason)
+        qty = float(sig.get("quantity") or 0)  # الكمية تحدثت بعد الرجل
+        if qty <= 0:
+            break
+    if changed:
+        _save_sig_meta(sig["id"], meta)
+        sig["meta_json"] = json.dumps(meta, ensure_ascii=False)  # مزامنة الذاكرة للقارئات اللاحقة
+
+
+_TP_RECONCILE_LAST = {"at": 0.0}
+
+
+def reconcile_live_targets() -> None:
+    """[FE1.9.9] علاج بلاغ «أهداف بعيدة لم تصلها العملة منذ أكثر من شهر»: كل صفقة
+    حية (معلقة/مفتوحة) هدفها فوق أعلى قمة آخر TP_WEEK_CAP_DAYS أيام يُقص إلى
+    السقف فورًا — المراحل فوق السقف الجديد تنهار (None) — والبلاغ TARGET_FIX
+    مرة واحدة لكل صفقة. نافذة الأسبوع تتدحرج (قمة قديمة تخرج من النافذة) →
+    إعادة قص صامتة بسجل. تسوية دورية خفيفة (كاش القمة يحمي وزن REST)."""
+    if not TP_WEEK_CAP_ENABLED:
+        return
+    now = time.time()
+    if now - _TP_RECONCILE_LAST["at"] < TP_RECONCILE_SEC:
+        return
+    _TP_RECONCILE_LAST["at"] = now
+    try:
+        rows = db.query("SELECT * FROM signals WHERE status IN ('pending','open')")
+    except Exception as exc:
+        logger.warning("تسوية الأهداف: فشل قراءة الصفقات: %s", exc)
+        return
+    for sig in rows or []:
+        try:
+            symbol = sig["symbol"]
+            wh = weekly_high(symbol)
+            if not wh or wh <= 0:
+                continue
+            old_tp = float(sig.get("take_profit") or 0)
+            if old_tp <= 0 or old_tp <= wh * 1.0005:
+                continue  # داخل السقف — لا شيء
+            new_tp = wh
+            entry_ref = float(sig.get("entry_price") or 0)
+            sl_ref = float(sig.get("stop_loss") or 0)
+            rr_new = (round((new_tp - entry_ref) / (entry_ref - sl_ref), 2)
+                      if entry_ref > sl_ref > 0 else sig.get("rr_ratio"))
+            sets = ["take_profit = %s", "rr_ratio = %s"]
+            vals: List[Any] = [new_tp, rr_new]
+            for col in ("tp1", "tp2"):  # المراحل فوق السقف الجديد تنهار
+                v = sig.get(col)
+                try:
+                    vf = float(v) if v is not None else 0.0
+                except (TypeError, ValueError):
+                    vf = 0.0
+                if vf >= new_tp:
+                    sets.append(f"{col} = NULL")
+            meta = _sig_meta(sig)
+            first_cap = not meta.get("tp_week_capped")
+            meta["tp_week_capped"] = True
+            sets.append("meta_json = %s")
+            vals.append(json.dumps(meta, ensure_ascii=False))
+            vals.append(sig["id"])
+            db.execute(f"UPDATE signals SET {', '.join(sets)} WHERE id = %s", tuple(vals))
+            sig["take_profit"] = new_tp
+            with scan_stats_lock:
+                scan_stats["targets_capped_live"] += 1
+            state_txt = "مفتوحة" if sig.get("status") == "open" else "معلقة"
+            msg = (f"🎯 تصحيح هدف ({state_txt}): {symbol} — الهدف {fmt_price(old_tp)} يتجاوز "
+                   f"أعلى قمة آخر {TP_WEEK_CAP_DAYS} أيام ({fmt_price(wh)}) → قُصّ إلى {fmt_price(new_tp)} "
+                   f"— أهداف سكالبينج واقعية لا تتجاوز قمم الأسبوع")
+            if first_cap:
+                log_and_notify("info", msg, "TARGET_FIX")
+            else:
+                logger.info("[%s] إعادة قص هدف (تدحرج نافذة الأسبوع): %s → %s",
+                            symbol, fmt_price(old_tp), fmt_price(new_tp))
+        except Exception as exc:
+            logger.warning("تسوية هدف %s فشلت: %s", sig.get("symbol"), exc)
 
 
 def _resync_after_cancel_attempt(sig: Dict[str, Any], ex, reason_terminal: str) -> None:
@@ -3885,6 +4200,7 @@ def monitor_step() -> None:
             else:
                 # [FE1.8.0] حماية +1R (جزئي + BE) — لن تُستدعى إن لمست الشمعة الوقف (وقف-أولًا محفوظ)
                 _protection_step(sig, high_now)
+                _tp_stage_step(sig, high_now)  # [FE1.9.9] جني المراحل TP1/TP2 قبل الهدف النهائي
                 if high_now >= float(sig["take_profit"]):
                     close_real_trade(sig, float(sig["take_profit"]), "هدف فيبوناتشي 1.618 تحقق")
             continue
@@ -3894,6 +4210,7 @@ def monitor_step() -> None:
         else:
             # [FE1.8.0] BE@1R + جزئي أول درج — بعد حارس الوقف-أولًا داخل الشمعة
             _protection_step(sig, high_now)
+            _tp_stage_step(sig, high_now)  # [FE1.9.9] جني المراحل TP1/TP2 قبل الهدف النهائي
             if high_now >= float(sig["take_profit"]):
                 close_signal_row(sig, float(sig["take_profit"]), "هدف فيبوناتشي 1.618 تحقق")
 
@@ -4825,6 +5142,7 @@ def monitor_loop() -> None:
             db.ensure()
             refresh_raw_trigger_levels()  # [FE1.9.7] مستويات الاستيقاظ محدثة قبل الدورة
             monitor_step()
+            reconcile_live_targets()  # [FE1.9.9] قصّ أهداف الصفقات الحية فوق سقف الأسبوع (دوري خفيف)
             _reconcile_maybe()  # [FE1.8.0] مصالقة الوقف الراكن دوريًا (حقيقي فقط)
             ws_sync_subscriptions()  # [FE1.2.0] احتياط موازٍ للمشرف — مزامنة الاشتراكات كل دقيقة
             mem_check("دورة مراقبة")  # [FE1.3.1] حمية الذاكرة كل دقيقة
@@ -5134,6 +5452,11 @@ def api_all():
             "partial_at_r": PARTIAL_AT_R_ENABLED,
             "partial_pct": PARTIAL_CLOSE_PCT,
             "rr_net_min": RR_NET_MIN,
+            # [FE1.9.9] أهداف سكالبينج واقعية متدرجة
+            "tp_week_cap": TP_WEEK_CAP_ENABLED,
+            "tp_week_days": TP_WEEK_CAP_DAYS,
+            "tp_stages": TP_STAGES_ENABLED,
+            "tp_stage_pct": TP_STAGE_SLICE_PCT,
         },
         "performance": performance_snapshot(),  # [FE1.8.1] لوحة الأداء (اقتباس V9.34.0/OctoBot)
         "open_signals": live_rows,

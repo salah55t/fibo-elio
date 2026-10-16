@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.8"
+BOT_VERSION = "FE1.9.9"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -258,7 +258,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
 
   <footer>
     استراتيجية واحدة فقط: <b>موجة إليوت (دافع 5 موجات، قواعد صارمة ثلاث)</b> + <b>مستويات فيبوناتشي</b>
-    (دخول 0.382 لتراجع الموجة 3 · وقف بنيوي خلف P0 · هدف امتداد 1.618 للموجة 1) —
+    (دخول 0.382 لتراجع الموجة 3 · وقف بنيوي خلف P0 · أهداف متدرجة TP1→TP3 لا تتجاوز قمة آخر 7 أيام — سكالبينج واقعي [FE1.9.9]) —
     ماسح الكون [FE1.5.0]: فحص أولي لكل أزواج باينانس USDT واختيار الأنسب للاستراتيجية تلقائيًا —
     التداول الحقيقي [FE1.4.0]: أمر LIMIT حقيقي عند فيبو 0.382 ← بيع سوق عند الوقف/الهدف، بقواعد باينانس
     (LOT_SIZE · NOTIONAL · دقة السعر/الكمية · كفاية الرصيد) —
@@ -306,6 +306,20 @@ function srcBadge(sym){
   if(p && p.age_sec !== undefined && p.age_sec < 90)
     return `<span class="src src-ws" title="ويب سوكت عبر ${esc(p.source)} — عمر آخر تحديث ${p.age_sec} ث">⚡WS</span>`;
   return '<span class="src src-rest" title="طلبات REST (احتياط عند غياب التيار)">REST</span>';
+}
+
+// [FE1.9.9] سطر الأهداف المتدرجة تحت الهدف النهائي — tp_stages من الخادم (صاعدة صارمة)
+// + سقف الأسبوع إن توفر — «الهدف لا يتجاوز ما لمسته العملة خلال 7 أيام»
+function stagesLine(s){
+  const st = s.tp_stages || [];
+  let html = '';
+  if(st.length > 1){
+    const chips = st.map((t,i)=>`<span class="mut small">هدف ${i+1}: ${fmt(t)}</span>`).join(' · ');
+    html = `<div class="small mut">↳ ${chips}</div>`;
+  }
+  if(s.weekly_high)
+    html += `<div class="small mut">⌈ سقف أسبوع: ${fmt(s.weekly_high)}</div>`;
+  return html;
 }
 
 function renderCards(d){
@@ -480,7 +494,7 @@ function renderOpen(list){
       <td><b>${esc(s.symbol)}</b></td><td>${st}</td><td>${modePill(s.is_real)}</td>
       <td>${live[0]}</td><td>${live[1]}</td><td>${live[2]}</td>
       <td>${fmt(isPend?s.entry_price:s.fill_price)}</td>
-      <td class="neg">${fmt(s.stop_loss)}</td><td class="pos">${fmt(s.take_profit)}</td>
+      <td class="neg">${fmt(s.stop_loss)}</td><td class="pos">${fmt(s.take_profit)}${stagesLine(s)}</td>
       <td>${s.rr_ratio?Number(s.rr_ratio).toFixed(2):'—'}</td>
       <td>${fmt(s.quantity,6)}</td>
       <td class="mut small">${dt(s.created_at)}</td>
@@ -490,7 +504,7 @@ function renderOpen(list){
   }).join('');
   $('open-box').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
     <th>الزوج</th><th>الحالة</th><th>الوضع</th><th>السعر الآن</th><th>غير المحقق</th><th>التقدم نحو الهدف</th>
-    <th>دخول/ملء</th><th>وقف</th><th>هدف 1.618</th>
+    <th>دخول/ملء</th><th>وقف</th><th>الأهداف (متدرجة)</th>
     <th>R:R</th><th>الكمية</th><th>أُنشئ</th><th>الصلاحية</th><th>إجراء</th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
@@ -537,7 +551,7 @@ function renderGates(st){
     ['rejected_deep_retrace','تصحيح عميق'],['rejected_cooldown','تبريد رمز'],['rejected_symbol_busy','رمز مشغول'],
     ['rejected_cluster','عنقود'],['rejected_active_limit','خانات ممتلئة'],['rejected_htf_bias','HTF هابط'],
     ['rejected_far_entry','مطاردة'],['rejected_target_invalid','هدف محقق'],
-    ['rejected_no_target','لا هدف R:R'],
+    ['rejected_no_target','لا هدف R:R'],['rejected_weekly_cap','فوق سقف الأسبوع'],
     ['rejected_rr_net','R:R صافٍ منخفض'],['rejected_daily_loss','حد يومي'],['rejected_risk_pause','تبريد مخاطر']];
   const parts = gates.filter(g=>st[g[0]]).map(g=>g[1]+' <b>'+st[g[0]]+'</b>');
   el.innerHTML = '🚦 بوابات هذه الفترة: ' + (parts.length? parts.join(' · ') : 'لا رفضات بعد') +
