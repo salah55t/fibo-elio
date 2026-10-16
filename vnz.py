@@ -4016,8 +4016,8 @@ def reconcile_live_targets() -> None:
             sl_ref = float(sig.get("stop_loss") or 0)
             rr_new = (round((new_tp - entry_ref) / (entry_ref - sl_ref), 2)
                       if entry_ref > sl_ref > 0 else sig.get("rr_ratio"))
-            sets = ["take_profit = %s", "rr_ratio = %s"]
-            vals: List[Any] = [new_tp, rr_new]
+            sets = ["take_profit = %s", "rr_ratio = %s", "weekly_high = %s"]  # [FE1.9.9] السقف يُخزن ليُرى في اللوحة
+            vals: List[Any] = [new_tp, rr_new, wh]
             for col in ("tp1", "tp2"):  # المراحل فوق السقف الجديد تنهار
                 v = sig.get(col)
                 try:

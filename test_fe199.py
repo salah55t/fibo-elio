@@ -319,6 +319,7 @@ def test_reconcile_caps_open_target_and_notifies(clean_db, tg_off, monkeypatch):
     _run_reconcile()
     row = vnz.db.query("SELECT * FROM signals WHERE id=%s", (sig_id,))[0]
     assert row["take_profit"] == pytest.approx(110.0), "الهدف الشهري البعيد قُصّ إلى قمة الأسبوع"
+    assert row["weekly_high"] == pytest.approx(110.0), "السقف يُخزن ليعرض في اللوحة"
     assert row["rr_ratio"] == pytest.approx(5.0)  # (110-100)/2
     meta = json.loads(row["meta_json"])
     assert meta.get("tp_week_capped") is True
