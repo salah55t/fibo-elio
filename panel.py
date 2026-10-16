@@ -17,7 +17,7 @@ innerHTML مكشوفًا على XSS مخزّن عبر رسائل الإشعار�
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.7"
+BOT_VERSION = "FE1.9.8"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -142,6 +142,8 @@ PANEL_HTML = r"""<!DOCTYPE html>
   .p-real { background:rgba(255,51,85,.14); color:var(--red); border-color:rgba(255,51,85,.6); }
   .p-exp { background:rgba(160,160,170,.12); color:var(--mut); border-color:var(--mut); text-shadow:none; }
   .p-cxl { background:rgba(255,51,85,.1); color:var(--red); border-color:rgba(255,51,85,.5); }
+  .p-mcr { background:rgba(255,51,85,.22); color:#ff6685; border-color:var(--red); font-weight:800; animation:mcrPulse 1.6s ease-in-out infinite; }
+  @keyframes mcrPulse { 0%,100%{opacity:1} 50%{opacity:.55} }  /* [FE1.9.8] تنبيه نابض — غلق يدوي مطلوب */
   .p-paper { background:rgba(0,229,255,.08); color:var(--cyan); border-color:rgba(0,229,255,.4); }
   .zone-ok { color:var(--neon); font-weight:700; } .zone-no { color:var(--mut); }
   .mut { color:var(--mut); } .small { font-size:.7rem; }
@@ -450,7 +452,10 @@ function renderOpen(list){
   if(!list.length){ $('open-box').innerHTML = '<div class="empty">لا صفقات مفتوحة ولا أوامر معلقة حاليا — البوت يراقب السوق بحثا عن دافع صالح ✨</div>'; return; }
   let rows = list.map(s => {
     const isPend = s.status==='pending';
-    const st = isPend ? '<span class="pill p-pending">معلق</span>' : '<span class="pill p-open">مفتوح</span>';
+    // [FE1.9.8] شارة «غلق يدوي مطلوب» — علم meta من الخادم (فشل غلق حقيقي عند بلوغ الوقف/الهدف)
+    const mcr = (!isPend && s.meta && s.meta.manual_close_required)
+      ? ' <span class="pill p-mcr" title="وصلت الصفقة مستوى خروجها وعجز البوت عن الغلق — أغلقها من باينانس أو أرسل /close في تلغرام">🚨 غلق يدوي</span>' : '';
+    const st = isPend ? '<span class="pill p-pending">معلق</span>' : '<span class="pill p-open">مفتوح</span>'+mcr;
     const fib = s.fib || {};
     // تتبع حي [FE1.1.0] + شارة المصدر [FE1.2.0]
     const cp = s.current_price ? `${srcBadge(esc(s.symbol))}<span class="liveprice">${fmt(s.current_price)}</span>` : '<span class="mut">—</span>';

@@ -192,7 +192,7 @@ from utils.logger import get_logger, fmt_price
 # الإعدادات — البيئة هي مصدر الحقيقة
 # ══════════════════════════════════════════════════════════════════════════════
 
-BOT_VERSION = "FE1.9.7"  # FE1.9.7 «تيك خام»: طلب «جلب الأسعار ويب سوكت لحظية لأقصى درجة ممكنة» — طبقة تيار باينانس الخام فوق ccxt.pro (لا تغيير فيها — تبقى احتياطًا حيًا): (1) @trade لكل قائمة الكشف — سعر على كل صفقة فعلية منفذة (أجزاء الثانية، نفس دلالة «آخر سعر» في واجهة باينانس) بدل ~1ث؛ (2) @kline_<فريم التنفيذ> لرموز الصفقات النشطة — الشمعة الجارية تتحدث داخل الشريط فيتحقق الملء من أرضية حية أدق؛ (3) استيقاظ فوري لحلقة المراقبة (60ث ← لحظي) عند لمس تيك لمستوى تنفيذ: معلق ← تيك ≤ الدخول، مفتوح ← تيك ≤ الوقف أو ≥ الهدف — نفس monitor_step حرفيًا فقط الاستدعاء لحظي، والحلقة الستينية شبكة أمان؛ (4) نبض الحركة يفحص كل 2ث بدل 5 (بلا REST — قراءة ذاكرة)؛ (5) شارة «تيك خام ⚡⚡» بعداد التيك وعمر آخر رسالة في اللوحة + كتلة raw في /api/ws/status. تيار مدمج واحد (30+ تيار < سقف 1024، صفر وزن REST)، إعادة اتصال دائمة بتراجع + رقيب يعيد البناء عند تغيّر المجموعة، RAW_TICK_WS=0 يعطل مع تساهل كامل. (FE1.9.6 «لا اختفاء صامت»: بلاغ حي (18:44 UTC 15 أكتوبر) — «السعر وصل الدخول في باينانس واللوحة لم تتغير» — التحقيق أثبت عكس البلاغ (اللوحة حية طابقت باينانس حرفيًا 0.00456500، والمنطقة لم تُلمس: أدنى قاع 0.0045230 فوق قمتها 0.06%) لكن كشف فجوة عرض حقيقية: الإشارة المعلقة عند انتهاء صلاحيتها (expired) أو إبطالها البنيوي (cancelled) تختفي من اللوحة بصمت لأن /api/all كان يعرض المغلق فقط (status='closed' = صفقة تداولت وغلقت بنتيجة). الإصلاح: (1) قسم «المغلق» يعرض المنتهية والملغاة أيضًا بشارات مميزة (منتهية/ملغاة) مع سعر الدخول المرجعي؛ (2) انتهاء الصلاحية والإبطال البنيوي يطلقان إشعارًا في اللوحة/تلجرام (مثل الملء) — دورة حياة المعلق مرئية كاملة: وُلد → مُلئ أو انتهى أو أُبطل. صفر تغيير سلوك تداولي: شروط الملء/الإبطال/الصلاحية كما هي حرفيًا. (FE1.9.5 «الإقلاع مرئي»: /health يكشف boot_at وuptime_sec — إعادة تشغيل العملية (مثل الحادثة 14:59:44 بعد نشر FE1.9.4 — كل started_at والعدادات تصفرت) تُرى فورًا من نبضة واحدة بدل استدلال عكسي من started_at للاشتراكات. صفر تغيير سلوك. (FE1.9.4 «حكم يسمّي قاتله»: سجلات wave_validator تُقرأ بلا ترجم — (1) سطر الحكم النهائي يعدّد القواعد الفاشلة («INVALID — فشل: Rule-1, Rule-3») بدل عدّاد مجرد؛ (2) رفض Rule-2 يسمّي الشرط القاتل صراحة (أقصر الأمواج؟ أم عدم كسر نهاية W1؟) — القاعدة مركّبة من الشرطين والحالة الملتبسة W3_not_shortest=True مع FAIL كانت تحيّر قارئ السجلات؛ (3) سطر «Starting impulse validation» نزل DEBUG — تشويش بلا معلومة. صفر تغيير سلوك: كل القرارات كما هي حرفيًا. (FE1.9.3 «تصنيف صادق»: رفض «لا هدف يحقق أرضية R:R» بدل «أسعار غير منطقية» — إثبات حي PUMP في حزام إعادة التشغيل (replay harness أول مرة: مسار الإنتاج الحرفي كشفًا وبوابات وإنشاء أمر معلق على بيانات حقيقية وُلّدت فيه 30 حدث أمر معلق عبر 5 رموز في 4 أيام) — سلّم الأهداف بلا درجة تحقق TP_MIN_RR وأساس 1.618 تحت الدخول = هندسة بلا هدف مربح كفاية، عداد rejected_no_target جديد + عرضه في اللوحة، الرفض نفسه لم يتغير (صفر تغيير سلوك). (FE1.9.2 «كشف بلا عمى»: (1) إصلاح انكسار الزيجزاج على شريحة فارغة (انعكاس مؤكد على الشريط الأخير ثم محور ختامي بعده — STRK/BAT/RNDR كانت تتخطى بصمت كل دورة: argmin على تسلسل فارغ) — المحور الختامي على الشريط الأخير ذاته؛ (2) التقادم قبل الاختيار: القديمة الأجود إليوتيًا كانت تدفن الحديثة المتواضعة (المختار وحده تقيّمه البوابات)؛ (3) عداد scan_errors يجعل الكشف الأعمى الصامت مرئيًا). (FE1.9.1 «نبض حي»: إصلاح قاتل النبض — اشتراكات ويب سوكت كانت لرموز الصفقات النشطة وحدها (db signals pending/open) فصفر صفقات = صفر أسعار حية = نبض الحركة صامت للأبد (الإثبات الحي: momentum_kicks=0 بعد 76 دورة). الإصلاح: watchlist كلها تدخل بتيار سعر فقط (شموع تبقى لرموز الصفقات النشطة — حمية 512MB) + فشل قاعدة البيانات لا يعطل نبض القائمة — ws_wanted_sets نقية قابلة للاختبار + _ws_spawn(with_ohlcv). (FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
+BOT_VERSION = "FE1.9.8"  # FE1.9.8 «التحكم والصمود» — ناتج بحث المشاريع مفتوحة المصدر (freqtrade/hummingbot/jesse/cryptofeed/OctoBot) وتحليل الفجوات مع مشروعنا: (1) التحكم عن بعد من تلغرام (الميزة القاتلة في freqtrade): خيط getUpdates long-poll بأوامر /status /pending /positions /stats /close /cancel /pause /resume /ping /help (عربية وإنجليزية مع اسم البوت الملحق) — أوامر التنفيذ تستخدم نفس مسارات اللوحة حرفيًا (close_signal_row/close_real_trade/set_trading_enabled) فلا منطق مزدوج، والمحادثة المصرّحة وحدها، وTELEGRAM_CONTROL=0 يعطل؛ (2) تنبيه «غلق يدوي مطلوب» (الطلب الحي): كل مسارات فشل الغلق الحقيقي (مفاتيح غائبة/تعذر إلغاء الوقف الراكن/فشل أمر البيع/استثناء) ترفع علم manual_close_required على الصفقة عبر meta_json + تنبيه 🚨 بارز يسمّي الرمز والكمية ومستوى الخروج مع إرشاد /close، تذكير كل MANUAL_CLOSE_REMIND_SEC، ويُمسح تلقائيًا عند أول إغلاق ناجح مع إشعار حلّ؛ (3) بوابة تلغرام ضد الضجيج (الطلب الحي): log_and_notify يفلتر الإرسال عبر telegram_gate — الأصناف المهمة وحدها تصل المحادثة (إشارة جديدة/ملء/إغلاق/جزئي/دورة المعلق/غلق يدوي/أخطاء التنفيذ/تغييرات الوضع/قاطع المخاطر/انقطاع البيانات/إقلاع) والضجيج (تدوير المزودين/ماسح الكون/فحص الخمول/BE) يبقى في السجل واللوحة، + كتم التكرار الحرفي TELEGRAM_DEDUP_SEC (حلقة إعادة المحاولة كانت ترسل الخطأ نفسه كل 60ث) + قصّ آمن عند 4000 حرف؛ (4) كاش الشموع الدائم + الوضع المتدهور (فلسفة cryptofeed/cryptostore): جدول kline_cache في Postgres يكتب الشموع المغلقة حصرًا (الجديدة وحدها بعد البذرة) وعند فشل كل المزودين يخدم الكاش بوضع متدهور معلن مرة واحدة — المسح والمتابعة والغلق لا يتوقفون أبدًا ما دامت Postgres حية، /health يكشف telegram_control وkline_cache. الصفر تغيير في منطق التداول نفسه. (FE1.9.7 «تيك خام»: طلب «جلب الأسعار ويب سوكت لحظية لأقصى درجة ممكنة» — طبقة تيار باينانس الخام فوق ccxt.pro (لا تغيير فيها — تبقى احتياطًا حيًا): (1) @trade لكل قائمة الكشف — سعر على كل صفقة فعلية منفذة (أجزاء الثانية، نفس دلالة «آخر سعر» في واجهة باينانس) بدل ~1ث؛ (2) @kline_<فريم التنفيذ> لرموز الصفقات النشطة — الشمعة الجارية تتحدث داخل الشريط فيتحقق الملء من أرضية حية أدق؛ (3) استيقاظ فوري لحلقة المراقبة (60ث ← لحظي) عند لمس تيك لمستوى تنفيذ: معلق ← تيك ≤ الدخول، مفتوح ← تيك ≤ الوقف أو ≥ الهدف — نفس monitor_step حرفيًا فقط الاستدعاء لحظي، والحلقة الستينية شبكة أمان؛ (4) نبض الحركة يفحص كل 2ث بدل 5 (بلا REST — قراءة ذاكرة)؛ (5) شارة «تيك خام ⚡⚡» بعداد التيك وعمر آخر رسالة في اللوحة + كتلة raw في /api/ws/status. تيار مدمج واحد (30+ تيار < سقف 1024، صفر وزن REST)، إعادة اتصال دائمة بتراجع + رقيب يعيد البناء عند تغيّر المجموعة، RAW_TICK_WS=0 يعطل مع تساهل كامل. (FE1.9.6 «لا اختفاء صامت»: بلاغ حي (18:44 UTC 15 أكتوبر) — «السعر وصل الدخول في باينانس واللوحة لم تتغير» — التحقيق أثبت عكس البلاغ (اللوحة حية طابقت باينانس حرفيًا 0.00456500، والمنطقة لم تُلمس: أدنى قاع 0.0045230 فوق قمتها 0.06%) لكن كشف فجوة عرض حقيقية: الإشارة المعلقة عند انتهاء صلاحيتها (expired) أو إبطالها البنيوي (cancelled) تختفي من اللوحة بصمت لأن /api/all كان يعرض المغلق فقط (status='closed' = صفقة تداولت وغلقت بنتيجة). الإصلاح: (1) قسم «المغلق» يعرض المنتهية والملغاة أيضًا بشارات مميزة (منتهية/ملغاة) مع سعر الدخول المرجعي؛ (2) انتهاء الصلاحية والإبطال البنيوي يطلقان إشعارًا في اللوحة/تلجرام (مثل الملء) — دورة حياة المعلق مرئية كاملة: وُلد → مُلئ أو انتهى أو أُبطل. صفر تغيير سلوك تداولي: شروط الملء/الإبطال/الصلاحية كما هي حرفيًا. (FE1.9.5 «الإقلاع مرئي»: /health يكشف boot_at وuptime_sec — إعادة تشغيل العملية (مثل الحادثة 14:59:44 بعد نشر FE1.9.4 — كل started_at والعدادات تصفرت) تُرى فورًا من نبضة واحدة بدل استدلال عكسي من started_at للاشتراكات. صفر تغيير سلوك. (FE1.9.4 «حكم يسمّي قاتله»: سجلات wave_validator تُقرأ بلا ترجم — (1) سطر الحكم النهائي يعدّد القواعد الفاشلة («INVALID — فشل: Rule-1, Rule-3») بدل عدّاد مجرد؛ (2) رفض Rule-2 يسمّي الشرط القاتل صراحة (أقصر الأمواج؟ أم عدم كسر نهاية W1؟) — القاعدة مركّبة من الشرطين والحالة الملتبسة W3_not_shortest=True مع FAIL كانت تحيّر قارئ السجلات؛ (3) سطر «Starting impulse validation» نزل DEBUG — تشويش بلا معلومة. صفر تغيير سلوك: كل القرارات كما هي حرفيًا. (FE1.9.3 «تصنيف صادق»: رفض «لا هدف يحقق أرضية R:R» بدل «أسعار غير منطقية» — إثبات حي PUMP في حزام إعادة التشغيل (replay harness أول مرة: مسار الإنتاج الحرفي كشفًا وبوابات وإنشاء أمر معلق على بيانات حقيقية وُلّدت فيه 30 حدث أمر معلق عبر 5 رموز في 4 أيام) — سلّم الأهداف بلا درجة تحقق TP_MIN_RR وأساس 1.618 تحت الدخول = هندسة بلا هدف مربح كفاية، عداد rejected_no_target جديد + عرضه في اللوحة، الرفض نفسه لم يتغير (صفر تغيير سلوك). (FE1.9.2 «كشف بلا عمى»: (1) إصلاح انكسار الزيجزاج على شريحة فارغة (انعكاس مؤكد على الشريط الأخير ثم محور ختامي بعده — STRK/BAT/RNDR كانت تتخطى بصمت كل دورة: argmin على تسلسل فارغ) — المحور الختامي على الشريط الأخير ذاته؛ (2) التقادم قبل الاختيار: القديمة الأجود إليوتيًا كانت تدفن الحديثة المتواضعة (المختار وحده تقيّمه البوابات)؛ (3) عداد scan_errors يجعل الكشف الأعمى الصامت مرئيًا). (FE1.9.1 «نبض حي»: إصلاح قاتل النبض — اشتراكات ويب سوكت كانت لرموز الصفقات النشطة وحدها (db signals pending/open) فصفر صفقات = صفر أسعار حية = نبض الحركة صامت للأبد (الإثبات الحي: momentum_kicks=0 بعد 76 دورة). الإصلاح: watchlist كلها تدخل بتيار سعر فقط (شموع تبقى لرموز الصفقات النشطة — حمية 512MB) + فشل قاعدة البيانات لا يعطل نبض القائمة — ws_wanted_sets نقية قابلة للاختبار + _ws_spawn(with_ohlcv). (FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -243,6 +243,21 @@ API_MIN_SPACING_SEC = float(os.getenv("API_MIN_SPACING_SEC", "0.15"))        # �
 BAN_RESUME_COOLDOWN_SEC = int(os.getenv("BAN_RESUME_COOLDOWN_SEC", "90"))    # تبريد استئناف بعد انتهاء الحظر (V9.9)
 BAN_RESUME_RAMP_SEC = int(os.getenv("BAN_RESUME_RAMP_SEC", "120"))          # مدة تدرج الفاصل ×4 بعد الاستئناف (V9.9)
 BAN_LONG_THRESHOLD_SEC = int(os.getenv("BAN_LONG_THRESHOLD_SEC", "600"))    # عتبة الحظر الطويل — الميزانية للأرضية مباشرة (V9.15.1)
+
+# [FE1.9.8] «التحكم والصمود» — اقتباس أفضل المشاريع مفتوحة المصدر (تحليل الفجوات):
+# freqtrade (تحكم كامل من تلغرام + أصناف إشعارات) وcryptofeed/cryptostore (كاش تغذية
+# بلا انقطاع). الطلب الحي: «تقليل ضجيج تلغرام يُبقي المهم فقط» + «تنبيه الغلق اليدوي
+# عند وصول الصفقة هدفها/وقفها وباينانس محضور» + «لا يتوقف البوت أبدًا».
+TELEGRAM_ALERT_TYPES = {t.strip() for t in os.getenv(
+    "TELEGRAM_ALERT_TYPES",
+    "NEW_SIGNAL,ORDER_FILLED,TRADE_CLOSED,PARTIAL_CLOSE,PENDING_LIFECYCLE,"
+    "MANUAL_CLOSE_REQUIRED,REAL_TRADE_ERROR,TRADING_STATUS_CHANGE,REAL_MODE_CHANGE,"
+    "STATS_RESET,BINANCE_CONN,RISK_PAUSE,DATA_DEGRADED,KILL_SWITCH,BOOT").split(",") if t.strip()}
+TELEGRAM_DEDUP_SEC = int(os.getenv("TELEGRAM_DEDUP_SEC", "300"))     # كتم تكرار الرسالة الحرفية خلال النافذة (ضجيج إعادة المحاولة)
+TELEGRAM_CONTROL = os.getenv("TELEGRAM_CONTROL", "1").strip().lower() not in ("0", "false", "no", "off")
+TELEGRAM_POLL_TIMEOUT_SEC = int(os.getenv("TELEGRAM_POLL_TIMEOUT_SEC", "25"))  # long-poll getUpdates
+MANUAL_CLOSE_REMIND_SEC = int(os.getenv("MANUAL_CLOSE_REMIND_SEC", "600"))     # تذكير دوري بالغلق اليدوي حتى يُحل
+KLINE_CACHE_ROWS = int(os.getenv("KLINE_CACHE_ROWS", "150"))         # عمق كاش الشموع لكل رمز×فريم (0 يعطل الكاش)
 
 # [FE1.2.0] تغذية الأسعار الحية عبر ويب سوكت (ccxt.pro) — REST احتياطًا فقط
 WS_ENABLED = os.getenv("WS_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
@@ -633,6 +648,12 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE TABLE IF NOT EXISTS bot_state (
   key TEXT PRIMARY KEY, value TEXT
 );
+CREATE TABLE IF NOT EXISTS kline_cache (
+  symbol TEXT NOT NULL, timeframe TEXT NOT NULL, ts BIGINT NOT NULL,
+  open REAL, high REAL, low REAL, close REAL, volume REAL,
+  source TEXT, updated_at TEXT,
+  PRIMARY KEY (symbol, timeframe, ts)
+);
 """
 
 _SIGNALS_DDL_SQLITE = _SIGNALS_DDL_PG.replace("BIGSERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("NUMERIC", "REAL")
@@ -701,8 +722,40 @@ def set_paper_balance(value: float) -> None:
     db_set_state("paper_balance", repr(float(value)))
 
 
+_tg_dedup: Dict[str, float] = {}
+_tg_dedup_lock = threading.Lock()
+
+
+def telegram_gate(ntype: str) -> bool:
+    """[FE1.9.8] بوابة تلغرام: الأصناف المهمة وحدها تصل المحادثة — الضجيج (تدوير
+    مزودي الشموع، ماسح الكون، إعادة فحص الخمول، أحداث الحماية العابرة) يبقى في
+    السجل واللوحة كاملًا دون إرسال. اقتباس فلسفة freqtrade (أصناف إشعارات قابلة
+    للضبط): TELEGRAM_ALERT_TYPES بيئيًا يعدّل القائمة، و'*' يعيد السلوك القديم (الكل)."""
+    if "*" in TELEGRAM_ALERT_TYPES:
+        return True
+    return (ntype or "INFO") in TELEGRAM_ALERT_TYPES
+
+
+def _tg_dedup_ok(message: str) -> bool:
+    """[FE1.9.8] كتم التكرار الحرفي: الرسالة نفسها خلال TELEGRAM_DEDUP_SEC تُكتم
+    (حلقة إعادة محاولة الغلق كل 60ث كانت سترسل الخطأ نفسه كل دورة)."""
+    now = time.time()
+    with _tg_dedup_lock:
+        last = _tg_dedup.get(message, 0.0)
+        if TELEGRAM_DEDUP_SEC > 0 and now - last < TELEGRAM_DEDUP_SEC:
+            return False
+        _tg_dedup[message] = now
+        if len(_tg_dedup) > 300:  # تقليم ذاكرة الكتم
+            cutoff = now - max(TELEGRAM_DEDUP_SEC, 60) * 2
+            for k in [k for k, v in _tg_dedup.items() if v < cutoff]:
+                _tg_dedup.pop(k, None)
+        return True
+
+
 def log_and_notify(level: str, message: str, ntype: str = "INFO") -> None:
-    """سجّل محليًا + أخزن للوحة + أرسل تلجرام إن توفرت المفاتيح."""
+    """سجّل محليًا + أخزن للوحة + أرسل تلجرام إن توفرت المفاتيح.
+    [FE1.9.8] التلغرام عبر بوابة الأصناف (telegram_gate) وكتم التكرار —
+    اللوحة (notifications) تستقبل كل شيء كما هو بلا أي تصفية."""
     getattr(logger, level if level in ("info", "warning", "error") else "info", logger.info)(message)
     try:
         db.execute(
@@ -711,15 +764,21 @@ def log_and_notify(level: str, message: str, ntype: str = "INFO") -> None:
         )
     except Exception:
         pass
-    send_telegram_message(message)
+    try:
+        if telegram_gate(ntype) and _tg_dedup_ok(message):
+            send_telegram_message(message)
+    except Exception:
+        pass  # فشل التلغرام لا يمس مسار الإشعار المحلي أبدًا
 
 
 def send_telegram_message(message: str) -> None:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     try:
+        # [FE1.9.8] حد تلغرام 4096 حرفًا — قصّ آمن بدل فشل الإرسال الصامت (400)
+        text = message if len(message) <= 4000 else (message[:4000] + " …")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}, timeout=10)
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
     except Exception as exc:
         logger.warning("تعذر إرسال تلجرام: %s", exc)
 
@@ -1442,6 +1501,89 @@ def _fetch_ohlcv_ccxt(symbol: str, timeframe: str, limit: int) -> Tuple[Optional
     return None, None
 
 
+# ── [FE1.9.8] كاش الشموع الدائم (Postgres) + الوضع المتدهور — اقتباس فلسفة
+#    cryptofeed/cryptostore: التغذية تُخزّن أثناء العمل وتخدم عند انقطاع كل المزودين
+#    فيستمر المسح والمتابعة بشموع مغلقة صادقة بدل توقف البوت كليًا.
+_kline_cache_max_ts: Dict[Tuple[str, str], int] = {}
+_kline_cache_state: Dict[str, Any] = {"degraded": False, "writes": 0, "reads": 0, "last_write": None}
+_TF_SECONDS = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
+               "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400}
+
+
+def _tf_seconds(timeframe: str) -> int:
+    return _TF_SECONDS.get(str(timeframe or "").strip().lower(), 0)
+
+
+def _kline_cache_write(symbol: str, timeframe: str, rows: list) -> None:
+    """كتابة الشموع المغلقة فقط (الشمعة الجارية المكشوفة تُستبعد) — الجديد وحده
+    بعد البذرة الأولى: صفر حمل تقريبًا على قاعدة البيانات في كل دورة. الفشل تساهلي."""
+    if KLINE_CACHE_ROWS <= 0:
+        return
+    try:
+        clean = [r for r in (rows or []) if isinstance(r, (list, tuple)) and len(r) >= 6]
+        if not clean:
+            return
+        clean = sorted(clean, key=lambda r: int(r[0]))[-KLINE_CACHE_ROWS:]
+        period = _tf_seconds(timeframe)
+        now_ms = int(time.time() * 1000)
+        if period and clean and int(clean[-1][0]) + period * 1000 > now_ms:
+            clean = clean[:-1]  # الشمعة الأخيرة لم تُغلق بعد — لا تدخل الكاش
+        if not clean:
+            return
+        key = (symbol, timeframe)
+        seen_max = _kline_cache_max_ts.get(key)
+        fresh = [r for r in clean if seen_max is None or int(r[0]) > seen_max]
+        if not fresh:
+            return
+        now = utc_now_iso()
+        for r in fresh:
+            ts, o, h, lo, c, v = int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])
+            db.execute(
+                "INSERT INTO kline_cache (symbol, timeframe, ts, open, high, low, close, volume, source, updated_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                " ON CONFLICT (symbol, timeframe, ts) DO UPDATE SET open=EXCLUDED.open, high=EXCLUDED.high,"
+                " low=EXCLUDED.low, close=EXCLUDED.close, volume=EXCLUDED.volume, updated_at=EXCLUDED.updated_at",
+                (symbol, timeframe, ts, o, h, lo, c, v, "feed", now),
+            )
+        _kline_cache_max_ts[key] = int(clean[-1][0])
+        _kline_cache_state["writes"] += 1
+        _kline_cache_state["last_write"] = now
+    except Exception as exc:
+        logger.debug("[كاش الشموع] كتابة %s %s فشلت: %s", symbol, timeframe, exc)
+
+
+def _kline_cache_read(symbol: str, timeframe: str, limit: int) -> Optional[list]:
+    """قراءة آخر limit شمعة مغلقة من الكاش — بترتيب زمني تصاعدي كما تعيد كل المزودين."""
+    try:
+        rows = db.query(
+            "SELECT ts, open, high, low, close, volume FROM kline_cache"
+            " WHERE symbol = %s AND timeframe = %s ORDER BY ts DESC LIMIT %s",
+            (symbol, timeframe, int(limit)),
+        )
+        out = [[int(r["ts"]), float(r["open"]), float(r["high"]), float(r["low"]),
+                float(r["close"]), float(r["volume"])] for r in (rows or [])]
+        out.sort(key=lambda r: r[0])
+        return out or None
+    except Exception:
+        return None
+
+
+def _kline_cache_note_degraded(active: bool) -> None:
+    """إعلان دخول/خروج الوضع المتدهور مرة واحدة لكل انتقال — لا سبام."""
+    if bool(_kline_cache_state["degraded"]) == bool(active):
+        return
+    _kline_cache_state["degraded"] = bool(active)
+    if active:
+        log_and_notify(
+            "warning",
+            "🟠 وضع متدهور: كل مزودي الشموع عجزوا عن الاستجابة — الخدمة مؤقتًا من الكاش المحلي "
+            "(شموع مغلقة حتى آخر اتصال ناجح، والأسعار الحية من ويب سوكت مستمرة). "
+            "المسح والمتابعة والغلق لا يتوقفون.",
+            "DATA_DEGRADED")
+    else:
+        log_and_notify("info", "✅ عادت تغذية الشموع حية من المزودين — انتهى الوضع المتدهور", "DATA_DEGRADED")
+
+
 def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[list], Optional[str]]:
     """[FE1.8.7] طريق V9 لتغذية الشموع: البدائل الخام أولًا (requests بلا ccxt وبلا
     أسواق — حدودها سخية) ثم باينانس احتياطًا أخيرًا خلف حارس الوزن. أثناء حظر
@@ -1467,6 +1609,8 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
             continue
         if rows:
             _mark_provider_ok(prov.name, notify_transition=False)  # التدوير بين البدائل طبيعي — لا ضجيج [تصحيح حي]
+            _kline_cache_write(symbol, timeframe, rows)  # [FE1.9.8] كتابة شموع مغلقة للكاش الدائم
+            _kline_cache_note_degraded(False)
             return rows, prov.name
         # None = فشل المنصة نفسها (HTTP غير 200/استجابة فارغة) — عدّاد متتالٍ بلا تبريد فوري [V9]
         _mark_provider_soft_fail(prov.name, f"{symbol} {timeframe} فارغة/غير متاحة")
@@ -1489,6 +1633,8 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
                     raise ValueError("قائمة شموع فارغة")
                 _mark_provider_ok("binance")
                 _binance_attempt_prune(provider_state.get("binance") or {})
+                _kline_cache_write(symbol, timeframe, raw)  # [FE1.9.8] كتابة شموع مغلقة للكاش الدائم
+                _kline_cache_note_degraded(False)
                 return raw, "binance"
             except Exception as exc:
                 if _is_rate_error(exc):
@@ -1499,6 +1645,14 @@ def fetch_ohlcv_raw(symbol: str, timeframe: str, limit: int) -> Tuple[Optional[l
                 errors.append(f"binance: {str(exc)[:120]}")
     if errors:
         logger.warning("فشل جلب %s %s من المزودين المتاحين — %s", symbol, timeframe, " | ".join(errors))
+    # [FE1.9.8] الطبقة الأخيرة: الكاش الدائم — فشل كل المزودين لا يوقف المسح ولا
+    # المتابعة؛ الشموع المغلقة حتى آخر اتصال ناجح تخدم بوضع متدهور معلن مرة واحدة.
+    cached = _kline_cache_read(symbol, timeframe, limit)
+    if cached:
+        _kline_cache_note_degraded(True)
+        _kline_cache_state["reads"] += 1
+        return cached, "cache"
+    _kline_cache_note_degraded(False)  # لا كاش أصلاً — إعلان الطبيعية لا الحالة المتدهورة
     return None, None
 
 
@@ -3074,6 +3228,7 @@ def close_signal_row(sig: Dict[str, Any], exit_price: float, reason: str,
         (exit_price, reason, utc_now_iso(), round(pnl_usdt, 6), round(pnl_pct, 4), exit_order_id, sig["id"]),
     )
     _risk_on_close(pnl_usdt)  # [FE1.8.0] قاطع المخاطر: حد يومي + متتاليات
+    _resolve_manual_close(sig)  # [FE1.9.8] أي إغلاق فعلي يمسح علم «غلق يدوي مطلوب»
     tag = "حقيقية 🔴" if is_real else "ورقية"
     if not is_real:
         set_paper_balance(get_paper_balance() + pnl_usdt)
@@ -3098,6 +3253,7 @@ def close_real_trade(sig: Dict[str, Any], trigger_price: float, reason: str) -> 
     symbol = sig["symbol"]
     ex = binance_trade_exchange()
     if ex is None:
+        _flag_manual_close_required(sig, trigger_price, "مفاتيح باينانس غائبة — لا وصول للتنفيذ")
         log_and_notify("error", f"❌ تعذر إغلاق {symbol} حقيقيًا: مفاتيح باينانس غائبة", "REAL_TRADE_ERROR")
         return
     # [FE1.8.0] ألغِ الوقف الراكن أولًا — وإلا بقي أمر STOP حي يبيع رصيدًا لا نملك بعده.
@@ -3114,6 +3270,8 @@ def close_real_trade(sig: Dict[str, Any], trigger_price: float, reason: str) -> 
                 return
             if st in ("open", None):
                 # حي ولا يُلغى (أو الحالة غير قابلة للقراءة) — لا نبيع خوفًا من ازدواج
+                _flag_manual_close_required(sig, trigger_price,
+                                            f"تعذر إلغاء الوقف الراكن ({symbol}) — أُجّل الإغلاق تفاديًا لازدواج البيع")
                 log_and_notify("warning",
                                f"⚠ تعذر إلغاء الوقف الراكن لـ{symbol} — أُجّل الإغلاق للدورة القادمة تفاديًا لازدواج البيع",
                                "REAL_TRADE_ERROR")
@@ -3131,10 +3289,15 @@ def close_real_trade(sig: Dict[str, Any], trigger_price: float, reason: str) -> 
             return
         order = place_real_market_sell(symbol, sell_qty)
         if order is None:
+            # [FE1.9.8] فشل أمر البيع (باينانس محضور/خطأ شبكة/رفض منصة) — الصفقة بلغت
+            # مستوى خروجها فعلاً: تنبيه غلق يدوي بارز + العلم يبقى حتى إغلاق ناجح
+            _flag_manual_close_required(sig, trigger_price,
+                                        "فشل أمر البيع على باينانس (حظر/خطأ شبكة/رفض) — سيُعاد المحاولة آليًا كل دورة")
             return  # تبقى مفتوحة — إعادة محاولة في الدورة القادمة
         exit_price = float(order.get("average") or order.get("price") or 0) or trigger_price
         close_signal_row(sig, exit_price, reason, exit_order_id=str(order.get("id") or "") or None)
     except Exception as exc:
+        _flag_manual_close_required(sig, trigger_price, f"استثناء إغلاق: {exc}")
         log_and_notify("error", f"❌ استثناء إغلاق حقيقي {symbol}: {exc}", "REAL_TRADE_ERROR")
 
 
@@ -3163,6 +3326,67 @@ def _save_sig_meta(sig_id: Any, meta: Dict[str, Any]) -> None:
                    (json.dumps(meta, ensure_ascii=False), sig_id))
     except Exception as exc:
         logger.warning("كتابة meta_json للصف %s فشلت: %s", sig_id, exc)
+
+
+# ── [FE1.9.8] «غلق يدوي مطلوب» — تنبيه صريح قابل للتصعيد ─────────────────────
+# الطلب الحي: «إرسال تنبيه بغلق الصفقة يدويًا عند وصولها لهدفها أو وقف خسارتها
+# عندما يكون باينانس محضور وعدم تمكن البوت من غلقها». كل مسارات فشل الغلق الحقيقي
+# في close_real_trade تمر من هنا: علم على الصفقة (يعبر النشر عبر meta_json) +
+# تنبيه تلغرام بارز مع إرشاد التنفيذ + تذكير دوري حتى يُحل (نجاح الغلق يمسحه).
+
+def _flag_manual_close_required(sig: Dict[str, Any], level_price: float, why: str) -> None:
+    """علم + تنبيه الغلق اليدوي — مرة لكل MANUAL_CLOSE_REMIND_SEC (لا سبام على حلقة
+    إعادة المحاولة الستينية)، والعلم نفسه يبقى حتى الإغلاق الفعلي فيمسحه."""
+    meta = _sig_meta(sig)
+    if not meta.get("manual_close_required"):
+        meta["mcr_first_at"] = utc_now_iso()
+    last = float(meta.get("mcr_alert_at") or 0)
+    now = time.time()
+    if now - last < MANUAL_CLOSE_REMIND_SEC:
+        return
+    meta["manual_close_required"] = True
+    meta["mcr_alert_at"] = now
+    meta["mcr_reason"] = str(why)[:200]
+    _save_sig_meta(sig["id"], meta)
+    # تحديث القاموس الحي أيضًا — نداءات متتالية بنفس الكائن ترى الخانة فلا سبام
+    try:
+        if "meta_json" in sig:
+            sig["meta_json"] = json.dumps(meta, ensure_ascii=False)
+        if "meta" in sig:
+            sig["meta"] = meta
+    except Exception:
+        pass
+    base = str(sig.get("symbol", "")).split("/")[0]
+    trigger_txt = "هدفها" if "هدف" in str(why) else ("وقفها" if "وقف" in str(why) else "مستوى خروجها")
+    log_and_notify(
+        "error",
+        f"🚨 غلق يدوي مطلوب: {sig['symbol']} — الصفقة بلغت {trigger_txt} "
+        f"({fmt_price(float(level_price))}) وعجز البوت عن تنفيذ البيع.\n"
+        f"السبب: {str(why)[:140]}\n"
+        f"⚠ أغلقها يدويًا من باينانس الآن (بيع {sig.get('quantity')} {base}) "
+        f"— أو أرسل /close {sig['symbol']} هنا عند عودة الاتصال.",
+        "MANUAL_CLOSE_REQUIRED")
+
+
+def _resolve_manual_close(sig: Dict[str, Any]) -> None:
+    """مسح علم الغلق اليدوي عند الإغلاق الفعلي + إشعار حلّ صريح — يُستدعى من
+    close_signal_row فلا يوجد مسار إغلاق يفوته."""
+    meta = _sig_meta(sig)
+    if not meta.get("manual_close_required"):
+        return
+    meta["manual_close_required"] = False
+    meta["mcr_resolved_at"] = utc_now_iso()
+    meta["mcr_alert_at"] = 0
+    _save_sig_meta(sig["id"], meta)
+    dur = ""
+    t0 = meta.get("mcr_first_at")
+    if t0:
+        try:
+            dt = (datetime.now(timezone.utc) - datetime.strptime(t0, "%Y-%m-%dT%H:%M:%SZ")).total_seconds()
+            dur = f" بعد {int(dt // 60)} دقيقة من التنبيه" if dt >= 60 else ""
+        except Exception:
+            pass
+    log_and_notify("info", f"✅ حُلّ تنبيه الغلق اليدوي: {sig['symbol']} نُفذ الإغلاق{dur}", "MANUAL_CLOSE_REQUIRED")
 
 
 def rr_net_value(entry: float, sl: float, tp: float) -> float:
@@ -3608,7 +3832,7 @@ def monitor_step() -> None:
             db.execute("UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s WHERE id=%s",
                        (_why, utc_now_iso(), sig["id"]))
             # [FE1.9.6] الإبطال البنيوي حدث دورة حياة يراه المستخدم — إشعار مثل الملء
-            log_and_notify("info", f"🛑 أُبطل الأمر المعلق بنيويًا: {symbol} — {_why}")
+            log_and_notify("info", f"🛑 أُبطل الأمر المعلق بنيويًا: {symbol} — {_why}", "PENDING_LIFECYCLE")
             continue
 
         # 2) انتهاء الصلاحية — MAX_CANDLES_PENDING شمعة كشف (الأصل)
@@ -3619,7 +3843,8 @@ def monitor_step() -> None:
             # إشعار مثل الملء: دورة حياة المعلق (ولادة/ملء/انتهاء/إبطال) كلها مرئية
             log_and_notify("info",
                            f"⏰ انتهت صلاحية الأمر المعلق دون ملء: {symbol} — لم يلمس السوق منطقة الدخول "
-                           f"({fmt_price(float(sig['entry_price']))}) خلال مدة الصلاحية")
+                           f"({fmt_price(float(sig['entry_price']))}) خلال مدة الصلاحية",
+                           "PENDING_LIFECYCLE")
             continue
 
         # 3) الملء: لمس الشمعة لسعر الأمر المعلق (منخفض ≤ الدخول) — كما يفعل حد حقيقي
@@ -4847,6 +5072,20 @@ def health():
             "critical_mb": MEM_CRITICAL_MB,
         },
         "keep_alive": keep_alive_snapshot(),  # [FE1.3.0] تشخيص النبضة — عام بلا مصادقة لكرون جوب
+        "telegram_control": {  # [FE1.9.8] حلقة التحكم من تلغرام (freqtrade-style)
+            "enabled": bool(_tg_control_state["enabled"]),
+            "commands_n": _tg_control_state["commands_n"],
+            "last_command": _tg_control_state["last_command"],
+            "last_command_at": _tg_control_state["last_command_at"],
+            "errors": _tg_control_state["errors"],
+        },
+        "kline_cache": {  # [FE1.9.8] كاش الشموع الدائم + الوضع المتدهور
+            "degraded": bool(_kline_cache_state["degraded"]),
+            "writes": _kline_cache_state["writes"],
+            "reads": _kline_cache_state["reads"],
+            "last_write": _kline_cache_state["last_write"],
+            "rows_per_symbol": KLINE_CACHE_ROWS,
+        },
         "scanner": {  # [FE1.5.0] ملخص ماسح الكون — عام بلا تفاصيل النتائج (المحمية في /api/all)
             "enabled": SCAN_UNIVERSE_ENABLED,
             "running": bool(_scanner_state["running"]),
@@ -5040,11 +5279,11 @@ def api_pnl_history():
     return jsonify({"history": rows, "version": BOT_VERSION})
 
 
-@app.route("/api/trading/toggle", methods=["POST"])
-def toggle_trading_status():
+def set_trading_enabled(value: bool, source: str = "اللوحة") -> str:
+    """[FE1.9.8] التبديل الموحّد لحالة توليد الإشارات — اللوحة وأوامر تلغرام نفس المنطق حرفيًا."""
     global is_trading_enabled
     with trading_status_lock:
-        is_trading_enabled = not is_trading_enabled
+        is_trading_enabled = bool(value)
         db_set_state("trading_enabled", "1" if is_trading_enabled else "0")
     if is_trading_enabled:
         # [FE1.8.8] التفعيل يوقظ فحص الكون وفحص الكشف فورًا — أول توصية خلال ثوانٍ لا بعد 15 دقيقة
@@ -5053,8 +5292,15 @@ def toggle_trading_status():
             _detect_kick.set()
         except Exception:
             pass
-    msg = "🌊 توليد الإشارات الورقية: مفعّل" if is_trading_enabled else "⏸ توليد الإشارات الورقية: معطّل (المراقبة مستمرة)"
+    base = "🌊 توليد الإشارات الورقية: مفعّل" if is_trading_enabled else "⏸ توليد الإشارات الورقية: معطّل (المراقبة مستمرة)"
+    msg = f"{base} — بواسطة {source}"
     log_and_notify("info", msg, "TRADING_STATUS_CHANGE")
+    return msg
+
+
+@app.route("/api/trading/toggle", methods=["POST"])
+def toggle_trading_status():
+    msg = set_trading_enabled(not is_trading_enabled, "اللوحة")
     return jsonify({"trading_enabled": is_trading_enabled, "message": msg})
 
 
@@ -5387,6 +5633,217 @@ def load_markets_async() -> None:
     logger.info("حمية الذاكرة: الأسواق تُحمّل كسولًا عند أول استخدام لكل مزود، وتُقلّم فور نجاح أول جلب")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# [FE1.9.8] التحكم عن بعد من تلغرام — اقتباس الميزة القاتلة من freqtrade:
+# أوامر كاملة من المحادثة (حالة/معلق/صفقات/إحصاء/غلق/إلغاء/إيقاف/تشغيل) بلا لوحة،
+# وهي الطبيعة الكاملة لتنبيه «غلق يدوي مطلوب»: يصلك التنبيه وترد بـ/close فورًا.
+# المحادثة المصرّحة وحدها (TELEGRAM_CHAT_ID)؛ TELEGRAM_CONTROL=0 يعطل تساهليًا.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_tg_control_state: Dict[str, Any] = {"enabled": False, "last_command_at": None,
+                                     "commands_n": 0, "last_command": "", "errors": 0}
+
+TG_COMMAND_ALIASES: Dict[str, str] = {
+    "status": "status", "حالة": "status",
+    "pending": "pending", "معلق": "pending", "المعلق": "pending",
+    "positions": "positions", "open": "positions", "صفقات": "positions", "الصفقات": "positions",
+    "stats": "stats", "احصاء": "stats", "إحصاء": "stats", "الأداء": "stats",
+    "close": "close", "اغلق": "close", "إغلاق": "close", "بيع": "close",
+    "cancel": "cancel", "الغاء": "cancel", "إلغاء": "cancel", "الغ": "cancel",
+    "pause": "pause", "stop": "pause", "ايقاف": "pause", "إيقاف": "pause", "توقف": "pause",
+    "resume": "resume", "تشغيل": "resume", "استئناف": "resume",
+    "ping": "ping", "بنق": "ping",
+    "help": "help", "اوامر": "help", "أوامر": "help", "الأوامر": "help",
+}
+
+
+def tg_parse_command(text: str) -> Tuple[str, str]:
+    """تحليل نص أمر تلغرام → (فعل, وسيط) — نقية قابلة للاختبار.
+    يدعم /close@BotName (اسم البوت ملحقًا)، والوسيط بحالة عربية/إنجليزية مع/بدون /USDT."""
+    t = (text or "").strip()
+    if not t.startswith("/"):
+        return ("", "")
+    parts = t.split(None, 1)
+    cmd = parts[0][1:].split("@", 1)[0].strip().lower()
+    arg = parts[1].strip() if len(parts) > 1 else ""
+    return (TG_COMMAND_ALIASES.get(cmd, ""), arg)
+
+
+def _tg_sym(arg: str) -> str:
+    try:
+        return normalize_symbol(arg)
+    except Exception:
+        return ""
+
+
+def tg_handle_command(action: str, arg: str) -> str:
+    """تنفيذ أمر تلغرام وإرجاع نص الرد — الأوامر التنفيذية تستخدم نفس مسارات
+    اللوحة حرفيًا (close_signal_row/close_real_trade/set_trading_enabled) فلا منطق مزدوج."""
+    if action == "help":
+        return ("🤖 أوامر البوت:\n"
+                "/status أو /حالة — ملخص الحالة الحية\n"
+                "/pending أو /معلق — الأوامر المعلقة\n"
+                "/positions أو /صفقات — الصفقات المفتوحة مع الربح اللحظي\n"
+                "/stats أو /إحصاء — لوحة الأداء\n"
+                "/close <رمز> أو /اغلق — إغلاق صفقة مفتوحة بسعر السوق\n"
+                "/cancel <رمز> أو /الغاء — إلغاء أمر معلق\n"
+                "/pause أو /ايقاف — إيقاف توليد إشارات جديدة\n"
+                "/resume أو /تشغيل — استئناف التوليد\n"
+                "/ping — نبضة سريعة | /help — هذه القائمة")
+    if action == "ping":
+        deg = " 🟠 متدهور (كاش)" if _kline_cache_state["degraded"] else " ✅"
+        return (f"🏓 {BOT_VERSION} حي — ذاكرة {rss_mb():.0f}MB | "
+                f"مصدر البيانات: {(active_source.get('name') or '—')}{deg} | "
+                f"أوامر تلغرام: {_tg_control_state['commands_n']}")
+    if action == "status":
+        pend = db.query("SELECT COUNT(*) AS n FROM signals WHERE status='pending'")
+        opn = db.query("SELECT COUNT(*) AS n FROM signals WHERE status='open'")
+        mcr = db.query("SELECT COUNT(*) AS n FROM signals WHERE status='open' AND meta_json LIKE '%\"manual_close_required\": true%'")
+        deg = "🟠 متدهور (كاش محلي)" if _kline_cache_state["degraded"] else "✅ حية"
+        mode = "🔴 حقيقي" if is_real_mode else "⚪ ورقي"
+        gen = "🌊 مفعّل" if is_trading_enabled else "⏸ معطل"
+        risk = risk_snapshot()
+        risk_txt = ""
+        if risk.get("paused"):
+            risk_txt = f"\n⛔ قاطع المخاطر: إيقاف حتى {risk.get('pause_until', '')}"
+        return (f"📊 {BOT_VERSION} | الوضع: {mode} | التوليد: {gen}\n"
+                f"معلق: {pend[0]['n'] if pend else 0} | مفتوح: {opn[0]['n'] if opn else 0} | "
+                f"ذاكرة: {rss_mb():.0f}MB\n"
+                f"البيانات: {(active_source.get('name') or '—')} {deg} | "
+                f"تيك خام: {(_raw_state.get('ticks', 0) if isinstance(_raw_state, dict) else 0)}\n"
+                f"خسارة اليوم: {risk.get('daily_realized', 0):+.2f}$ / {risk.get('daily_base', 0):.0f}${risk_txt}"
+                + (f"\n🚨 صفقات تطلب غلقًا يدويًا: {mcr[0]['n'] if mcr else 0}" if mcr and mcr[0]["n"] else ""))
+    if action == "pending":
+        rows = db.query("SELECT * FROM signals WHERE status='pending' ORDER BY id DESC LIMIT 8")
+        if not rows:
+            return "لا أوامر معلقة حاليًا — البوت يراقب وينتظر بنية صاعدة حية."
+        lines = ["📋 الأوامر المعلقة:"]
+        for r in rows:
+            s = _parse_sig_row(r)
+            lines.append(
+                f"• {s['symbol']} {'صاعد ⬆' if s['direction'] == 'BULLISH' else 'هابط ⬇'} — "
+                f"دخول {fmt_price(float(s['entry_price']))} | وقف {fmt_price(float(s['stop_loss']))} | "
+                f"هدف {fmt_price(float(s['take_profit']))}"
+                + (f" | ينتهي {str(s.get('expires_at') or '')[:16]}" if s.get("expires_at") else ""))
+        return "\n".join(lines)
+    if action == "positions":
+        rows = db.query("SELECT * FROM signals WHERE status='open' ORDER BY id DESC LIMIT 8")
+        if not rows:
+            return "لا صفقات مفتوحة حاليًا."
+        lines = ["📈 الصفقات المفتوحة:"]
+        for r in rows:
+            s = _parse_sig_row(r)
+            price = get_live_price(s["symbol"]) or float(s["fill_price"])
+            pnl_pct = (price - float(s["fill_price"])) / float(s["fill_price"]) * 100.0
+            mcr = " 🚨غلق يدوي" if (s.get("meta") or {}).get("manual_close_required") else ""
+            lines.append(
+                f"• {s['symbol']} — دخول {fmt_price(float(s['fill_price']))} → الآن {fmt_price(price)} "
+                f"({pnl_pct:+.2f}%) | وقف {fmt_price(float(s['stop_loss']))} | هدف {fmt_price(float(s['take_profit']))}{mcr}")
+        return "\n".join(lines)
+    if action == "stats":
+        p = performance_snapshot()
+        wr = f"{p['win_rate']:.1f}%" if p.get("win_rate") is not None else "—"
+        pf = f"{p['profit_factor']:.2f}" if p.get("profit_factor") is not None else "—"
+        return (f"🧮 الأداء: صفقات مغلقة {p.get('closed_n', 0)} | رابحة {p.get('wins_n', 0)} | "
+                f"خاسرة {p.get('losses_n', 0)}\n"
+                f"معدل الربح: {wr} | عامل الربح: {pf}\n"
+                f"صافي الربح: {p.get('total_pnl', 0):+.2f}$ | عائم: {p.get('unrealized', 0):+.2f}$\n"
+                f"ربح اليوم: {p.get('today_pnl', 0):+.2f}$ | أقصى تراجع: {p.get('max_drawdown_pct', 0):.2f}%\n"
+                f"الرصيد الورقي: {get_paper_balance():.2f}$")
+    if action == "close":
+        sym = _tg_sym(arg)
+        if not sym:
+            return "استخدم: /close <رمز> — مثال: /close PUMP/USDT"
+        rows = db.query("SELECT * FROM signals WHERE symbol = %s AND status = 'open' ORDER BY id DESC",
+                        (sym,))
+        if not rows:
+            return f"لا توجد صفقة مفتوحة لـ {sym}"
+        sig = _parse_sig_row(rows[0])
+        price = get_live_price(sym) or float(sig["fill_price"])
+        if sig.get("is_real"):
+            close_real_trade(sig, price, "إغلاق يدوي من تلغرام (بسعر السوق)")
+            return (f"🔴 أُرسل أمر البيع الحقيقي لإغلاق {sym} عند {fmt_price(price)} — "
+                    f"راقب التأكيد (عند الفشل سيصلك تنبيه غلق يدوي مطلوب)")
+        close_signal_row(sig, price, "إغلاق يدوي من تلغرام (بسعر السوق)")
+        return f"✅ أُغلقت صفقة {sym} (ورقي) عند {fmt_price(price)}"
+    if action == "cancel":
+        sym = _tg_sym(arg)
+        if not sym:
+            return "استخدم: /cancel <رمز> — مثال: /cancel PUMP/USDT"
+        rows = db.query("SELECT * FROM signals WHERE symbol = %s AND status = 'pending' ORDER BY id DESC",
+                        (sym,))
+        if not rows:
+            return f"لا يوجد أمر معلق لـ {sym}"
+        sig = rows[0]
+        if sig.get("is_real"):
+            ex = binance_trade_exchange()
+            if ex is None or not sig.get("order_id") or not cancel_real_order(ex, sig["symbol"], sig["order_id"]):
+                return f"⚠ فشل إلغاء الأمر الحقيقي لـ {sym} على المنصة — أعد المحاولة أو استخدم اللوحة"
+            _resync_after_cancel_attempt(_parse_sig_row(sig), ex, "إلغاء يدوي من تلغرام")
+            log_and_notify("info", f"🚫 [حقيقي] أُلغي الأمر المعلق من تلغرام: {sym}", "ORDER_CANCELLED")
+            return f"🚫 أُلغي الأمر الحقيقي لـ {sym}"
+        db.execute("UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s WHERE id=%s",
+                   ("إلغاء يدوي من تلغرام", utc_now_iso(), sig["id"]))
+        log_and_notify("info",
+                       f"🚫 أُلغي الأمر المعلق (ورقي): {sym} — دخول {fmt_price(float(sig['entry_price']))} (إلغاء من تلغرام)",
+                       "PENDING_LIFECYCLE")
+        return f"🚫 أُلغي الأمر المعلق (ورقي) لـ {sym}"
+    if action == "pause":
+        if not is_trading_enabled:
+            return "التوليد معطل أصلًا ⏸"
+        return f"⏸ {set_trading_enabled(False, 'تلغرام')}"
+    if action == "resume":
+        if is_trading_enabled:
+            return "التوليد مفعّل أصلًا 🌊"
+        return f"🌊 {set_trading_enabled(True, 'تلغرام')}"
+    return ""
+
+
+def _telegram_control_loop() -> None:
+    """حلقة التحكم من تلغرام (خيط daemon) — getUpdates long-poll بأمان كامل:
+    فشل التلغرام لا يمس أي مسار تداول، والأوامر من المحادثة المصرّحة وحدها."""
+    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and TELEGRAM_CONTROL):
+        logger.info("[تلغرام] التحكم عن بعد معطل (بلا مفاتيح أو TELEGRAM_CONTROL=0)")
+        return
+    _tg_control_state["enabled"] = True
+    logger.info("[تلغرام] حلقة التحكم عن بعد بدأت")
+    offset = 0
+    api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    while True:
+        try:
+            r = requests.post(f"{api}/getUpdates",
+                              json={"offset": offset, "timeout": TELEGRAM_POLL_TIMEOUT_SEC,
+                                    "allowed_updates": ["message"]},
+                              timeout=TELEGRAM_POLL_TIMEOUT_SEC + 10)
+            data = r.json() if r.status_code == 200 else {}
+            if data.get("ok") is False:
+                time.sleep(15)  # خطأ API (مفاتيح/تعارض webhook) — لا حلقة محمومة
+                continue
+            for upd in (data.get("result") or []):
+                offset = max(offset, int(upd.get("update_id", 0)) + 1)
+                msg = upd.get("message") or {}
+                if str(msg.get("chat", {}).get("id")) != str(TELEGRAM_CHAT_ID):
+                    continue  # أمان: المحادثة المصرّحة وحدها
+                action, arg = tg_parse_command(msg.get("text") or "")
+                if not action:
+                    continue
+                _tg_control_state["last_command_at"] = utc_now_iso()
+                _tg_control_state["last_command"] = action
+                _tg_control_state["commands_n"] += 1
+                try:
+                    reply = tg_handle_command(action, arg)
+                except Exception as exc:
+                    logger.exception("[تلغرام] فشل تنفيذ الأمر %s", action)
+                    _tg_control_state["errors"] += 1
+                    reply = f"❌ فشل تنفيذ {action}: {str(exc)[:120]}"
+                if reply:
+                    send_telegram_message(reply)
+        except Exception as exc:
+            logger.warning("[تلغرام] خطأ حلقة التحكم: %s", exc)
+            _tg_control_state["errors"] += 1
+            time.sleep(8)
+
+
 def initialize_bot_services() -> None:
     init_db()
     restore_trading_flag()
@@ -5399,6 +5856,7 @@ def initialize_bot_services() -> None:
     threading.Thread(target=scan_loop, daemon=True, name="scan-loop").start()
     threading.Thread(target=monitor_loop, daemon=True, name="monitor-loop").start()
     threading.Thread(target=keep_alive_loop, daemon=True, name="keep-alive").start()
+    threading.Thread(target=_telegram_control_loop, daemon=True, name="tg-control").start()  # [FE1.9.8] التحكم من تلغرام (نقل ميزة freqtrade)
     if SCAN_UNIVERSE_ENABLED:  # [FE1.5.0] خيط ماسح الكون — فحص أول بعد 90 ثانية ثم كل SCAN_INTERVAL_SEC
         threading.Thread(target=universe_scan_loop, daemon=True, name="universe-scanner").start()
     ka_target = resolve_keep_alive_url()
