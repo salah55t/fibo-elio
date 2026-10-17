@@ -181,7 +181,7 @@ class TestPaperFlow:
     def test_compute_quantity_risk_math(self, clean_db):
         qty = vnz.compute_quantity("TEST/USDT", 128.54, 99.9)
         assert qty is not None and qty > 0
-        # مخاطرة 0.7% من 10000 = 70$ على مسافة 28.64 [FE1.9.15]
+        # مخاطرة 0.7% من 10000 = 70$ على مسافة 28.64 [FE1.9.16]
         assert math.isclose(qty * (128.54 - 99.9), 70.0, rel_tol=0.05)
 
     def test_create_pending_signal(self, clean_db):
@@ -329,7 +329,7 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "FE1.9.15"
+        assert body["version"] == "FE1.9.16"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 
@@ -865,7 +865,7 @@ class TestWebSocketPriceFeedFE120:
         r = client.get("/api/ws/status")
         assert r.status_code == 200
         data = r.get_json()
-        assert data["version"] == "FE1.9.15"
+        assert data["version"] == "FE1.9.16"
         assert data["enabled"] is True
         assert "prices" in data and "subscriptions" in data and "candles" in data
 
@@ -883,7 +883,7 @@ class TestWebSocketPriceFeedFE120:
         client = vnz.app.test_client()
         data = client.get("/health").get_json()
         assert data["live_feed"] in ("websocket", "rest")
-        assert data["version"] == "FE1.9.15"
+        assert data["version"] == "FE1.9.16"
 
     def test_ws_exchange_unknown_provider_raises(self):
         with pytest.raises(ValueError):

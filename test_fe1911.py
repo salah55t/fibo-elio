@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""اختبارات FE1.9.15 «الشارت النظيف في نافذة عائمة — إزالة مؤشر LuxAlgo»
+"""اختبارات FE1.9.16 «الشارت النظيف في نافذة عائمة — إزالة مؤشر LuxAlgo»
 ==========================================================================
 الطلب: «قم بتنضيف الشارت من بيانات الموجات الذي يفسد الرؤية اترك المهم فقط
 وازل المؤشر الذي اضفناه الذي يحسب الموجات بطريقة غير طريقة الاستراتيجية».
@@ -105,8 +105,8 @@ def test_ew_strategy_endpoint_alive_for_engine_layer(clean_db):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync_vnz_panel():
-    assert vnz.BOT_VERSION == "FE1.9.15"
-    assert panel.BOT_VERSION == "FE1.9.15"
+    assert vnz.BOT_VERSION == "FE1.9.16"
+    assert panel.BOT_VERSION == "FE1.9.16"
     assert panel.BOT_VERSION == vnz.BOT_VERSION
     h = client().get("/health").get_json()
-    assert h["version"] == "FE1.9.15"
+    assert h["version"] == "FE1.9.16"

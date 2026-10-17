@@ -94,8 +94,8 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.9.15"
-        assert panel.BOT_VERSION == "FE1.9.15"
+        assert vnz.BOT_VERSION == "FE1.9.16"
+        assert panel.BOT_VERSION == "FE1.9.16"
 
     def test_render_yaml_carries_new_values(self):
         # مصدر الحقيقة على Render — يجب أن يحمل القيم الجديدة لا الافتراضيات القديمة
@@ -113,5 +113,5 @@ class TestProtectedBoundaries:
         # الحراسات الجوهرية بقيت بقيمها — التخفيف في الأعمار لا في الجودة
         assert vnz.MAX_ENTRY_DISTANCE_PCT == 1.5      # لا مطاردة
         assert vnz.SYMBOL_COOLDOWN_SEC == 5400        # لا إعادة إنشاء حرفية
-        assert getattr(vnz, "RR_NET_MIN", 0.6) == 0.6 # بوابة rr_net [FE1.9.15]
+        assert getattr(vnz, "RR_NET_MIN", 0.6) == 0.6 # بوابة rr_net [FE1.9.16]
         assert vnz.CLUSTER_MAX_SAME_DIRECTION == 3

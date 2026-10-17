@@ -32,3 +32,15 @@ def _fe1914_test_gates(request, monkeypatch):
     import vnz
     monkeypatch.setattr(vnz, "MAX_STOP_PCT", 0.0)
     monkeypatch.setattr(vnz, "RR_NET_MIN", 0.3)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_kline_fill(monkeypatch):
+    """[FE1.9.16] عزل مسار جلب الشموع عند الطلب عن الشبكة: كل اختبار يجد الملء
+    معطّلًا والتحديث الخلفي مطفأ — اختبارات FE1.9.16 تتجاوزه صراحة بـmonkeypatch
+    الخاص بها (يُنفَّذ بعد هذه المصيدة فتطغى عليها بنفس كائن monkeypatch)."""
+    import vnz
+    monkeypatch.setattr(vnz, "KLINE_BG_REFRESH", False)
+    monkeypatch.setattr(vnz, "_klines_fetch_fill",
+                        lambda symbol, tf, limit, wait=True: (None, None, "cooldown"))
+    yield

@@ -70,7 +70,7 @@ def make_setup(prices=None, direction: str = "BULLISH"):
 
 
 def make_scalp_setup():
-    """هندسة سكالبينج واقعية (بُنيت لـFE1.9.15): دخول ≈100.0، وقف ≈97.2 (2.8% —
+    """هندسة سكالبينج واقعية (بُنيت لـFE1.9.16): دخول ≈100.0، وقف ≈97.2 (2.8% —
     تحت سقف 3.5%)، درجة W5 = P4+W1 = 102.203 → rr_net ≈ 0.71 (فوق أرضية 0.6)،
     P5=101.0 وlast_close=100.3 (مطاردة 0.3%، الهدف فوق max(close,P5))."""
     from engine.pattern_detector import DetectedSetup
@@ -313,8 +313,8 @@ class TestTightenedDayLimits:
 class TestPanelAndDeploymentSync:
 
     def test_version_sync(self):
-        assert vnz.BOT_VERSION == "FE1.9.15"
-        assert panel.BOT_VERSION == "FE1.9.15"
+        assert vnz.BOT_VERSION == "FE1.9.16"
+        assert panel.BOT_VERSION == "FE1.9.16"
 
     def test_panel_gate_chip_present(self):
         src = panel.PANEL_HTML

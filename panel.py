@@ -46,7 +46,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.15"
+BOT_VERSION = "FE1.9.16"  # [FE1.9.16] إكمال حزمة OpenStock: الحالة الفارغة الصادقة بالسبب داخل المودال + مسح أثر الرمز السابق + وميض القيم باتجاه (أخضر/أحمر) + شارة «جُلبت الآن» وشفافية النعش الخلفي
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -227,6 +227,22 @@ PANEL_HTML = r"""<!DOCTYPE html>
   .val.flash { animation:valflash .85s ease; }
   @keyframes valflash { 0%{ filter:brightness(2.1) drop-shadow(0 0 9px currentColor); }
                         100%{ filter:none; } }
+  /* [FE1.9.16] وميض باتجاه (نمط OpenStock PriceFlash): أخضر صعود/أحمر نزول
+     — المراقب يقارن الرقم الأول قبله/بعده، والقيم غير العددية تعود للمحايد */
+  .val.flash-up { animation:valflash-up .9s ease; }
+  .val.flash-down { animation:valflash-down .9s ease; }
+  @keyframes valflash-up { 0%{ color:#00ff9c; filter:brightness(1.9) drop-shadow(0 0 11px rgba(0,255,156,.85)); }
+                           100%{ filter:none; } }
+  @keyframes valflash-down { 0%{ color:#ff2d78; filter:brightness(1.9) drop-shadow(0 0 11px rgba(255,45,120,.85)); }
+                             100%{ filter:none; } }
+  /* [FE1.9.16] الحالة الفارغة الصادقة داخل مودال الشارت — بدل الفراغ الصامت (نمط stuck-charts) */
+  .chart-empty { display:none; position:absolute; inset:0; z-index:5;
+    align-items:center; justify-content:center; text-align:center; pointer-events:none; }
+  .chart-empty.show { display:flex; }
+  .chart-empty .ce-box { background:rgba(3,12,20,.9); border:1px dashed rgba(0,229,255,.32);
+    border-radius:14px; padding:18px 28px; max-width:430px; }
+  .chart-empty .ce-icon { font-size:26px; margin-bottom:6px; animation:cePulse 2.2s ease-in-out infinite; }
+  @keyframes cePulse { 0%,100%{ opacity:.5; } 50%{ opacity:1; } }
   .pos { color:var(--neon); } .neg { color:var(--red); } .gld { color:var(--yel); } .tealc { color:var(--cyan); }
   .vioc { color:var(--vio); }
   /* ── الأقسام: زجاج + عنوان بخط كوفي أرقى ── */
@@ -475,7 +491,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   <div class="cmodal-box">
     <div class="cmodal-head">
       <span class="cmodal-title">🕯 الشارت الحي</span>
-      <span class="mut small">شموع فريم التنفيذ من كاش Postgres + الشمعة الجارية حية من التيار · خطوط: دخول · وقف · أهداف TP1→TP3 · سقف أسبوع</span>
+      <span class="mut small">شموع فريم التنفيذ: كاش Postgres فورًا + جلب لحظي من المزودين لأي رمز بلا كاش (SWR [FE1.9.16]) + الشمعة الجارية حية من التيار · خطوط: دخول · وقف · أهداف TP1→TP3 · سقف أسبوع</span>
       <button class="cmodal-close" onclick="closeChartModal()" title="إغلاق النافذة (Esc)" aria-label="إغلاق النافذة">✕</button>
     </div>
     <div class="cmodal-ctl">
@@ -487,7 +503,16 @@ PANEL_HTML = r"""<!DOCTYPE html>
         <input type="checkbox" id="ewx-toggle" onchange="ewxToggle()" style="accent-color:#f7c948;cursor:pointer"> موجات المحرك (الاستراتيجية)
       </label>
     </div>
-    <div id="lwc-chart" class="chart-frame" style="border:1px solid rgba(0,229,255,.12);border-radius:14px;background:rgba(0,229,255,.02)"></div>
+    <div style="position:relative">
+      <div id="lwc-chart" class="chart-frame" style="border:1px solid rgba(0,229,255,.12);border-radius:14px;background:rgba(0,229,255,.02)"></div>
+      <div id="chart-empty" class="chart-empty">
+        <div class="ce-box">
+          <div class="ce-icon">🛰️</div>
+          <div style="font-weight:700;color:#e6f7ff;margin-bottom:5px">لا شموع لهذا الرمز بعد</div>
+          <div id="chart-empty-reason" class="mut small">يُجلب من المزودين تلقائيًا — النبض كل 8ث يعيد المحاولة</div>
+        </div>
+      </div>
+    </div>
     <div id="chart-note" class="mut small" style="margin-top:6px">—</div>
     <div id="ewx-note" class="mut small" style="margin-top:2px;color:#f7c948"></div>
     <div class="mut small" style="margin-top:4px">الشارت: TradingView Lightweight Charts v5.2.1 (Apache-2.0) — يُقدَّم محليًا من الخادم بلا أي اعتماد خارجي · طبقة «موجات المحرك» اختيارية وتُحسب من محرك الاستراتيجية نفسه عبر /api/ew_strategy · النافذة تُغلق بزر ✕ أو Esc أو نقر الخلفية</div>
@@ -1015,7 +1040,25 @@ async function chartTick(force){
   const key = chartSym + '|' + tf;
   try{
     const d = await api('/api/klines?symbol=' + encodeURIComponent(chartSym) + '&tf=' + encodeURIComponent(tf) + '&limit=180');
-    if(!d.candles || !d.candles.length){ $('chart-note').textContent = 'لا شموع في الكاش لـ ' + chartSym + ' — تظهر بعد دورة المسح القادمة'; return; }
+    if(!d.candles || !d.candles.length){
+      // [FE1.9.16] الحالة الفارغة الصادقة — سبب مسمّى من الخادم بدل فراغ صامت
+      const WHY = { waited:'جلب جارٍ الآن — لحظات ويسرح', cooldown:'المزودون على تبريد بعد فشل — إعادة محاولة تلقائية قريبًا',
+                    inflight:'جلب جارٍ في الخلفية', busy:'قائمة الجلب ممتلئة — إعادة المحاولة قريبًا',
+                    failed:'عجز المزودون عن الاستجابة — تعاد المحاولة كل نبضة تلقائيًا',
+                    fill_disabled:'الجلب عند الطلب معطّل (KLINE_FILL_ON_MISS=0)',
+                    bad_symbol:'رمز غير صالح', no_data:'لا بيانات متاحة بعد' };
+      const why = WHY[d.reason] || ('سبب: ' + (d.reason || 'غير معروف'));
+      // صدق بصري كامل: شموع الرمز السابق وخطوطه وطبقة المحرك لا تبقى فوق رمز بلا بيانات
+      if(key !== chartKey){ try{ CSERIES.setData([]); }catch(e){} chartBars = []; chartLastBar = null; chartKey = key; }
+      chartApplyOverlays();  // يمسح خطوط المراجع وعلامات الصفقة القديمة
+      try{ ewxClear(); }catch(e){}
+      try{ $('ewx-note').textContent = ''; }catch(e){}
+      const ce = $('chart-empty');
+      if(ce){ ce.classList.add('show'); const r = $('chart-empty-reason'); if(r) r.textContent = why; }
+      $('chart-note').textContent = 'لا شموع لـ ' + chartSym + ' — ' + why;
+      return;
+    }
+    const ce0 = $('chart-empty'); if(ce0) ce0.classList.remove('show');
     const bars = d.candles.map(c => ({ time: Math.floor(c[0]/1000), open:+c[1], high:+c[2], low:+c[3], close:+c[4] }));
     const lastc = bars[bars.length-1].close;
     const prec = lastc>=1000?2:(lastc>=10?3:(lastc>=1?4:6));
@@ -1039,6 +1082,8 @@ async function chartTick(force){
     try{ ewxMaybe(); }catch(e){ console.error(e); }  // [FE1.9.12] طبقة موجات المحرك (الاستراتيجية)
     const srcTxt = d.source==='cache+live' ? 'كاش + شمعة حية' : (d.source==='cache' ? 'كاش Postgres' : d.source);
     $('chart-note').innerHTML = '<b>' + esc(chartSym) + '</b> · فريم ' + esc(tf) + ' · ' + d.count + ' شمعة · مصدر ' + esc(srcTxt)
+      + (d.filled ? ' · <span style="color:#22e58c">⤓ جُلبت الآن من ' + esc(d.fill_source || 'المزود') + '</span>' : '')
+      + (d.stale && !d.filled ? ' · <span class="mut">كاش قديم — يُنعّش خلفيًا</span>' : '')
       + (row ? ' · خطوط: دخول/وقف/' + ((row.tp_stages&&row.tp_stages.length)?(row.tp_stages.length+' أهداف'):'هدف') + (row.weekly_high?' + سقف أسبوع':'') : ' · لا صفقة على هذا الرمز (شموع فقط)');
   }catch(e){ $('chart-note').textContent = 'خطأ جلب الشموع: ' + String(e.message||e).slice(0,120); }
 }
@@ -1265,16 +1310,23 @@ setInterval(()=>{ try{ chartTick(); }catch(e){} }, 8000);
 // [FE1.5.0] إيقاف الضغط والإخفاء + تحديث فوري عند العودة للتبويب
 // ═══ [FE1.9.13] اللمسة الفنية — طبقة حيوية عرضية خالصة ═══
 // مراقب وميض القيم: عند تغيّر نص أي بطاقة يومض توهجها لحظة — لا يقرأ ولا يعدّل أي بيانات
+// [FE1.9.16] الوميض باتجاه (نمط OpenStock PriceFlash): الرقم الأول قبل/بعد يقارن —
+// صعود → توهج أخضر، نزول → توهج أحمر، بلا رقم صالح → الوميض المحايد القديم
 (function(){
   if(!window.MutationObserver) return;
   const seen = new Map();
   let scheduled = false;
+  const numOf = s => { const m = String(s).match(/-?\d+(?:\.\d+)?/); return m ? parseFloat(m[0]) : null; };
   const scan = () => {
     scheduled = false;
     document.querySelectorAll('.val').forEach(el => {
       const t = el.textContent;
-      if(seen.has(el) && seen.get(el) !== t){
-        el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+      const prev = seen.get(el);
+      if(prev !== undefined && prev !== t){
+        const a = numOf(prev), b = numOf(t);
+        let klass = 'flash';
+        if(a !== null && b !== null && b !== a) klass = (b > a) ? 'flash-up' : 'flash-down';
+        el.classList.remove('flash','flash-up','flash-down'); void el.offsetWidth; el.classList.add(klass);
       }
       seen.set(el, t);
     });

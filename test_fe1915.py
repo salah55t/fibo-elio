@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""اختبارات FE1.9.15 «الشارت النظيف في نافذة عائمة»
+"""اختبارات FE1.9.16 «الشارت النظيف في نافذة عائمة»
 ====================================================
 الطلب: «شارت العملات لا يضهر اي بيانات سوى العملات التي دخلت طابور الانتضار
 لسعر الدخول او المفتوحة وكذلك قم بتنضيف الشارت من بيانات الموجات الذي يفسد
@@ -160,6 +160,6 @@ def test_trade_lines_still_drawn_the_essential():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync_vnz_panel():
-    assert vnz.BOT_VERSION == "FE1.9.15"
-    assert panel.BOT_VERSION == "FE1.9.15"
+    assert vnz.BOT_VERSION == "FE1.9.16"
+    assert panel.BOT_VERSION == "FE1.9.16"
     assert panel.BOT_VERSION == vnz.BOT_VERSION

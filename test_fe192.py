@@ -245,5 +245,5 @@ def test_scan_error_counter_visible(clean_db, monkeypatch):
 
 def test_version_pair():
     import panel
-    assert vnz.BOT_VERSION == "FE1.9.15"
-    assert panel.BOT_VERSION == "FE1.9.15"
+    assert vnz.BOT_VERSION == "FE1.9.16"
+    assert panel.BOT_VERSION == "FE1.9.16"

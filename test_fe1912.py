@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""اختبارات FE1.9.15 «موجات المحرك — المؤشر يحسب بمنطق الاستراتيجية حرفيًا»
+"""اختبارات FE1.9.16 «موجات المحرك — المؤشر يحسب بمنطق الاستراتيجية حرفيًا»
 ============================================================================
 الطلب: «اضبط عدادات المؤشر ومستويات فيبوناتشي كما هي في الاستراتيجية»
        «اريد ان يحسب مؤشر موجات اليوت وفيبوناتشي كما في استراتيجية التداول»
@@ -338,19 +338,19 @@ def test_ew_strategy_does_not_touch_shared_detector(clean_db, monkeypatch):
 def test_panel_has_engine_layer_ui():
     html = panel.PANEL_HTML
     assert 'id="ewx-toggle"' in html and "ewxToggle()" in html, "زر موجات المحرك"
-    # [FE1.9.15] مطفأة افتراضيًا — الشارت نظيف عند الفتح والطبقة اختيارية
+    # [FE1.9.16] مطفأة افتراضيًا — الشارت نظيف عند الفتح والطبقة اختيارية
     seg = html.split('id="ewx-toggle"')[1][:250]
-    assert "checked" not in seg, "مطفأة افتراضيًا [FE1.9.15]"
+    assert "checked" not in seg, "مطفأة افتراضيًا [FE1.9.16]"
     assert "let EWX_ON = false" in html
     assert "ewxMaybe()" in html and "ewxApply(" in html and "ewxClear()" in html
     assert "/api/ew_strategy" in html, "جلب بيانات المحرك"
     assert 'id="ewx-note"' in html, "سطر الحكم العربي"
     assert "EWX_MARKS" in html, "مثيل علامات مستقل لمحاور P0–P5"
     assert "موجات المحرك" in html
-    # [FE1.9.15] طبقة LuxAlgo أُزيلت كليًا — لا زر ولا إسناد ولا دوال
+    # [FE1.9.16] طبقة LuxAlgo أُزيلت كليًا — لا زر ولا إسناد ولا دوال
     assert 'id="ew-toggle"' not in html and "ewToggle" not in html
     assert "LuxAlgo" not in html and "ElliottWaveLux" not in html
-    # [FE1.9.15] مفاتيح فيبو W2/W4/W3 حُذفت من العرض (تنضيف الرؤية)
+    # [FE1.9.16] مفاتيح فيبو W2/W4/W3 حُذفت من العرض (تنضيف الرؤية)
     assert "w2_zone" not in html and "w4_zone" not in html and "w3_ext" not in html
 
 
@@ -366,6 +366,6 @@ def test_panel_engine_layer_legend_and_note():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync_vnz_panel():
-    assert vnz.BOT_VERSION == "FE1.9.15"
-    assert panel.BOT_VERSION == "FE1.9.15"
+    assert vnz.BOT_VERSION == "FE1.9.16"
+    assert panel.BOT_VERSION == "FE1.9.16"
     assert panel.BOT_VERSION == vnz.BOT_VERSION
