@@ -586,8 +586,8 @@ class TestDeploymentAndBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.9.13"
-        assert panel.BOT_VERSION == "FE1.9.13"
+        assert vnz.BOT_VERSION == "FE1.9.14"
+        assert panel.BOT_VERSION == "FE1.9.14"
 
     def test_render_yaml_carries_v9_layer_keys(self):
         with open("render.yaml", "r", encoding="utf-8") as fh:
@@ -638,11 +638,12 @@ class TestDeploymentAndBoundaries:
         assert body["rate_guard"]["budget_per_min"] >= 400
         assert body["rate_guard"]["banned"] is False
 
+    @pytest.mark.production_gates
     def test_protected_boundaries_untouched(self):
         # الحراسات المحمية من FE1.7.0→1.8.5 لم تُمس في الاقتباس
         assert vnz.SCAN_TOP_N == 30
         assert vnz.MAX_STRUCTURE_AGE_BARS == 36
-        assert vnz.RR_NET_MIN == 0.3
+        assert vnz.RR_NET_MIN == 0.6
         assert vnz.MAX_ENTRY_DISTANCE_PCT == 1.5
         assert vnz.SYMBOL_COOLDOWN_SEC == 5400
         assert vnz.KEEP_ALIVE_INTERVAL_SEC == 60.0

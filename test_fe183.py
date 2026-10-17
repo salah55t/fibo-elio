@@ -94,8 +94,8 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.9.13"
-        assert panel.BOT_VERSION == "FE1.9.13"
+        assert vnz.BOT_VERSION == "FE1.9.14"
+        assert panel.BOT_VERSION == "FE1.9.14"
 
     def test_render_yaml_carries_new_values(self):
         # مصدر الحقيقة على Render — يجب أن يحمل القيم الجديدة لا الافتراضيات القديمة
@@ -108,9 +108,10 @@ class TestProtectedBoundaries:
         # القديم (نبضة 600ث) أزيل كليًا — value: "600" الحالية ملك BAN_LONG_THRESHOLD_SEC [FE1.8.7]
         assert "- key: KEEP_ALIVE_INTERVAL_SEC\n        value: \"600\"" not in y
 
+    @pytest.mark.production_gates
     def test_quality_gates_untouched(self):
         # الحراسات الجوهرية بقيت بقيمها — التخفيف في الأعمار لا في الجودة
         assert vnz.MAX_ENTRY_DISTANCE_PCT == 1.5      # لا مطاردة
         assert vnz.SYMBOL_COOLDOWN_SEC == 5400        # لا إعادة إنشاء حرفية
-        assert getattr(vnz, "RR_NET_MIN", 0.3) == 0.3 # بوابة rr_net
+        assert getattr(vnz, "RR_NET_MIN", 0.6) == 0.6 # بوابة rr_net [FE1.9.14]
         assert vnz.CLUSTER_MAX_SAME_DIRECTION == 3

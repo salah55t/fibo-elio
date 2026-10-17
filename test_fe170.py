@@ -247,7 +247,7 @@ class TestPaperExposureCaps:
         monkeypatch.setattr(vnz, "PAPER_MAX_POSITION_PCT", 0)
         monkeypatch.setattr(vnz, "PAPER_MAX_TOTAL_PCT", 0)
         qty = vnz.compute_quantity("TEST/USDT", 100.0, 99.9)
-        assert math.isclose(qty * (100.0 - 99.9), 100.0, rel_tol=0.01)
+        assert math.isclose(qty * (100.0 - 99.9), 70.0, rel_tol=0.01)  # [FE1.9.14] 0.7%
 
     def test_total_cap_rejects_when_no_room(self, clean_db):
         insert_sig(status="open", notional=9995.0)  # المتبقي 5$ < أدنى قيمة 10$
@@ -511,5 +511,5 @@ class TestOpenOutageGuard:
 
 def test_version_fe170():
     import panel
-    assert vnz.BOT_VERSION == "FE1.9.13"
-    assert panel.BOT_VERSION == "FE1.9.13"
+    assert vnz.BOT_VERSION == "FE1.9.14"
+    assert panel.BOT_VERSION == "FE1.9.14"

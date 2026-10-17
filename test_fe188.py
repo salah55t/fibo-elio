@@ -147,12 +147,13 @@ class TestDetectNapInterruptible:
 
 class TestProtectedBoundaries:
 
+    @pytest.mark.production_gates
     def test_gate_constants_untouched(self):
         assert vnz.MAX_ENTRY_DISTANCE_PCT == 1.5
-        assert vnz.RR_NET_MIN == 0.3
+        assert vnz.RR_NET_MIN == 0.6
         assert vnz.SYMBOL_COOLDOWN_SEC == 5400
         assert vnz.MAX_STRUCTURE_AGE_BARS == 36
         assert vnz.KEEP_ALIVE_INTERVAL_SEC == 60.0
 
     def test_version_bumped(self):
-        assert vnz.BOT_VERSION == "FE1.9.13"
+        assert vnz.BOT_VERSION == "FE1.9.14"

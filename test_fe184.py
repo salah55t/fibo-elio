@@ -134,8 +134,8 @@ class TestNewDefaults:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.9.13"
-        assert panel.BOT_VERSION == "FE1.9.13"
+        assert vnz.BOT_VERSION == "FE1.9.14"
+        assert panel.BOT_VERSION == "FE1.9.14"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -304,10 +304,11 @@ class TestDeploymentAndBoundaries:
         assert vnz.premise_alive(alive, 110.0) is True
         assert vnz.premise_alive(dead, None) is True   # فشل القراءة = تساهل (fail-open)
 
+    @pytest.mark.production_gates
     def test_quality_gates_values_untouched(self):
         # التخفيف في الأعمار والاتساع فقط — بوابات الجودة بقيت بقيمها
         assert vnz.MAX_ENTRY_DISTANCE_PCT == 1.5      # لا مطاردة
-        assert vnz.RR_NET_MIN == 0.3                  # أرضية R:R الصافي
+        assert vnz.RR_NET_MIN == 0.6                  # أرضية R:R الصافي
         assert vnz.SYMBOL_COOLDOWN_SEC == 5400.0      # تبريد الرمز 90 دقيقة
         assert vnz.PENDING_MAX_CANDLES == 6           # صلاحية المعلق من FE1.8.3
         assert vnz.CLUSTER_MAX_SAME_DIRECTION == 3    # سقف العنقود
