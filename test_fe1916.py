@@ -324,7 +324,7 @@ def test_bg_refresh_disabled_and_inflight_guard(clean_db, monkeypatch, fresh_fil
 def test_health_has_new_blocks(clean_db, monkeypatch):
     monkeypatch.setattr(vnz, "WS_ENABLED", False)
     body = client().get("/health").get_json()
-    assert body["version"] == "FE1.9.16"
+    assert body["version"] == "FE1.9.17"
     kf = body["kline_fill"]
     assert kf["enabled"] is True and "fills" in kf and "cooldown_skips" in kf
     nc = body["notify_claim"]
@@ -366,6 +366,6 @@ def test_panel_fill_badge_and_swrnote():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync_vnz_panel():
-    assert vnz.BOT_VERSION == "FE1.9.16"
-    assert panel.BOT_VERSION == "FE1.9.16"
+    assert vnz.BOT_VERSION == "FE1.9.17"
+    assert panel.BOT_VERSION == "FE1.9.17"
     assert panel.BOT_VERSION == vnz.BOT_VERSION

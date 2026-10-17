@@ -453,5 +453,5 @@ def test_panel_has_stages_line_and_header():
 
 
 def test_version_sync():
-    assert vnz.BOT_VERSION == "FE1.9.16"
-    assert panel.BOT_VERSION == "FE1.9.16"
+    assert vnz.BOT_VERSION == "FE1.9.17"
+    assert panel.BOT_VERSION == "FE1.9.17"

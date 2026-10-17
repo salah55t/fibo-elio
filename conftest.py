@@ -44,3 +44,16 @@ def _isolate_kline_fill(monkeypatch):
     monkeypatch.setattr(vnz, "_klines_fetch_fill",
                         lambda symbol, tf, limit, wait=True: (None, None, "cooldown"))
     yield
+
+
+@pytest.fixture(autouse=True)
+def _restore_tf_bars_state():
+    """[FE1.9.17] عزل حالة المعايرة الزمنية: تبديل/استعادة الفريم في أي اختبار
+    يعيد اشتقاق الثوابت الشريطية (عمر البنية/صلاحية المعلق) كأثر جانبي عالمي —
+    الفريمات والمشتقات تُستعاد بعد كل اختبار كي لا يتلوث ما بعده."""
+    import vnz
+    snap = (vnz.SIGNAL_TIMEFRAME, vnz.ENTRY_TIMEFRAME,
+            vnz.MAX_STRUCTURE_AGE_BARS, vnz.PENDING_MAX_CANDLES)
+    yield
+    (vnz.SIGNAL_TIMEFRAME, vnz.ENTRY_TIMEFRAME,
+     vnz.MAX_STRUCTURE_AGE_BARS, vnz.PENDING_MAX_CANDLES) = snap

@@ -586,8 +586,8 @@ class TestDeploymentAndBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.9.16"
-        assert panel.BOT_VERSION == "FE1.9.16"
+        assert vnz.BOT_VERSION == "FE1.9.17"
+        assert panel.BOT_VERSION == "FE1.9.17"
 
     def test_render_yaml_carries_v9_layer_keys(self):
         with open("render.yaml", "r", encoding="utf-8") as fh:
