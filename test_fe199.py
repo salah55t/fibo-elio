@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""اختبارات FE1.9.14 «أهداف سكالبينج واقعية متدرجة»
+"""اختبارات FE1.9.15 «أهداف سكالبينج واقعية متدرجة»
 =================================================
 الطلب الحي: «لا يزال هناك إشكال في احتساب الأهداف — البوت يضع أهدافًا بعيدة لم
 تصلها العملة منذ أكثر من شهر. عالج آلية تحديد الأهداف بحيث لا يتجاوز الهدف قممًا
@@ -453,5 +453,5 @@ def test_panel_has_stages_line_and_header():
 
 
 def test_version_sync():
-    assert vnz.BOT_VERSION == "FE1.9.14"
-    assert panel.BOT_VERSION == "FE1.9.14"
+    assert vnz.BOT_VERSION == "FE1.9.15"
+    assert panel.BOT_VERSION == "FE1.9.15"

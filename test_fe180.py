@@ -176,7 +176,7 @@ class TestRiskBreaker:
         assert vnz.scan_stats["rejected_daily_loss"] == before + 1
 
     def test_daily_limit_not_hit_allows(self, clean_db):
-        self._seed(realized="-200.0")  # 2% < السقف 3% [FE1.9.14]
+        self._seed(realized="-200.0")  # 2% < السقف 3% [FE1.9.15]
         assert vnz.create_pending_signal("TEST/USDT", make_setup(), last_close=110.0) is True
 
     def test_daily_limit_disabled_via_zero(self, clean_db, monkeypatch):
@@ -486,8 +486,8 @@ class TestRealPartial:
 
 def test_version_bump():
     import panel
-    assert vnz.BOT_VERSION == "FE1.9.14"
-    assert panel.BOT_VERSION == "FE1.9.14"
+    assert vnz.BOT_VERSION == "FE1.9.15"
+    assert panel.BOT_VERSION == "FE1.9.15"
 
 
 def test_risk_snapshot_shape(clean_db):
