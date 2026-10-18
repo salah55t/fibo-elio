@@ -57,3 +57,16 @@ def _restore_tf_bars_state():
     yield
     (vnz.SIGNAL_TIMEFRAME, vnz.ENTRY_TIMEFRAME,
      vnz.MAX_STRUCTURE_AGE_BARS, vnz.PENDING_MAX_CANDLES) = snap
+
+
+@pytest.fixture(autouse=True)
+def _isolate_panel_dedup():
+    """[FE1.9.18] عزل كتم خلاصة اللوحة والتلغرام: خرائط الكتم في الذاكرة عابرة
+    للاختبارات (نفس الرسالة في اختبارين متتاليين خلال النافذة تُكتم ظلمًا) —
+    تُفرَّغ قبل وبعد كل اختبار كي لا يتلوث ما بعده."""
+    import vnz
+    vnz._panel_dedup.clear()
+    vnz._tg_dedup.clear()
+    yield
+    vnz._panel_dedup.clear()
+    vnz._tg_dedup.clear()

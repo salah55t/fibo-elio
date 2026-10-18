@@ -134,6 +134,8 @@ def test_tg_claim_once_fail_open_on_db_error(clean_db, monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_log_and_notify_claim_sends_once_panel_gets_all(clean_db, monkeypatch):
+    # [FE1.9.18] كتم الخلاصة معطّل هنا — هذا الاختبار يختبر الحجز الذري حصرًا (كتم الخلاصة له اختباره في test_fe1918)
+    monkeypatch.setattr(vnz, "PANEL_NOTIF_DEDUP_SEC", 0)
     sent = []
     monkeypatch.setattr(vnz, "send_telegram_message", lambda m: sent.append(m))
     monkeypatch.setattr(vnz, "TELEGRAM_ALERT_TYPES", ("RISK_CUT",))
@@ -324,7 +326,7 @@ def test_bg_refresh_disabled_and_inflight_guard(clean_db, monkeypatch, fresh_fil
 def test_health_has_new_blocks(clean_db, monkeypatch):
     monkeypatch.setattr(vnz, "WS_ENABLED", False)
     body = client().get("/health").get_json()
-    assert body["version"] == "FE1.9.17"
+    assert body["version"] == "FE1.9.18"
     kf = body["kline_fill"]
     assert kf["enabled"] is True and "fills" in kf and "cooldown_skips" in kf
     nc = body["notify_claim"]
@@ -366,6 +368,6 @@ def test_panel_fill_badge_and_swrnote():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync_vnz_panel():
-    assert vnz.BOT_VERSION == "FE1.9.17"
-    assert panel.BOT_VERSION == "FE1.9.17"
+    assert vnz.BOT_VERSION == "FE1.9.18"
+    assert panel.BOT_VERSION == "FE1.9.18"
     assert panel.BOT_VERSION == vnz.BOT_VERSION

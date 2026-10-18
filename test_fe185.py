@@ -126,6 +126,8 @@ class TestBinanceConnNotify:
 
     def test_persistent_failure_renotifies(self, bin_conn, monkeypatch):
         # فشل مستمر تجاوز BIN_CONN_RENOTIFY_SEC → تذكير جديد
+        # [FE1.9.18] كتم الخلاصة معطّل — الاختبار يختبر نافذة إعادة التذكير حصرًا
+        monkeypatch.setattr(vnz, "PANEL_NOTIF_DEDUP_SEC", 0)
         monkeypatch.setattr(vnz, "BIN_CONN_RENOTIFY_SEC", 600.0)
         vnz._binance_conn_notify(False, "down")
         bin_conn["last_notify"] = vnz._bin_status_cache["last_notify"] - 700.0
@@ -230,8 +232,8 @@ class TestDeploymentAndBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.9.17"
-        assert panel.BOT_VERSION == "FE1.9.17"
+        assert vnz.BOT_VERSION == "FE1.9.18"
+        assert panel.BOT_VERSION == "FE1.9.18"
 
     def test_panel_shows_real_error(self):
         # بطاقة اللوحة تعرض نص الخطأ الحقيقي بجوار «فشل الاتصال»
@@ -241,7 +243,7 @@ class TestDeploymentAndBoundaries:
     def test_render_yaml_carries_values(self):
         import pathlib
         y = pathlib.Path("render.yaml").read_text(encoding="utf-8")
-        assert 'MAX_STRUCTURE_AGE_HOURS' in y and 'value: "9"' in y   # [FE1.9.17] الميزانية الزمنية بدل قيمة الشموع
+        assert 'MAX_STRUCTURE_AGE_HOURS' in y and 'value: "9"' in y   # [FE1.9.18] الميزانية الزمنية بدل قيمة الشموع
         assert 'value: "30"' in y          # SCAN_TOP_N (من FE1.8.4)
         assert 'value: "2700"' in y        # IDLE_RESCAN_MIN_GAP_SEC
 

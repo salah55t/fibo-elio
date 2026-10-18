@@ -222,6 +222,8 @@ def test_manual_close_flag_alert_once_and_remind_window(clean_db, tg_off, monkey
 
 
 def test_manual_close_remind_after_window(clean_db, tg_off, monkeypatch):
+    # [FE1.9.18] كتم الخلاصة معطّل — الاختبار يختبر نافذة التذكير حصرًا
+    monkeypatch.setattr(vnz, "PANEL_NOTIF_DEDUP_SEC", 0)
     monkeypatch.setattr(vnz, "MANUAL_CLOSE_REMIND_SEC", 600)
     sig = make_sig()
     vnz._flag_manual_close_required(sig, 0.0043, "وقف خسارة تحقق — باينانس محضور")
@@ -355,10 +357,10 @@ def test_health_exposes_fe198_blocks():
 
 
 def test_version_sync_fe198():
-    assert vnz.BOT_VERSION == "FE1.9.17"
-    assert panel.BOT_VERSION == "FE1.9.17"
+    assert vnz.BOT_VERSION == "FE1.9.18"
+    assert panel.BOT_VERSION == "FE1.9.18"
     client = vnz.app.test_client()
-    assert client.get("/health").get_json()["version"] == "FE1.9.17"
+    assert client.get("/health").get_json()["version"] == "FE1.9.18"
 
 
 def test_panel_renders_manual_close_badge():

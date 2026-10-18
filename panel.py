@@ -46,7 +46,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.9.17"  # [FE1.9.17] المعايرة الزمنية للفريم 5m — اشتقاق سقف عمر البنية وصلاحية المعلق من ميزانيتيهما الزمنيتين (9س/1.5س) على الفريم الحي — صفر تغيير واجهة
+BOT_VERSION = "FE1.9.18"  # [FE1.9.18] درجة الثقة المركبة: شارة 0-100 في الالتقاطات وصفوف الصفقات (اقتباس elliot-waves-auto) + بوابة «ثقة منخفضة» في خريطة البوابات + ملخص متوسط الثقة — صفر تغيير واجهة قائمة
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -278,6 +278,10 @@ PANEL_HTML = r"""<!DOCTYPE html>
   .p-mcr { background:linear-gradient(180deg,rgba(255,51,85,.26),rgba(255,51,85,.1)); color:#ff6685; border-color:var(--red); font-weight:800; animation:mcrPulse 1.6s ease-in-out infinite; }
   @keyframes mcrPulse { 0%,100%{opacity:1} 50%{opacity:.55} }  /* [FE1.9.8] تنبيه نابض — غلق يدوي مطلوب */
   .p-paper { background:rgba(0,229,255,.08); color:var(--cyan); border-color:rgba(0,229,255,.4); }
+  /* [FE1.9.18] شارات درجة الثقة المركبة — ثلاث درجات لونية حسب الجودة */
+  .conf-hi { background:linear-gradient(180deg,rgba(0,255,156,.18),rgba(0,255,156,.05)); color:var(--neon); border-color:var(--neon); }
+  .conf-mid { background:linear-gradient(180deg,rgba(255,230,0,.16),rgba(255,230,0,.05)); color:var(--yel); border-color:var(--yel); }
+  .conf-lo { background:rgba(160,160,170,.12); color:var(--mut); border-color:var(--mut); text-shadow:none; }
   .zone-ok { color:var(--neon); font-weight:700; } .zone-no { color:var(--mut); }
   .mut { color:var(--mut); } .small { font-size:.7rem; }
   /* [FE1.9.13] حالات الفراغ: إطار متقطع يتنفس */
@@ -746,7 +750,7 @@ function renderOpen(list){
       <td>${live[0]}</td><td>${live[1]}</td><td>${live[2]}</td>
       <td>${fmt(isPend?s.entry_price:s.fill_price)}</td>
       <td class="neg">${fmt(s.stop_loss)}</td><td class="pos">${fmt(s.take_profit)}${stagesLine(s)}</td>
-      <td>${s.rr_ratio?Number(s.rr_ratio).toFixed(2):'—'}</td>
+      <td>${s.rr_ratio?Number(s.rr_ratio).toFixed(2):'—'}${confBadge(s.fib)}</td>
       <td>${fmt(s.quantity,6)}</td>
       <td class="mut small">${dt(s.created_at)}</td>
       <td class="mut small">${isPend?('تنتهي: '+dt(s.expires_at)):'—'}</td>
@@ -775,7 +779,7 @@ function renderClosed(list){
     <td class="${cls(s.pnl_usdt)}"><b>${usd(s.pnl_usdt)}</b></td>
     <td class="${cls(s.pnl_pct)}">${pct(s.pnl_pct)}</td>
     <td class="mut small">${esc(s.close_reason||'')}</td>
-    <td class="mut small">${dt(s.closed_at)}</td>
+    <td class="mut small">${dt(s.closed_at)}${confBadge(s.fib)}</td>
   </tr>`;
   }).join('');
   // [FE1.5.0] داخل .tbl-wrap — كانت تفيض على الموبايل بلا تمرير
@@ -788,10 +792,23 @@ function renderClosed(list){
 // الحكم: لماذا لم تصبح التقاطة توصية معلقة — من _reject_reason في الخادم
 // (نسخة خفيفة من بطاقة «لماذا لا يتداول؟» المخطط لها في FE1.9.0)
 function verdictCell(x){
-  if(x.traded) return '<span class="pill p-open">أمر معلق بانتظار الدخول</span>';
-  if(x.direction==='BEARISH') return '<span class="mut small">متابعة فقط — لا بيع في السبوت</span>';
+  if(x.traded) return '<span class="pill p-open">أمر معلق بانتظار الدخول</span>'+confBadge(x);
+  if(x.direction==='BEARISH') return '<span class="mut small">متابعة فقط — لا بيع في السبوت</span>'+confBadge(x);
   const v = x.verdict || 'مرفوض';
-  return '<span class="small gld" title="بوابة الرفض الأخيرة">'+esc(v)+'</span>';
+  return '<span class="small gld" title="بوابة الرفض الأخيرة">'+esc(v)+'</span>'+confBadge(x);
+}
+
+// [FE1.9.18] شارة درجة الثقة المركبة (0-100) — اقتباس elliot-waves-auto:
+// بنية + زخم RSI + حجم + نضارة + جودة صفقة. ألوان: ‏≥70 خضراء، 50-69 عنبرية، <50 رمادية
+function confBadge(x){
+  const f = x && (x.fib || x);
+  const c = f && f.confidence;
+  if(c===null||c===undefined||isNaN(c)) return '';
+  const clsC = c>=70?'conf-hi':(c>=50?'conf-mid':'conf-lo');
+  const flags = [];
+  if(f.rsi_div||f.late_w5) flags.push('⚠ W5');
+  if(f.vol_ok===false) flags.push('🔊');
+  return ' <span class="pill '+clsC+'" title="درجة الثقة المركبة (البنية+الزخم+الحجم+النضارة+جودة الصفقة)'+(flags.length?' — أعلام: '+flags.join(' '):'')+'">ثقة '+Number(c).toFixed(0)+'/100'+(f.late_w5?' ⚠':'')+'</span>';
 }
 
 function renderGates(st){
@@ -804,9 +821,11 @@ function renderGates(st){
     ['rejected_far_entry','مطاردة'],['rejected_target_invalid','هدف محقق'],
     ['rejected_no_target','لا هدف R:R'],['rejected_weekly_cap','فوق سقف الأسبوع'],
     ['rejected_rr_net','R:R صافٍ منخفض'],['rejected_daily_loss','حد يومي'],['rejected_risk_pause','تبريد مخاطر'],
-    ['rejected_wide_stop','وقف أعرض من السقف']];
+    ['rejected_wide_stop','وقف أعرض من السقف'],['rejected_low_confidence','ثقة منخفضة']];
   const parts = gates.filter(g=>st[g[0]]).map(g=>g[1]+' <b>'+st[g[0]]+'</b>');
-  el.innerHTML = '🚦 بوابات هذه الفترة: ' + (parts.length? parts.join(' · ') : 'لا رفضات بعد') +
+  const cs = st.conf_scores || {};
+  const confAvg = (cs.n && cs.n>0) ? ' · متوسط الثقة: <b>'+(cs.sum/cs.n).toFixed(0)+'/100</b> (مدى '+Number(cs.min).toFixed(0)+'–'+Number(cs.max).toFixed(0)+')' : '';
+  el.innerHTML = '🚦 بوابات هذه الفترة: ' + (parts.length? parts.join(' · ') : 'لا رفضات بعد') + confAvg +
     ' — دورات المسح: <b>'+(st.cycles||0)+'</b> · رموز ممسوحة: <b>'+(st.scanned||0)+'</b>' +
     ' · ⚡ نبض الحركة (كشف لحظي): <b>'+(st.momentum_kicks||0)+'</b>';
 }

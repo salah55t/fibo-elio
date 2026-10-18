@@ -94,8 +94,8 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.9.17"
-        assert panel.BOT_VERSION == "FE1.9.17"
+        assert vnz.BOT_VERSION == "FE1.9.18"
+        assert panel.BOT_VERSION == "FE1.9.18"
 
     def test_render_yaml_carries_new_values(self):
         # مصدر الحقيقة على Render — يجب أن يحمل القيم الجديدة لا الافتراضيات القديمة
@@ -104,8 +104,8 @@ class TestProtectedBoundaries:
         assert 'value: "60"' in y          # KEEP_ALIVE_INTERVAL_SEC
         assert 'value: "30"' in y          # SCAN_TOP_N [FE1.8.4]
         assert 'value: "2700"' in y        # IDLE_RESCAN_MIN_GAP_SEC [FE1.8.6]
-        assert 'PENDING_LIFETIME_HOURS' in y and 'value: "1.5"' in y   # [FE1.9.17] صلاحية المعلق زمنيًا
-        assert 'MAX_STRUCTURE_AGE_HOURS' in y and 'value: "9"' in y    # [FE1.9.17] عمر البنية زمنيًا
+        assert 'PENDING_LIFETIME_HOURS' in y and 'value: "1.5"' in y   # [FE1.9.18] صلاحية المعلق زمنيًا
+        assert 'MAX_STRUCTURE_AGE_HOURS' in y and 'value: "9"' in y    # [FE1.9.18] عمر البنية زمنيًا
         # القديم (نبضة 600ث) أزيل كليًا — value: "600" الحالية ملك BAN_LONG_THRESHOLD_SEC [FE1.8.7]
         assert "- key: KEEP_ALIVE_INTERVAL_SEC\n        value: \"600\"" not in y
 

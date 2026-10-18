@@ -93,10 +93,10 @@ def scan_env(monkeypatch):
     monkeypatch.setattr(vnz, "active_trade_count", lambda: 0)
     monkeypatch.setattr(vnz, "htf_bias", lambda s: True)
     monkeypatch.setattr(vnz, "create_pending_signal",
-                        lambda sym, setup, last_close=0.0: calls["created"].append(sym) or True)  # [FE1.7.0] وسيط last_close
+                        lambda sym, setup, last_close=0.0, confidence=None: calls["created"].append(sym) or True)  # [FE1.7.0] last_close + [FE1.9.18] confidence
     monkeypatch.setattr(
         vnz, "register_detection",
-        lambda sym, setup, traded=False: calls["registered"].append((sym, traded)))
+        lambda sym, setup, traded=False, confidence=None: calls["registered"].append((sym, traded)))  # [FE1.9.18] confidence
     # عدادات نظيفة
     for k in ("cycles", "scanned", "setups_valid", "setups_bull_traded",
               "setups_bear_seen", "rejected_active_limit",
