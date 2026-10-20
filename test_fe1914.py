@@ -168,8 +168,10 @@ class TestWideStopGate:
         assert "أعرض" in reason
 
     @pytest.mark.production_gates
-    def test_scalp_geometry_passes_production_gates(self, clean_db):
+    def test_scalp_geometry_passes_production_gates(self, clean_db, monkeypatch):
         # وقف 2.8% + rr_net 0.75 — هندسة سكالبينج حقيقية تعبر كل بوابات الدرع
+        # [FE1.10.0] نعزل بوابة TP1 (1.2R) — هذا الاختبار يختبر بوابة عرض الوقف وحدها
+        monkeypatch.setattr(vnz, "RR_NET_MIN_TP1", 0.0)
         before_ws = vnz.scan_stats["rejected_wide_stop"]
         before_rr = vnz.scan_stats["rejected_rr_net"]
         assert vnz.create_pending_signal("TEST/USDT", make_scalp_setup(), last_close=100.3) is True
@@ -195,6 +197,7 @@ class TestWideStopGate:
     def test_gate_disabled_via_zero_even_in_production(self, clean_db, monkeypatch):
         monkeypatch.setattr(vnz, "MAX_STOP_PCT", 0.0)
         monkeypatch.setattr(vnz, "RR_NET_MIN", 0.3)  # نعزل بوابة R:R — نختبر عرض الوقف وحده
+        monkeypatch.setattr(vnz, "RR_NET_MIN_TP1", 0.0)  # [FE1.10.0] نعزل بوابة TP1 — نفس العزل
         assert vnz.create_pending_signal("TEST/USDT", make_setup(), last_close=110.0) is True
 
 
@@ -313,8 +316,8 @@ class TestTightenedDayLimits:
 class TestPanelAndDeploymentSync:
 
     def test_version_sync(self):
-        assert vnz.BOT_VERSION == "FE1.9.18"
-        assert panel.BOT_VERSION == "FE1.9.18"
+        assert vnz.BOT_VERSION == "FE1.10.0"
+        assert panel.BOT_VERSION == "FE1.10.0"
 
     def test_panel_gate_chip_present(self):
         src = panel.PANEL_HTML

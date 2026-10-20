@@ -35,6 +35,21 @@ def _fe1914_test_gates(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _fe19100_test_gates(request, monkeypatch):
+    """[FE1.10.0] تخفيف بواباتي هندسة الربح والنظام للهندسة التخليقية القديمة —
+    هندسات اختبارات الإرث تبني سلالم تهبط TP1 عند 0.5-0.9R (كانت مقبولة بأرضية
+    0.3/0.6) وبوابة الإنتاج 1.2R ترفضها بصدق، وشمعات الزيجزاج التخليقية تناوبها
+    مثالي فيعطي ADX≈0 فيرفضها فلتر النظام بصدق أيضًا — كلاهما يفسد تاريخ
+    الاختبارات. اختبارات production_gates (بوابات FE1.9.14/FE1.10.0 ذاتها) وحدها
+    ترى القيم الإنتاجية (RR_NET_MIN_TP1=1.2 وREGIME_GATE_ENABLED=1)."""
+    if request.node.get_closest_marker("production_gates"):
+        return
+    import vnz
+    monkeypatch.setattr(vnz, "RR_NET_MIN_TP1", 0.0)
+    monkeypatch.setattr(vnz, "REGIME_GATE_ENABLED", False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_kline_fill(monkeypatch):
     """[FE1.9.16] عزل مسار جلب الشموع عند الطلب عن الشبكة: كل اختبار يجد الملء
     معطّلًا والتحديث الخلفي مطفأ — اختبارات FE1.9.16 تتجاوزه صراحة بـmonkeypatch
