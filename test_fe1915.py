@@ -160,6 +160,6 @@ def test_trade_lines_still_drawn_the_essential():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync_vnz_panel():
-    assert vnz.BOT_VERSION == "FE1.10.0"
-    assert panel.BOT_VERSION == "FE1.10.0"
+    assert vnz.BOT_VERSION == "FE1.10.1"
+    assert panel.BOT_VERSION == "FE1.10.1"
     assert panel.BOT_VERSION == vnz.BOT_VERSION

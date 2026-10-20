@@ -46,7 +46,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.10.0"  # [FE1.10.0] التصحيح النهائي — سوبر تراند وهندسة المخاطر: صدى البوابات الجديدة (regime/st/adx/rr_net_min_tp1/time-stop/st-trail) يصل عبر بطاقة protection في /api/all — صفر تغيير واجهة قائمة. [FE1.9.18] درجة الثقة المركبة: شارة 0-100 في الالتقاطات وصفوف الصفقات (اقتباس elliot-waves-auto) + بوابة «ثقة منخفضة» في خريطة البوابات + ملخص متوسط الثقة — صفر تغيير واجهة قائمة
+BOT_VERSION = "FE1.10.1"  # [FE1.10.1] اقتباسات flowsurface (شارة النضارة+عدّاد الشمعة). [FE1.10.0] التصحيح النهائي — سوبر تراند وهندسة المخاطر: صدى البوابات الجديدة (regime/st/adx/rr_net_min_tp1/time-stop/st-trail) يصل عبر بطاقة protection في /api/all — صفر تغيير واجهة قائمة. [FE1.9.18] درجة الثقة المركبة: شارة 0-100 في الالتقاطات وصفوف الصفقات (اقتباس elliot-waves-auto) + بوابة «ثقة منخفضة» في خريطة البوابات + ملخص متوسط الثقة — صفر تغيير واجهة قائمة
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -932,6 +932,8 @@ let ALLSTATE = null;          // آخر /api/all — يشترك فيه الشا�
 let CHART = null, CSERIES = null, CMARKS = null;
 let chartSym = null, chartKey = '', chartLastBar = null, chartBars = [];
 let chartLevels = [], chartFetchAt = 0;
+let chartTFSEC = 300;  // [FE1.10.1] ثواني فريم الشارت — لشارة النضارة وعدّاد الإغلاق
+const TFSEC_MAP = {'1m':60,'5m':300,'15m':900,'30m':1800,'1h':3600,'2h':7200,'4h':14400,'1d':86400};
 // [FE1.9.12] موجات المحرك — الحساب من الاستراتيجية نفسها عبر /api/ew_strategy
 // [FE1.9.14] طبقة اختيارية مطفأة افتراضيًا (الشارت النظيف) وحُذفت منها مفاتيح فيبو W2/W4/W3 المزعجة
 let EWX_ON = false, EWX_SIG = '', EWX_LINES = [], EWX_ZZ = null, EWX_MARKS = null, EWX_BUSY = false;
@@ -1056,6 +1058,7 @@ async function chartTick(force){
   if(!force && now - chartFetchAt < 8000) return;   // الكاش يكفي كل 8ث — بلا ضغط
   chartFetchAt = now;
   const tf = s.entry_timeframe || '5m';
+  chartTFSEC = TFSEC_MAP[tf] || 300;  // [FE1.10.1] لشارة النضارة والعدّاد
   const key = chartSym + '|' + tf;
   try{
     const d = await api('/api/klines?symbol=' + encodeURIComponent(chartSym) + '&tf=' + encodeURIComponent(tf) + '&limit=180');
@@ -1103,9 +1106,29 @@ async function chartTick(force){
     $('chart-note').innerHTML = '<b>' + esc(chartSym) + '</b> · فريم ' + esc(tf) + ' · ' + d.count + ' شمعة · مصدر ' + esc(srcTxt)
       + (d.filled ? ' · <span style="color:#22e58c">⤓ جُلبت الآن من ' + esc(d.fill_source || 'المزود') + '</span>' : '')
       + (d.stale && !d.filled ? ' · <span class="mut">كاش قديم — يُنعّش خلفيًا</span>' : '')
-      + (row ? ' · خطوط: دخول/وقف/' + ((row.tp_stages&&row.tp_stages.length)?(row.tp_stages.length+' أهداف'):'هدف') + (row.weekly_high?' + سقف أسبوع':'') : ' · لا صفقة على هذا الرمز (شموع فقط)');
+      + (row ? ' · خطوط: دخول/وقف/' + ((row.tp_stages&&row.tp_stages.length)?(row.tp_stages.length+' أهداف'):'هدف') + (row.weekly_high?' + سقف أسبوع':'') : ' · لا صفقة على هذا الرمز (شموع فقط)')
+      + '<span id="chart-fresh"></span>';  // [FE1.10.1] تُملأ بثانية العدّاد الحي
   }catch(e){ $('chart-note').textContent = 'خطأ جلب الشموع: ' + String(e.message||e).slice(0,120); }
 }
+
+// ═══ [FE1.10.1] شارة النضارة + عدّاد إغلاق الشمعة (اقتباس flowsurface: DataFreshness
+// + عدّاد overlay في kline.rs) — طبقة عرض خالصة من آخر شمعة محفوظة محليًا: صفر طلبات
+// «حية · nث» إن كان عمر آخر شمعة ≤ 1.5 فريم، وإلا «مؤقت · حدّثت HH:MM» — مع تنفس كل ثانية
+function chartFreshTick(){
+  const el = $('chart-fresh'); if(!el || !chartLastBar || !CHART_OPEN){ return; }
+  const now = Math.floor(Date.now()/1000);
+  const t0 = chartLastBar.time || 0; if(!t0) return;
+  const age = Math.max(0, now - t0);
+  const live = age <= chartTFSEC * 1.5;
+  const hhmm = new Date(t0*1000).toTimeString().slice(0,5);
+  const remain = Math.max(0, t0 + chartTFSEC - now);
+  const mm = Math.floor(remain/60), ss = String(Math.floor(remain%60)).padStart(2,'0');
+  el.innerHTML = ' · ' + (live
+    ? '<span style="color:#22e58c">● حية · ' + (age < 90 ? age + 'ث' : Math.round(age/60) + 'د') + '</span>'
+    : '<span style="color:#ffb020">◐ مؤقت · حدّثت ' + hhmm + '</span>')
+    + ' · <span class="mut">إغلاق الشمعة خلال ' + mm + ':' + ss + '</span>';
+}
+setInterval(chartFreshTick, 1000);
 
 // ═══ [FE1.9.12] موجات المحرك — الحساب من الاستراتيجية نفسها عبر /api/ew_strategy ═══
 // الزيجزاج والبنية P0–P5 ومناطق الدخول/الوقف والأهداف تأتي جاهزة
