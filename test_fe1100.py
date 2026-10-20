@@ -469,6 +469,6 @@ def test_protection_echo_has_new_gates(monkeypatch):
 
 
 def test_version_pair():
-    assert vnz.BOT_VERSION == "FE1.10.3"
+    assert vnz.BOT_VERSION == "FE1.10.4"
     import panel
-    assert panel.BOT_VERSION == "FE1.10.3"
+    assert panel.BOT_VERSION == "FE1.10.4"

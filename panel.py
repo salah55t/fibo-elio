@@ -46,7 +46,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.10.3"  # [FE1.10.3] إزالة شرط سقف الأسبوع (طلب المستخدم): خط «سقف أسبوع» يُرسم فقط عند توفر قمة من الخادم (TP_WEEK_CAP_ENABLED=1) — الافتراضي بلا سقف والعرض صادق. [FE1.10.2] اقتباسات flowmap (عقد الصدق: اعتمام موسوم للبيانات المتقادمة body.stale-data + شارة عائمة تسمّي الحالة — نمط Watchlist is-stale «اعتمّ لا تخفِ»، CSS خالص صفر remount). [FE1.10.1] اقتباسات flowsurface (شارة النضارة+عدّاد الشمعة). [FE1.10.0] التصحيح النهائي — سوبر تراند وهندسة المخاطر: صدى البوابات الجديدة (regime/st/adx/rr_net_min_tp1/time-stop/st-trail) يصل عبر بطاقة protection في /api/all — صفر تغيير واجهة قائمة. [FE1.9.18] درجة الثقة المركبة: شارة 0-100 في الالتقاطات وصفوف الصفقات (اقتباس elliot-waves-auto) + بوابة «ثقة منخفضة» في خريطة البوابات + ملخص متوسط الثقة — صفر تغيير واجهة قائمة
+BOT_VERSION = "FE1.10.4"  # [FE1.10.4] تدفق الأوامر: شارات CVD/حجم/جدران في بطاقات الثقة (من fib_json: cvd.state وvp.node وwall_targets) + بوابة «تعارض CVD» في خريطة البوابات + قسم orderflow في /health يُعرض صداه من الخادم — عرض خالص صفر منطق. [FE1.10.3] إزالة شرط سقف الأسبوع (طلب المستخدم): خط «سقف أسبوع» يُرسم فقط عند توفر قمة من الخادم (TP_WEEK_CAP_ENABLED=1) — الافتراضي بلا سقف والعرض صادق. [FE1.10.2] اقتباسات flowmap (عقد الصدق: اعتمام موسوم للبيانات المتقادمة body.stale-data + شارة عائمة تسمّي الحالة — نمط Watchlist is-stale «اعتمّ لا تخفِ»، CSS خالص صفر remount). [FE1.10.1] اقتباسات flowsurface (شارة النضارة+عدّاد الشمعة). [FE1.10.0] التصحيح النهائي — سوبر تراند وهندسة المخاطر: صدى البوابات الجديدة (regime/st/adx/rr_net_min_tp1/time-stop/st-trail) يصل عبر بطاقة protection في /api/all — صفر تغيير واجهة قائمة. [FE1.9.18] درجة الثقة المركبة: شارة 0-100 في الالتقاطات وصفوف الصفقات (اقتباس elliot-waves-auto) + بوابة «ثقة منخفضة» في خريطة البوابات + ملخص متوسط الثقة — صفر تغيير واجهة قائمة
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -825,7 +825,13 @@ function confBadge(x){
   const flags = [];
   if(f.rsi_div||f.late_w5) flags.push('⚠ W5');
   if(f.vol_ok===false) flags.push('🔊');
-  return ' <span class="pill '+clsC+'" title="درجة الثقة المركبة (البنية+الزخم+الحجم+النضارة+جودة الصفقة)'+(flags.length?' — أعلام: '+flags.join(' '):'')+'">ثقة '+Number(c).toFixed(0)+'/100'+(f.late_w5?' ⚠':'')+'</span>';
+  // [FE1.10.4] تدفق الأوامر — شارات صادقة بالغياب (تظهر فقط حين تتاح الطبقة من الخادم)
+  const cvds = f.cvd && f.cvd.state;
+  if(cvds==='confirms') flags.push('CVD✓');
+  else if(cvds==='divergence'||cvds==='conflict') flags.push('CVD⚠');
+  if(f.vp && f.vp.node) flags.push('حجم·'+f.vp.node);
+  if(f.wall_targets>0) flags.push('جدار×'+f.wall_targets);
+  return ' <span class="pill '+clsC+'" title="درجة الثقة المركبة (البنية+الزخم+الحجم+النضارة+جودة الصفقة'+(f.cvd?'+تدفق CVD':'')+(f.vp&&f.vp.node?'+عقدة حجم':'')+')'+(flags.length?' — أعلام: '+flags.join(' '):'')+'">ثقة '+Number(c).toFixed(0)+'/100'+(f.late_w5?' ⚠':'')+'</span>';
 }
 
 function renderGates(st){
@@ -838,7 +844,8 @@ function renderGates(st){
     ['rejected_far_entry','مطاردة'],['rejected_target_invalid','هدف محقق'],
     ['rejected_no_target','لا هدف R:R'],['rejected_weekly_cap','فوق سقف الأسبوع'],
     ['rejected_rr_net','R:R صافٍ منخفض'],['rejected_daily_loss','حد يومي'],['rejected_risk_pause','تبريد مخاطر'],
-    ['rejected_wide_stop','وقف أعرض من السقف'],['rejected_low_confidence','ثقة منخفضة']];
+    ['rejected_wide_stop','وقف أعرض من السقف'],['rejected_low_confidence','ثقة منخفضة'],
+    ['rejected_cvd_conflict','تعارض CVD']];
   const parts = gates.filter(g=>st[g[0]]).map(g=>g[1]+' <b>'+st[g[0]]+'</b>');
   const cs = st.conf_scores || {};
   const confAvg = (cs.n && cs.n>0) ? ' · متوسط الثقة: <b>'+(cs.sum/cs.n).toFixed(0)+'/100</b> (مدى '+Number(cs.min).toFixed(0)+'–'+Number(cs.max).toFixed(0)+')' : '';

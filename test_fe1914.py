@@ -316,8 +316,8 @@ class TestTightenedDayLimits:
 class TestPanelAndDeploymentSync:
 
     def test_version_sync(self):
-        assert vnz.BOT_VERSION == "FE1.10.3"
-        assert panel.BOT_VERSION == "FE1.10.3"
+        assert vnz.BOT_VERSION == "FE1.10.4"
+        assert panel.BOT_VERSION == "FE1.10.4"
 
     def test_panel_gate_chip_present(self):
         src = panel.PANEL_HTML

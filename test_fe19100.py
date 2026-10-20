@@ -256,7 +256,7 @@ def test_panel_lwc_failure_fallback():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync():
-    assert vnz.BOT_VERSION == "FE1.10.3"
-    assert panel.BOT_VERSION == "FE1.10.3"
+    assert vnz.BOT_VERSION == "FE1.10.4"
+    assert panel.BOT_VERSION == "FE1.10.4"
     body = client().get("/health").get_json()
-    assert body["version"] == "FE1.10.3"
+    assert body["version"] == "FE1.10.4"

@@ -93,7 +93,7 @@ def scan_env(monkeypatch):
     monkeypatch.setattr(vnz, "active_trade_count", lambda: 0)
     monkeypatch.setattr(vnz, "htf_bias", lambda s: True)
     monkeypatch.setattr(vnz, "create_pending_signal",
-                        lambda sym, setup, last_close=0.0, confidence=None, atr=0.0: calls["created"].append(sym) or True)  # [FE1.7.0] last_close + [FE1.9.18] confidence + [FE1.10.0] atr
+                        lambda sym, setup, last_close=0.0, confidence=None, atr=0.0, oflow=None: calls["created"].append(sym) or True)  # [FE1.7.0] last_close + [FE1.9.18] confidence + [FE1.10.0] atr + [FE1.10.4] oflow
     monkeypatch.setattr(
         vnz, "register_detection",
         lambda sym, setup, traded=False, confidence=None: calls["registered"].append((sym, traded)))  # [FE1.9.18] confidence

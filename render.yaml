@@ -185,3 +185,34 @@ services:
         value: "360"
       - key: MEM_CRITICAL_MB
         value: "440"
+      # [FE1.10.4] طبقة تدفق الأوامر — CVD يؤكد عدّ الموجات + بروفايل الحجم×فيبو + جدران السيولة كأهداف
+      # (تحليل المشاريع المرجعية موثق في worklog: OrderFlowMap MIT + flowmap Apache-2.0 أنماط بإسناد؛
+      #  flowsurface GPL-3.0 وcryptofeed AGPL-3.0 مفاهيم فقط؛ كل الفروع fail-open عند غياب البيانات)
+      - key: OFLOW_ENABLED
+        value: "1"       # القاطع الرئيسي للطبقة كلها (0 يعطل الثلاثة معًا — سلوك FE1.10.3 حرفيًا)
+      - key: CVD_GATE_ENABLED
+        value: "1"       # بوابة CVD: تعارض قوي (taker فقط) يرفض الصفقة — الغياب/التقدير محايد
+      - key: CVD_SLOPE_WINDOW
+        value: "6"       # نافذة ميل CVD بالشموع المغلقة (6 شموع فريم التنفيذ)
+      - key: CVD_VETO_SLOPE
+        value: "1.0"     # عتبة التعارض بوحدة «وسيط حجم الشمعة» خلال النافذة (0 يعطل الحقض)
+      - key: CVD_TTL_SEC
+        value: "120"     # كاش سلسلة CVD من كلاين taker-buy لكل رمز
+      - key: VP_ENABLED
+        value: "1"       # بروفايل الحجم من الشموع المغلقة + تلاقي الدخول مع عقد الحجم
+      - key: VP_BINS
+        value: "48"      # عدد الدلاء على مدى النافذة
+      - key: VP_TOL_ATR
+        value: "0.25"    # سماحية التلاقي بوحدات ATR (أرضية نسبية 0.12% حين ATR=0)
+      - key: LIQ_RADAR_ENABLED
+        value: "1"       # رادار السيولة — جدران الدفتر كأهداف مضافة فوق سلّم الموجات
+      - key: LIQ_WALL_MULT
+        value: "2.2"     # قاعدة OrderFlowMap: دلو ≥ 2.2×متوسط الدلاء = جدار
+      - key: LIQ_WALL_MIN_NOTIONAL
+        value: "8000"    # أرضية اسمية مطلقة بالدولار (مضاد جدران الرموز الخافتة)
+      - key: LIQ_WALL_MAX_TARGETS
+        value: "2"       # أقصى درجات جدران لكل إشارة (0 يعطل الدمج)
+      - key: LIQ_WALL_MAX_R
+        value: "3.0"     # أقصى بعد للجدار عن الدخول بوحدة المخاطرة
+      - key: LIQ_BOOK_TTL_SEC
+        value: "45"      # كاش لقطة الدفتر لكل رمز

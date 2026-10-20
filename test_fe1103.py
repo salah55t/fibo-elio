@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""اختبارات FE1.10.3 «إزالة شرط سقف الأسبوع»
+"""اختبارات FE1.10.4 «إزالة شرط سقف الأسبوع»
 ==========================================
 الطلب الحرفي للمستخدم: «قم بازالة شرط هدف فوق سقف الاسبوع».
 
 ما يُغطيه الملف:
   1) الافتراضي: TP_WEEK_CAP_ENABLED=0 — لا قصّ ولا رفض سقف ولا تسوية أهداف حية،
-     وسلّم المراحل TP1→TP3 باقٍ مستقلًا عن السقف (فصل FE1.10.3).
+     وسلّم المراحل TP1→TP3 باقٍ مستقلًا عن السقف (فصل FE1.10.4).
   2) create_pending_signal: صفر نداءات weekly_high والسقف معطل — الإشارة تولد
      بمراحل خام غير مقصوصة حتى لو كانت القمة (لو جُلبت) ستقتل كل الدرجات.
   3) build_staged_targets: weekly_hi=None أو غير موجبة = بلا قصّ على الإطلاق.
@@ -15,7 +15,7 @@
   5) reconcile_live_targets: عودة مبكرة قبل أي قراءة DB — صفر عمل والسقف معطل.
   6) register_detection: العرض الهدف الخام بلا سقف (عقد الصدق).
   7) السقف يعود كاملًا بتفعيل صريح TP_WEEK_CAP_ENABLED=1 (بلا أي تغيير كود).
-  8) تزامن الإصدار FE1.10.3.
+  8) تزامن الإصدار FE1.10.4.
 
 التصميم: weekly_high معزولة عن الشبكة في كل الاختبارات (conftest autouse)،
 وهنا تُستبدل بوظيفة ترمي AssertionError لإثبات أنها لا تُستدعى أصلًا.
@@ -81,7 +81,7 @@ def _weekly_high_must_not_be_called(symbol):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_weekly_cap_disabled_by_default_and_ladder_independent():
-    # [FE1.10.3] قرار المستخدم: السقف معطل افتراضيًا — والسلّم المرحلي باقٍ مستقلًا
+    # [FE1.10.4] قرار المستخدم: السقف معطل افتراضيًا — والسلّم المرحلي باقٍ مستقلًا
     assert vnz.TP_WEEK_CAP_ENABLED is False
     assert vnz.TP_STAGES_ENABLED is True
     assert vnz.TP_LADDER_ENABLED is True
@@ -211,5 +211,5 @@ def test_cap_still_available_behind_explicit_flag(clean_db, tg_off, monkeypatch)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync():
-    assert vnz.BOT_VERSION == "FE1.10.3"
-    assert panel.BOT_VERSION == "FE1.10.3"
+    assert vnz.BOT_VERSION == "FE1.10.4"
+    assert panel.BOT_VERSION == "FE1.10.4"

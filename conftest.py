@@ -85,3 +85,18 @@ def _isolate_panel_dedup():
     yield
     vnz._panel_dedup.clear()
     vnz._tg_dedup.clear()
+
+
+@pytest.fixture(autouse=True)
+def _fe1104_test_gates(request, monkeypatch):
+    """[FE1.10.4] تعطيل طبقة تدفق الأوامر في اختبارات الإرث + تصفير مخازنها —
+    طبقة OFLOW تستدعي شبكة (كلاين taker/دفتر) عند الإنشاء والمسح، فتبقى مطفأة
+    افتراضيًا هنا كي تحتفظ الاختبارات القديمة بسلوكها الحرفي وصفر طلبات. اختبارات
+    production_gates واختبارات fe1104 ذاتها تُفعّلها صراحةً بـmonkeypatch."""
+    import vnz
+    monkeypatch.setattr(vnz, "OFLOW_ENABLED", False)
+    for _store in (vnz._cvd_cache, vnz._liq_cache, vnz._liq_wall_mem, vnz._raw_cvd):
+        _store.clear()
+    yield
+    for _store in (vnz._cvd_cache, vnz._liq_cache, vnz._liq_wall_mem, vnz._raw_cvd):
+        _store.clear()

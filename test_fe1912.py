@@ -197,7 +197,7 @@ def test_ew_strategy_entry_stop_invalidation_formulas(clean_db, monkeypatch):
 
 def test_ew_strategy_ladder_raw_and_weekly_cap(clean_db, monkeypatch):
     monkeypatch.setattr(vnz, "WS_ENABLED", False)
-    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.3] اختبار السقف يفعّله صراحةً
+    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.4] اختبار السقف يفعّله صراحةً
     seed_impulse()
     # سقف موجود لكنه عالٍ (200) — لا يقصّ شيئًا: السلّم الخام 3 درجات، والمراحل
     # بعد تأهيل TP_MIN_RR وفجوة 0.2R — ext_1618 (P2+1.618×W1) تحت أرضية 0.5R خامًا،
@@ -220,7 +220,7 @@ def test_ew_strategy_ladder_raw_and_weekly_cap(clean_db, monkeypatch):
 
 def test_ew_strategy_weekly_cap_cuts_targets(clean_db, monkeypatch):
     monkeypatch.setattr(vnz, "WS_ENABLED", False)
-    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.3] القص حصرًا مع سقف مفعّل
+    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.4] القص حصرًا مع سقف مفعّل
     seed_impulse()
     # سقف أسبوع 124 يقصّ الدرجتين فوقه → مرحلة واحدة عند القمة نفسها
     monkeypatch.setattr(vnz, "weekly_high", lambda symbol: 124.0)
@@ -368,6 +368,6 @@ def test_panel_engine_layer_legend_and_note():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync_vnz_panel():
-    assert vnz.BOT_VERSION == "FE1.10.3"
-    assert panel.BOT_VERSION == "FE1.10.3"
+    assert vnz.BOT_VERSION == "FE1.10.4"
+    assert panel.BOT_VERSION == "FE1.10.4"
     assert panel.BOT_VERSION == vnz.BOT_VERSION
