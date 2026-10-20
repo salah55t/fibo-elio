@@ -1,4 +1,4 @@
-"""اختبارات FE1.10.1 «اقتباسات flowsurface»: التراجع الأُسّي لكتم التلغرام + ملحق التجميع
+"""اختبارات FE1.10.2 «اقتباسات flowsurface»: التراجع الأُسّي لكتم التلغرام + ملحق التجميع
 (نمط notify.rs) وشارة النضارة وعدّاد إغلاق الشمعة في اللوحة (نمط DataFreshness/kline.rs).
 صفر مساس بالبوابات أو الحجز الذري أو منطق التداول."""
 import time
@@ -156,12 +156,12 @@ class TestPanelFreshnessBadge:
         assert "CHART_OPEN" in seg
 
     def test_version_synced(self, panel_src):
-        assert 'BOT_VERSION = "FE1.10.1"' in panel_src
+        assert 'BOT_VERSION = "FE1.10.2"' in panel_src
 
 
 class TestVersionSync:
     def test_vnz_version(self):
-        assert vnz.BOT_VERSION == "FE1.10.1"
+        assert vnz.BOT_VERSION == "FE1.10.2"
 
     def test_env_defaults_exist(self):
         assert vnz.TG_DEDUP_MAX_SEC == 1800

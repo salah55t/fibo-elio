@@ -461,8 +461,8 @@ class TestBacktestHarness:
 
 class TestPanelSync:
     def test_versions(self):
-        assert vnz.BOT_VERSION == "FE1.10.1"
-        assert panel.BOT_VERSION == "FE1.10.1"
+        assert vnz.BOT_VERSION == "FE1.10.2"
+        assert panel.BOT_VERSION == "FE1.10.2"
 
     def test_panel_has_confidence_ui(self):
         html = panel.PANEL_HTML

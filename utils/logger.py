@@ -12,21 +12,35 @@ Usage:
 
 import logging
 import os
+import queue
 import sys
-from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler, QueueHandler, QueueListener
+
+# [FE1.10.2] عداد إسقاطات طابور التسجيل (نمط flowmap logging_setup.py) —
+# تُعرض في /health قسم resilience: امتلاء الطابور يعني إسقاطًا مُعدًّا لا حجبًا.
+QUEUE_STATS = {"dropped": 0, "capacity": 2048}
+
+
+class _BoundedQueueHandler(QueueHandler):
+    """QueueHandler بطابور محدود — ازدحام logging يعني إسقاط السجل مُعدًّا
+    بدل حجب المسار الساخن (حلقة التداول) على stdout/قرص متعثر. نمط flowmap:
+    كل طابور محدود السعة وسياسة الإسقاط معلنة وعدادها مرئي."""
+
+    def enqueue(self, record: logging.LogRecord) -> None:
+        try:
+            self.queue.put_nowait(record)
+        except queue.Full:
+            QUEUE_STATS["dropped"] += 1  # إسقاط مُعد — لا يرفع أبدًا للمُنتج
 
 
 def get_logger(name: str, log_dir: str = "logs", log_file: str = "bot.log",
                level: str = "INFO") -> logging.Logger:
     """
-    Return a logger with console + rotating-file handlers.
+    Return a logger with console + rotating-file handlers (via bounded queue).
 
-    Parameters
-    ----------
-    name     : Typically __name__ of the calling module.
-    log_dir  : Directory where log files are written.
-    log_file : Base filename for the rotating log.
-    level    : Logging level string ("DEBUG", "INFO", "WARNING", "ERROR").
+    [FE1.10.2] المرسلات (stdout + ملف دوّار) تعمل على خيط QueueListener خلف
+    طابور محدود 2048 سجلًا — حجب stdout على المنصة أو بطء القرص لا يجمّد
+    حلقة التداول أبدًا، والإسقاطات تُعد وتُعرض في /health.
     """
     os.makedirs(log_dir, exist_ok=True)
 
@@ -44,11 +58,10 @@ def get_logger(name: str, log_dir: str = "logs", log_file: str = "bot.log",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # ── Console handler ────────────────────────────────────────────────────
+    # ── Sink handlers (driven by the listener thread) ──────────────────────
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(fmt)
     console_handler.setLevel(numeric_level)
-    logger.addHandler(console_handler)
 
     # ── Rotating file handler (10 MB × 5 backups) ─────────────────────────
     file_path = os.path.join(log_dir, log_file)
@@ -57,8 +70,17 @@ def get_logger(name: str, log_dir: str = "logs", log_file: str = "bot.log",
     )
     file_handler.setFormatter(fmt)
     file_handler.setLevel(numeric_level)
-    logger.addHandler(file_handler)
 
+    # ── Bounded admission queue + listener ────────────────────────────────
+    qh = _BoundedQueueHandler(queue.Queue(maxsize=QUEUE_STATS["capacity"]))
+    qh.setLevel(numeric_level)
+    listener = QueueListener(qh.queue, console_handler, file_handler,
+                             respect_handler_level=True)
+    listener.start()
+    import atexit
+    atexit.register(listener.stop)  # إنهاء نظيف — لا خيوط يتيمة عند الإغلاق
+
+    logger.addHandler(qh)
     return logger
 
 

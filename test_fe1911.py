@@ -105,8 +105,8 @@ def test_ew_strategy_endpoint_alive_for_engine_layer(clean_db):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync_vnz_panel():
-    assert vnz.BOT_VERSION == "FE1.10.1"
-    assert panel.BOT_VERSION == "FE1.10.1"
+    assert vnz.BOT_VERSION == "FE1.10.2"
+    assert panel.BOT_VERSION == "FE1.10.2"
     assert panel.BOT_VERSION == vnz.BOT_VERSION
     h = client().get("/health").get_json()
-    assert h["version"] == "FE1.10.1"
+    assert h["version"] == "FE1.10.2"

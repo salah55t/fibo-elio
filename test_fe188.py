@@ -156,4 +156,4 @@ class TestProtectedBoundaries:
         assert vnz.KEEP_ALIVE_INTERVAL_SEC == 60.0
 
     def test_version_bumped(self):
-        assert vnz.BOT_VERSION == "FE1.10.1"
+        assert vnz.BOT_VERSION == "FE1.10.2"

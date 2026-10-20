@@ -46,7 +46,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.10.1"  # [FE1.10.1] اقتباسات flowsurface (شارة النضارة+عدّاد الشمعة). [FE1.10.0] التصحيح النهائي — سوبر تراند وهندسة المخاطر: صدى البوابات الجديدة (regime/st/adx/rr_net_min_tp1/time-stop/st-trail) يصل عبر بطاقة protection في /api/all — صفر تغيير واجهة قائمة. [FE1.9.18] درجة الثقة المركبة: شارة 0-100 في الالتقاطات وصفوف الصفقات (اقتباس elliot-waves-auto) + بوابة «ثقة منخفضة» في خريطة البوابات + ملخص متوسط الثقة — صفر تغيير واجهة قائمة
+BOT_VERSION = "FE1.10.2"  # [FE1.10.2] اقتباسات flowmap (عقد الصدق: اعتمام موسوم للبيانات المتقادمة body.stale-data + شارة عائمة تسمّي الحالة — نمط Watchlist is-stale «اعتمّ لا تخفِ»، CSS خالص صفر remount). [FE1.10.1] اقتباسات flowsurface (شارة النضارة+عدّاد الشمعة). [FE1.10.0] التصحيح النهائي — سوبر تراند وهندسة المخاطر: صدى البوابات الجديدة (regime/st/adx/rr_net_min_tp1/time-stop/st-trail) يصل عبر بطاقة protection في /api/all — صفر تغيير واجهة قائمة. [FE1.9.18] درجة الثقة المركبة: شارة 0-100 في الالتقاطات وصفوف الصفقات (اقتباس elliot-waves-auto) + بوابة «ثقة منخفضة» في خريطة البوابات + ملخص متوسط الثقة — صفر تغيير واجهة قائمة
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -390,6 +390,19 @@ PANEL_HTML = r"""<!DOCTYPE html>
   .cmodal-close:active { transform:rotate(90deg) scale(.92); }
   .cmodal-ctl { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
   @media (max-width:640px){ .cmodal{ padding:8px } .cmodal-box{ width:98vw; padding:10px; max-height:94vh } }
+  /* [FE1.10.2] عقد الصدق (نمط flowmap Watchlist «stale rows dim, labelled not hidden»):
+     البيانات المتقادمة تُعتّم موسومة لا تُخفى ولا تُختلق — آخر قيمة صادقة تبقى
+     مرئية بعتمة 55% وتشبّع أقل، وشارة عائمة تسمّي الحالة، ويُعاد اللون مع أول
+     تحديث ناجح. CSS خالص — صفر remount وصفر مساس بمنطق العرض */
+  body.stale-data .grid .card, body.stale-data table, body.stale-data .badge,
+  body.stale-data .pill { opacity:.55; filter:saturate(.55);
+    transition:opacity .8s ease, filter .8s ease; }
+  body.stale-data::after{ content:'◐ بيانات متقادمة — آخر تحديث لم ينجح؛ المعروض آخر ما عُرف صادقًا';
+    position:fixed; bottom:14px; left:50%; transform:translateX(-50%);
+    background:rgba(255,176,32,.14); border:1px solid rgba(255,176,32,.5); color:#ffb020;
+    padding:6px 14px; border-radius:999px; font-size:.72rem; z-index:99; pointer-events:none;
+    backdrop-filter:blur(6px); white-space:nowrap; max-width:94vw; overflow:hidden;
+    text-overflow:ellipsis; }
   /* احترام تفضيل تقليل الحركة — إتاحة وصول */
   @media (prefers-reduced-motion:reduce){
     *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important;
@@ -538,6 +551,10 @@ let WSSTATE = null;    // حالة تغذية الويب سوكت [FE1.2.0] — 
 let REAL_MODE = false; // حالة زر التداول الحقيقي [FE1.4.0]
 let REAL_BUSY = false; // [FE1.5.0] لا اختطاف للمفتاح أثناء طلب التبديل الجاري
 let REFRESHING = false;
+// [FE1.10.2] عقد الصدق flowmap: آخر لحظة نجح فيها /api/all — تقادمها فوق DATA_STALE_MS
+// يعتمّ اللوحة موسومة (لا إخفاء ولا قيم مختلقة) حتى أول تحديث ناجح
+let LAST_DATA_AT = 0;
+const DATA_STALE_MS = 45000;
 
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2500); }
 
@@ -1241,6 +1258,8 @@ async function refresh(){
   try {
     const d = await api('/api/all');
     ALLSTATE = d;  // [FE1.9.10] الشارت يشترك في الحالة
+    LAST_DATA_AT = Date.now();  // [FE1.10.2] نجاح صادق — يطفئ الاعتمام
+    document.body.classList.remove('stale-data');
     $('err-banner').style.display = 'none';
     try { WSSTATE = await api('/api/ws/status'); } catch(e){ WSSTATE = null; }
     renderFeed(WSSTATE);
@@ -1260,6 +1279,13 @@ async function refresh(){
     eb.textContent = '⚠ فشل تحديث البيانات — ' + String(e.message||'').slice(0,140);
   } finally { REFRESHING = false; }
 }
+
+// [FE1.10.2] راقٍ ثانوي بثانية واحدة: تجاوز DATA_STALE_MS بلا تحديث ناجح ← اعتمام موسوم
+// (نمط flowmap Watchlist is-stale: «اعتمّ وسَمّ واحتفظ بآخر قيمة صادقة» — الصف يبقى
+// مرئيًا لا مخفيًا، والشارة العائمة تسمّي الحالة، والعودة فورية بأول نجاح)
+setInterval(()=>{ try {
+  document.body.classList.toggle('stale-data', LAST_DATA_AT>0 && (Date.now()-LAST_DATA_AT) > DATA_STALE_MS);
+} catch(e){} }, 1000);
 
 async function toggleTrading(){
   try {

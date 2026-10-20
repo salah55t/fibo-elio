@@ -329,7 +329,7 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "FE1.10.1"
+        assert body["version"] == "FE1.10.2"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 
@@ -702,44 +702,51 @@ class TestWebSocketPriceFeedFE120:
             assert vnz.ws_apply_price("BTC/USDT", bad, "binance") is False, bad
 
     def test_apply_ohlcv_filters_bad_rows(self):
-        good1 = [1, 100.0, 101.0, 99.0, 100.5, 10.0]
-        good2 = [2, 100.5, 102.0, 100.0, 101.5, 10.0]
-        bad_zero_high = [3, 101.5, 0, 100.0, 102.0, 10.0]
-        bad_short = [4, 101.5]
-        good3 = [5, 101.5, 103.0, 101.0, 102.5, 10.0]
+        # [FE1.10.2] طوابع واقعية (مللي ثانية سليمة) — بوابة الطوابع ترفض وحدات مختلطة
+        T0 = int(time.time() * 1000) - 600_000
+        good1 = [T0, 100.0, 101.0, 99.0, 100.5, 10.0]
+        good2 = [T0 + 300_000, 100.5, 102.0, 100.0, 101.5, 10.0]
+        bad_zero_high = [T0 + 600_000, 101.5, 0, 100.0, 102.0, 10.0]
+        bad_short = [T0 + 900_000, 101.5]
+        good3 = [T0 + 1_200_000, 101.5, 103.0, 101.0, 102.5, 10.0]
         assert vnz.ws_apply_ohlcv("BTC/USDT", [good1, good2, bad_zero_high, bad_short, good3], "binance") is True
         with vnz._ws_lock:
             rows = vnz._ws_candles["BTC/USDT"]["candles"]
         assert rows == [good1, good2, good3]  # التالف حُذف والترتيب محفوظ
 
     def test_apply_ohlcv_caps_to_keep_window(self):
-        rows = [[i, 100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i, 10.0] for i in range(9)]
+        # [FE1.10.2] طوابع واقعية متصاعدة
+        T0 = int(time.time() * 1000) - 10 * 300_000
+        rows = [[T0 + i * 300_000, 100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i, 10.0] for i in range(9)]
         assert vnz.ws_apply_ohlcv("BTC/USDT", rows, "binance") is True
         with vnz._ws_lock:
             kept = vnz._ws_candles["BTC/USDT"]["candles"]
-        assert len(kept) == vnz.WS_CANDLE_KEEP and kept[-1][0] == 8  # الأحدث محفوظ
+        assert len(kept) == vnz.WS_CANDLE_KEEP and kept[-1][0] == T0 + 8 * 300_000  # الأحدث محفوظ
 
     def test_apply_ohlcv_fills_price_from_close_when_ticker_missing(self):
-        assert vnz.ws_apply_ohlcv("BTC/USDT", [[1, 100.0, 101.0, 99.0, 100.5, 10.0]], "binance") is True
+        T = int(time.time() * 1000) - 300_000
+        assert vnz.ws_apply_ohlcv("BTC/USDT", [[T, 100.0, 101.0, 99.0, 100.5, 10.0]], "binance") is True
         assert vnz.get_live_price("BTC/USDT") == 100.5
 
     def test_apply_ohlcv_does_not_overwrite_fresh_ticker_price(self):
         self._inject_price(price=200.0)
-        vnz.ws_apply_ohlcv("BTC/USDT", [[1, 100.0, 101.0, 99.0, 100.5, 10.0]], "binance")
+        T = int(time.time() * 1000) - 300_000
+        vnz.ws_apply_ohlcv("BTC/USDT", [[T, 100.0, 101.0, 99.0, 100.5, 10.0]], "binance")
         assert vnz.get_live_price("BTC/USDT") == 200.0  # ticker الأحدث يفوز
 
     def test_apply_ohlcv_merges_with_seeded_history(self):
         """بذرة REST (شموع مغلقة) + تيار يرسل الشمعة الجارية وحدها = دمج لا محو."""
-        seed = [[1, 100.0, 101.0, 99.0, 100.5, 10.0],
-                [2, 100.5, 102.0, 100.0, 101.5, 10.0]]
+        T0 = int(time.time() * 1000) - 600_000
+        seed = [[T0, 100.0, 101.0, 99.0, 100.5, 10.0],
+                [T0 + 300_000, 100.5, 102.0, 100.0, 101.5, 10.0]]
         assert vnz.ws_apply_ohlcv("BTC/USDT", seed, "binance") is True
         # التيار يرسل تحديث الشمعة الجارية فقط (نمط بعض المزودين)
-        assert vnz.ws_apply_ohlcv("BTC/USDT", [[2, 100.5, 102.5, 100.2, 101.8, 10.0]], "binance") is True
+        assert vnz.ws_apply_ohlcv("BTC/USDT", [[T0 + 300_000, 100.5, 102.5, 100.2, 101.8, 10.0]], "binance") is True
         with vnz._ws_lock:
             rows = vnz._ws_candles["BTC/USDT"]["candles"]
         assert len(rows) == 2  # المغلقة بقيت والجارية حُدّثت
-        assert rows[0] == [1, 100.0, 101.0, 99.0, 100.5, 10.0]
-        assert rows[-1] == [2, 100.5, 102.5, 100.2, 101.8, 10.0]
+        assert rows[0] == [T0, 100.0, 101.0, 99.0, 100.5, 10.0]
+        assert rows[-1] == [T0 + 300_000, 100.5, 102.5, 100.2, 101.8, 10.0]
 
     # — أولويات get_live_price —
 
@@ -865,7 +872,7 @@ class TestWebSocketPriceFeedFE120:
         r = client.get("/api/ws/status")
         assert r.status_code == 200
         data = r.get_json()
-        assert data["version"] == "FE1.10.1"
+        assert data["version"] == "FE1.10.2"
         assert data["enabled"] is True
         assert "prices" in data and "subscriptions" in data and "candles" in data
 
@@ -883,7 +890,7 @@ class TestWebSocketPriceFeedFE120:
         client = vnz.app.test_client()
         data = client.get("/health").get_json()
         assert data["live_feed"] in ("websocket", "rest")
-        assert data["version"] == "FE1.10.1"
+        assert data["version"] == "FE1.10.2"
 
     def test_ws_exchange_unknown_provider_raises(self):
         with pytest.raises(ValueError):
