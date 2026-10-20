@@ -46,7 +46,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "FE1.10.2"  # [FE1.10.2] اقتباسات flowmap (عقد الصدق: اعتمام موسوم للبيانات المتقادمة body.stale-data + شارة عائمة تسمّي الحالة — نمط Watchlist is-stale «اعتمّ لا تخفِ»، CSS خالص صفر remount). [FE1.10.1] اقتباسات flowsurface (شارة النضارة+عدّاد الشمعة). [FE1.10.0] التصحيح النهائي — سوبر تراند وهندسة المخاطر: صدى البوابات الجديدة (regime/st/adx/rr_net_min_tp1/time-stop/st-trail) يصل عبر بطاقة protection في /api/all — صفر تغيير واجهة قائمة. [FE1.9.18] درجة الثقة المركبة: شارة 0-100 في الالتقاطات وصفوف الصفقات (اقتباس elliot-waves-auto) + بوابة «ثقة منخفضة» في خريطة البوابات + ملخص متوسط الثقة — صفر تغيير واجهة قائمة
+BOT_VERSION = "FE1.10.3"  # [FE1.10.3] إزالة شرط سقف الأسبوع (طلب المستخدم): خط «سقف أسبوع» يُرسم فقط عند توفر قمة من الخادم (TP_WEEK_CAP_ENABLED=1) — الافتراضي بلا سقف والعرض صادق. [FE1.10.2] اقتباسات flowmap (عقد الصدق: اعتمام موسوم للبيانات المتقادمة body.stale-data + شارة عائمة تسمّي الحالة — نمط Watchlist is-stale «اعتمّ لا تخفِ»، CSS خالص صفر remount). [FE1.10.1] اقتباسات flowsurface (شارة النضارة+عدّاد الشمعة). [FE1.10.0] التصحيح النهائي — سوبر تراند وهندسة المخاطر: صدى البوابات الجديدة (regime/st/adx/rr_net_min_tp1/time-stop/st-trail) يصل عبر بطاقة protection في /api/all — صفر تغيير واجهة قائمة. [FE1.9.18] درجة الثقة المركبة: شارة 0-100 في الالتقاطات وصفوف الصفقات (اقتباس elliot-waves-auto) + بوابة «ثقة منخفضة» في خريطة البوابات + ملخص متوسط الثقة — صفر تغيير واجهة قائمة
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -461,7 +461,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   </section>
 
   <section>
-    <h2>🕯 الشارت الحي في نافذة عائمة <span class="mut small">— اضغط زر «🕯 الشارت» في الأعلى أو انقر رمز أي صفقة/التقاط ليفتح الشارت في نافذة عائمة بزر إغلاق — شموع فريم التنفيذ من كاش Postgres الدائم (صفر طلبات للمزودين) + الشمعة الجارية حية من التيار · خطوط: منطقة الدخول · الوقف · الأهداف المتدرجة TP1→TP3 · سقف الأسبوع</span></h2>
+    <h2>🕯 الشارت الحي في نافذة عائمة <span class="mut small">— اضغط زر «🕯 الشارت» في الأعلى أو انقر رمز أي صفقة/التقاط ليفتح الشارت في نافذة عائمة بزر إغلاق — شموع فريم التنفيذ من كاش Postgres الدائم (صفر طلبات للمزودين) + الشمعة الجارية حية من التيار · خطوط: منطقة الدخول · الوقف · الأهداف المتدرجة TP1→TP3 · سقف الأسبوع (إن توفّر)</span></h2>
     <div class="mut small">النافذة العائمة تعرض كل عملات المراقبة (قائمة الرموز من watchlist كاملة [FE1.9.14]) — الشارت نظيف افتراضيًا: شموع + خطوط الصفقة فقط، وطبقة «موجات المحرك (الاستراتيجية)» اختيارية من داخل النافذة</div>
   </section>
 
@@ -508,13 +508,13 @@ PANEL_HTML = r"""<!DOCTYPE html>
   <div class="cmodal-box">
     <div class="cmodal-head">
       <span class="cmodal-title">🕯 الشارت الحي</span>
-      <span class="mut small">شموع فريم التنفيذ: كاش Postgres فورًا + جلب لحظي من المزودين لأي رمز بلا كاش (SWR [FE1.9.16]) + الشمعة الجارية حية من التيار · خطوط: دخول · وقف · أهداف TP1→TP3 · سقف أسبوع</span>
+      <span class="mut small">شموع فريم التنفيذ: كاش Postgres فورًا + جلب لحظي من المزودين لأي رمز بلا كاش (SWR [FE1.9.16]) + الشمعة الجارية حية من التيار · خطوط: دخول · وقف · أهداف TP1→TP3 · سقف أسبوع (إن توفّر) [FE1.10.3]</span>
       <button class="cmodal-close" onclick="closeChartModal()" title="إغلاق النافذة (Esc)" aria-label="إغلاق النافذة">✕</button>
     </div>
     <div class="cmodal-ctl">
       <select id="chart-sym" onchange="chartSelectSym()" style="background:#0a0f16;color:#e6f7ff;border:1px solid rgba(0,229,255,.3);border-radius:8px;padding:6px 10px;font-family:inherit"></select>
       <span id="chart-legend" class="mut small">
-        <span style="color:#00e5ff">━ دخول</span> · <span style="color:#ff2d78">━ وقف</span> · <span style="color:#22e58c">━ أهداف</span> · <span style="color:#ffb020">⌈ سقف أسبوع</span>
+        <span style="color:#00e5ff">━ دخول</span> · <span style="color:#ff2d78">━ وقف</span> · <span style="color:#22e58c">━ أهداف</span> · <span style="color:#ffb020">⌈ سقف أسبوع (إن توفّر)</span>
       </span>
       <label for="ewx-toggle" title="طبقة اختيارية مطفأة افتراضيًا — زيجزاج محرك الاستراتيجية (عتبة الانعكاس 0.6%) والبنية P0–P5 ومنطقة الدخول والوقف والأهداف المقصوصة على قمة الأسبوع من /api/ew_strategy" style="display:flex;align-items:center;gap:5px;cursor:pointer;color:#f7c948;font-size:12px;border:1px solid rgba(247,201,72,.35);border-radius:8px;padding:5px 10px;background:rgba(247,201,72,.06)">
         <input type="checkbox" id="ewx-toggle" onchange="ewxToggle()" style="accent-color:#f7c948;cursor:pointer"> موجات المحرك (الاستراتيجية)

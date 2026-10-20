@@ -134,8 +134,8 @@ class TestNewDefaults:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "FE1.10.2"
-        assert panel.BOT_VERSION == "FE1.10.2"
+        assert vnz.BOT_VERSION == "FE1.10.3"
+        assert panel.BOT_VERSION == "FE1.10.3"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

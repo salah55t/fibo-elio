@@ -202,6 +202,7 @@ def _creation_setup():
 
 
 def test_create_stores_staged_targets(clean_db, tg_off, monkeypatch):
+    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.3] اختبار السقف ذاته يفعّله صراحةً
     monkeypatch.setattr(vnz, "weekly_high", lambda s: 117.5)
     assert vnz.create_pending_signal("TEST/USDT", _creation_setup(), last_close=0) is True
     row = vnz.db.query("SELECT * FROM signals ORDER BY id DESC LIMIT 1")[0]
@@ -215,17 +216,35 @@ def test_create_stores_staged_targets(clean_db, tg_off, monkeypatch):
     assert 117.5 in fj["tp_stages"]
 
 
-def test_create_legacy_path_when_weekly_high_unavailable(clean_db, tg_off, monkeypatch):
+def test_create_stages_uncapped_when_weekly_high_absent(clean_db, tg_off, monkeypatch):
+    """[FE1.10.3] بلا قمة أسبوع (أو السقف معطل — الافتراضي) السلّم المرحلي يعمل
+    بلا قصّ: الدرجات الخام المؤهلة تصير TP1→TP3 كما هي بلا أي سقف."""
     monkeypatch.setattr(vnz, "weekly_high", lambda s: None)
     assert vnz.create_pending_signal("TEST/USDT", _creation_setup(), last_close=0) is True
     row = vnz.db.query("SELECT * FROM signals ORDER BY id DESC LIMIT 1")[0]
-    # المسار التراثي حرفيًا: أقرب درجة تحقق TP_MIN_RR، بلا مراحل
+    # [FE1.10.3] درجات خام مؤهلة بلا قصّ — لا رفض سقف ولا انهيار للمسار التراثي
+    assert row["tp1"] == pytest.approx(116.0)
+    assert row["tp2"] == pytest.approx(118.18)
+    assert row["tp3"] == pytest.approx(119.596)
+    assert row["take_profit"] == pytest.approx(119.596)
+    assert row["weekly_high"] is None
+    fj = json.loads(row["fib_json"])
+    assert fj["weekly_capped"] is False
+
+
+def test_create_legacy_single_target_when_stages_disabled(clean_db, tg_off, monkeypatch):
+    """[FE1.10.3] المسار التراثي الحقيقي = مراحل معطلة: هدف مفرد (أقرب درجة ≥ TP_MIN_RR)
+    وبلا أعمدة مراحل — كما قبل FE1.9.9 حرفيًا."""
+    monkeypatch.setattr(vnz, "TP_STAGES_ENABLED", False)
+    assert vnz.create_pending_signal("TEST/USDT", _creation_setup(), last_close=0) is True
+    row = vnz.db.query("SELECT * FROM signals ORDER BY id DESC LIMIT 1")[0]
     assert row["take_profit"] == pytest.approx(116.0)
     assert row["tp1"] is None and row["tp2"] is None and row["tp3"] is None
     assert row["weekly_high"] is None
 
 
 def test_create_rejects_when_no_target_below_weekly_cap(clean_db, tg_off, monkeypatch):
+    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.3] الرفض حصرًا مع سقف مفعّل
     monkeypatch.setattr(vnz, "weekly_high", lambda s: 100.5)  # القمة تلتهم الأرضية الصافية
     n0 = vnz.scan_stats["rejected_weekly_cap"]
     ok = vnz.create_pending_signal("TEST/USDT", _creation_setup(), last_close=0)
@@ -239,6 +258,7 @@ def test_create_rejects_when_no_target_below_weekly_cap(clean_db, tg_off, monkey
 
 def test_create_cap_trims_ladder_below_weekly(clean_db, tg_off, monkeypatch):
     # القمة 105: كل الدرجات تُقص إليها — مرحلة مفردة مخزنة في tp1/tp3 معًا
+    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.3] القص حصرًا مع سقف مفعّل
     monkeypatch.setattr(vnz, "weekly_high", lambda s: 105.0)
     assert vnz.create_pending_signal("TEST/USDT", _creation_setup(), last_close=0) is True
     row = vnz.db.query("SELECT * FROM signals ORDER BY id DESC LIMIT 1")[0]
@@ -314,6 +334,7 @@ def _run_reconcile():
 
 
 def test_reconcile_caps_open_target_and_notifies(clean_db, tg_off, monkeypatch):
+    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.3] التسوية حصرًا مع سقف مفعّل
     sig_id = insert_open(take_profit=130.0)
     monkeypatch.setattr(vnz, "weekly_high", lambda s: 110.0)
     _run_reconcile()
@@ -329,6 +350,7 @@ def test_reconcile_caps_open_target_and_notifies(clean_db, tg_off, monkeypatch):
 
 
 def test_reconcile_notify_once_then_silent_recap(clean_db, tg_off, monkeypatch):
+    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.3] التسوية حصرًا مع سقف مفعّل
     sig_id = insert_open(take_profit=130.0)
     monkeypatch.setattr(vnz, "weekly_high", lambda s: 110.0)
     _run_reconcile()
@@ -344,6 +366,7 @@ def test_reconcile_notify_once_then_silent_recap(clean_db, tg_off, monkeypatch):
 
 
 def test_reconcile_collapses_stages_above_new_cap(clean_db, tg_off, monkeypatch):
+    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.3] التسوية حصرًا مع سقف مفعّل
     sig_id = insert_open(take_profit=130.0, tp1=120.0, tp2=None, tp3=130.0)
     monkeypatch.setattr(vnz, "weekly_high", lambda s: 110.0)
     _run_reconcile()
@@ -354,6 +377,7 @@ def test_reconcile_collapses_stages_above_new_cap(clean_db, tg_off, monkeypatch)
 
 
 def test_reconcile_covers_pending_and_skips_within_cap(clean_db, tg_off, monkeypatch):
+    monkeypatch.setattr(vnz, "TP_WEEK_CAP_ENABLED", True)  # [FE1.10.3] التسوية حصرًا مع سقف مفعّل
     pid = insert_open(status="pending", fill_price=None, take_profit=125.0)
     ok_id = insert_open(take_profit=105.0)
     monkeypatch.setattr(vnz, "weekly_high", lambda s: 110.0)
@@ -426,7 +450,7 @@ def test_api_all_exposes_stages_and_protection(clean_db, monkeypatch):
     assert sig["tp_stages"] == [104.0, 107.0, 110.0]
     assert sig["weekly_high"] == pytest.approx(110.5)
     prot = body["protection"]
-    assert prot["tp_week_cap"] is True and prot["tp_week_days"] == 7
+    assert prot["tp_week_cap"] is False and prot["tp_week_days"] == 7  # [FE1.10.3] السقف معطل افتراضيًا
     assert prot["tp_stages"] is True and prot["tp_stage_pct"] == 40.0
 
 
@@ -453,5 +477,5 @@ def test_panel_has_stages_line_and_header():
 
 
 def test_version_sync():
-    assert vnz.BOT_VERSION == "FE1.10.2"
-    assert panel.BOT_VERSION == "FE1.10.2"
+    assert vnz.BOT_VERSION == "FE1.10.3"
+    assert panel.BOT_VERSION == "FE1.10.3"

@@ -156,12 +156,12 @@ class TestPanelFreshnessBadge:
         assert "CHART_OPEN" in seg
 
     def test_version_synced(self, panel_src):
-        assert 'BOT_VERSION = "FE1.10.2"' in panel_src
+        assert 'BOT_VERSION = "FE1.10.3"' in panel_src
 
 
 class TestVersionSync:
     def test_vnz_version(self):
-        assert vnz.BOT_VERSION == "FE1.10.2"
+        assert vnz.BOT_VERSION == "FE1.10.3"
 
     def test_env_defaults_exist(self):
         assert vnz.TG_DEDUP_MAX_SEC == 1800
