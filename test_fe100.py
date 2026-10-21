@@ -608,7 +608,7 @@ class TestLiveTrackingAndManualActions:
         r = client.post("/api/trades/cancel", json={"id": int(row["id"])})
         assert r.status_code == 404  # المفتوح يُغلق بـ /api/trades/close لا إلغاء
 
-    def test_manual_endpoints_require_auth(self, monkeypatch):
+    def test_manual_endpoints_require_auth(self, clean_db, monkeypatch):
         monkeypatch.setattr(vnz, "DASHBOARD_PROTECTED", True)
         monkeypatch.setattr(vnz, "DASHBOARD_USERNAME", "admin")
         monkeypatch.setattr(vnz, "DASHBOARD_PASSWORD", "test123")
