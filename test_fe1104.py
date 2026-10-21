@@ -536,7 +536,7 @@ def test_health_orderflow_section(monkeypatch):
     assert isinstance(of["rejected_cvd_conflict"], int) and isinstance(of["wall_targets_used"], int)
 
 
-def test_protection_echo_oflow(monkeypatch):
+def test_protection_echo_oflow(clean_db, monkeypatch):
     """صدى الحماية يحمل أعلام الطبقة للوحة."""
     client = vnz.app.test_client()
     d = client.get("/api/all").get_json()
